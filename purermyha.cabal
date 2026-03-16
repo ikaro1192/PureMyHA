@@ -1,0 +1,97 @@
+cabal-version:      3.0
+name:               purermyha
+version:            0.1.0.0
+synopsis:           MySQL 8.4 HA tool in Haskell
+description:        PureMyHA is a simple HA tool for MySQL 8.4 replication topologies.
+license:            MIT
+author:             PureMyHA Authors
+maintainer:         purermyha@example.com
+build-type:         Simple
+
+common common-options
+  default-language:   GHC2021
+  default-extensions:
+    OverloadedStrings
+    DeriveGeneric
+    DeriveAnyClass
+    RecordWildCards
+    LambdaCase
+  ghc-options:        -Wall -Wno-orphans
+  build-depends:
+    base             >= 4.14 && < 5,
+    text             >= 1.2,
+    bytestring       >= 0.10,
+    containers       >= 0.6,
+    time             >= 1.9,
+    aeson            >= 2.1,
+    mtl              >= 2.2,
+    exceptions       >= 0.10,
+    stm              >= 2.5,
+    async            >= 2.2,
+    process          >= 1.6
+
+library
+  import:          common-options
+  hs-source-dirs:  src
+  exposed-modules:
+    PureMyHA.Types
+    PureMyHA.Config
+    PureMyHA.Hook
+    PureMyHA.MySQL.Connection
+    PureMyHA.MySQL.Query
+    PureMyHA.MySQL.GTID
+    PureMyHA.Topology.Discovery
+    PureMyHA.Topology.State
+    PureMyHA.Monitor.Worker
+    PureMyHA.Monitor.Detector
+    PureMyHA.Failover.Candidate
+    PureMyHA.Failover.Auto
+    PureMyHA.Failover.Switchover
+    PureMyHA.IPC.Protocol
+    PureMyHA.IPC.Server
+    PureMyHA.IPC.Client
+  build-depends:
+    mysql-haskell    >= 0.8.4,
+    io-streams       >= 1.5,
+    yaml             >= 0.11,
+    optparse-applicative >= 0.16,
+    network          >= 3.1,
+    katip            >= 0.8
+
+executable purermyhad
+  import:          common-options
+  hs-source-dirs:  app/Daemon
+  main-is:         Main.hs
+  build-depends:
+    purermyha,
+    optparse-applicative >= 0.16,
+    katip            >= 0.8
+
+executable purermyha
+  import:          common-options
+  hs-source-dirs:  app/CLI
+  main-is:         Main.hs
+  build-depends:
+    purermyha,
+    optparse-applicative >= 0.16
+
+test-suite purermyha-test
+  import:          common-options
+  type:            exitcode-stdio-1.0
+  hs-source-dirs:  test
+  main-is:         Spec.hs
+  other-modules:
+    Fixtures
+    PureMyHA.ConfigSpec
+    PureMyHA.GTIDSpec
+    PureMyHA.DetectorSpec
+    PureMyHA.CandidateSpec
+    PureMyHA.TopologySpec
+    PureMyHA.IPCSpec
+  build-depends:
+    purermyha,
+    hspec            >= 2.9,
+    QuickCheck       >= 2.14,
+    hspec-discover   >= 0.8
+  build-tool-depends:
+    hspec-discover:hspec-discover

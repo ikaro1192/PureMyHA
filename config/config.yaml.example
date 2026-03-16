@@ -1,0 +1,31 @@
+clusters:
+  - name: main
+    nodes:
+      - host: db1
+        port: 3306
+      - host: db2
+        port: 3306
+    credentials:
+      user: purermyha
+      password_file: /etc/purermyha/mysql.pass
+
+monitoring:
+  interval: 3s
+  connect_timeout: 2s
+  replication_lag_warning: 10s
+  replication_lag_critical: 30s
+
+failure_detection:
+  recovery_block_period: 3600s
+
+failover:
+  auto_failover: true
+  min_replicas_for_failover: 1
+  candidate_priority:
+    - host: db2
+
+hooks:
+  pre_failover: /etc/purermyha/hooks/pre_failover.sh
+  post_failover: /etc/purermyha/hooks/post_failover.sh
+  pre_switchover: /etc/purermyha/hooks/pre_switchover.sh
+  post_switchover: /etc/purermyha/hooks/post_switchover.sh
