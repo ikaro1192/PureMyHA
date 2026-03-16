@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+    tags-ignore: ['v*']
+  pull_request:
+
+jobs:
+  build:
+    name: Build & Test (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cabal store
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/store
+          key: cabal-${{ matrix.arch }}-${{ hashFiles('purermyha.cabal', 'cabal.project') }}
+          restore-keys: cabal-${{ matrix.arch }}-
+
+      - name: Build and test in Docker
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "$HOME/.cabal/store:/root/.cabal/store" \
+            -w /workspace \
+            haskell:9.6-bullseye \
+            bash -c "cabal update && cabal build all && cabal test --test-show-details=always"
+
+      - name: Fix Cabal store permissions
+        run: sudo chown -R "$USER" "$HOME/.cabal/store" || true

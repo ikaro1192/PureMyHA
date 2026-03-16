@@ -1,0 +1,141 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    name: Build (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache Cabal store
+        uses: actions/cache@v4
+        with:
+          path: ~/.cabal/store
+          key: cabal-${{ matrix.arch }}-${{ hashFiles('purermyha.cabal', 'cabal.project') }}
+          restore-keys: cabal-${{ matrix.arch }}-
+
+      - name: Build and test in Docker
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -v "$HOME/.cabal/store:/root/.cabal/store" \
+            -w /workspace \
+            haskell:9.6-bullseye \
+            bash -c "
+              cabal update &&
+              cabal build all &&
+              cabal test --test-show-details=always &&
+              mkdir -p dist-bins &&
+              cabal install exe:purermyhad exe:purermyha \
+                --installdir=dist-bins \
+                --install-method=copy \
+                --overwrite-policy=always
+            "
+
+      - name: Fix Cabal store permissions
+        run: sudo chown -R "$USER" "$HOME/.cabal/store" || true
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ matrix.arch }}
+          path: dist-bins/
+          if-no-files-found: error
+
+  package:
+    name: Package (${{ matrix.arch }}, ${{ matrix.pkg_type }})
+    needs: build
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        pkg_type: [deb, rpm]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-${{ matrix.arch }}
+          path: dist-bins/
+
+      - name: Make binaries executable
+        run: chmod +x dist-bins/purermyhad dist-bins/purermyha
+
+      - name: Install nfpm
+        run: |
+          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
+            | sudo tee /etc/apt/sources.list.d/goreleaser.list
+          sudo apt-get update && sudo apt-get install -y nfpm
+
+      - name: Determine version and arch
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            echo "nfpm_arch=amd64" >> "$GITHUB_OUTPUT"
+          else
+            echo "nfpm_arch=arm64" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build package
+        run: |
+          export VERSION="${{ steps.meta.outputs.version }}"
+          export NFPM_ARCH="${{ steps.meta.outputs.nfpm_arch }}"
+          PKG_TYPE="${{ matrix.pkg_type }}"
+
+          if [ "${PKG_TYPE}" = "deb" ]; then
+            PKG_NAME="purermyha_${VERSION}_${NFPM_ARCH}.deb"
+          else
+            if [ "${NFPM_ARCH}" = "amd64" ]; then RPM_ARCH="x86_64"; else RPM_ARCH="aarch64"; fi
+            PKG_NAME="purermyha-${VERSION}-1.${RPM_ARCH}.rpm"
+          fi
+
+          nfpm pkg \
+            --packager "${PKG_TYPE}" \
+            --config packaging/nfpm.yaml \
+            --target "${PKG_NAME}"
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pkg-${{ matrix.arch }}-${{ matrix.pkg_type }}
+          path: "purermyha*.${{ matrix.pkg_type }}"
+          if-no-files-found: error
+
+  release:
+    name: Create GitHub Release
+    needs: package
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: pkg-*
+          merge-multiple: true
+          path: packages/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: packages/*

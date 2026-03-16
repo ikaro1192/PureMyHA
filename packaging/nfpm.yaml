@@ -1,0 +1,26 @@
+name: purermyha
+arch: ${NFPM_ARCH}
+platform: linux
+version: ${VERSION}
+maintainer: ""
+description: MySQL 8.4 HA tool
+homepage: https://github.com/shokashimizu/PureMyHA
+license: MIT
+
+contents:
+  - src: dist-bins/purermyha
+    dst: /usr/bin/purermyha
+    file_info:
+      mode: 0755
+  - src: dist-bins/purermyhad
+    dst: /usr/sbin/purermyhad
+    file_info:
+      mode: 0755
+  - src: config/config.yaml.example
+    dst: /etc/purermyha/config.yaml.example
+    type: config|noreplace
+  - src: packaging/purermyhad.service
+    dst: /lib/systemd/system/purermyhad.service
+
+scripts:
+  postinstall: packaging/postinstall.sh
