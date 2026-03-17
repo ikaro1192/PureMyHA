@@ -19,6 +19,7 @@ import qualified Data.Text as T
 import Network.Socket hiding (recv, send)
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
+import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover)
 import PureMyHA.IPC.Protocol
 import PureMyHA.Topology.State
@@ -119,8 +120,14 @@ handleRequest tvar clusterMap req = case req of
     let errants = concatMap clusterErrantGtids topos
     pure (RespErrantGtids errants)
 
-  ReqFixErrantGtid _ ->
-    pure (RespOperation (OperationFailure "fix-errant-gtid not yet implemented"))
+  ReqFixErrantGtid mCluster ->
+    case lookupCluster mCluster clusterMap of
+      Nothing -> pure (RespError "Cluster not found")
+      Just (_, cc, _, _, password, _) -> do
+        result <- runFixErrantGtid tvar cc password
+        pure $ RespOperation $ case result of
+          Left err -> OperationFailure err
+          Right () -> OperationSuccess "Errant GTIDs fixed on source"
 
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m

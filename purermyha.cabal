@@ -46,6 +46,7 @@ library
     PureMyHA.Monitor.Detector
     PureMyHA.Failover.Candidate
     PureMyHA.Failover.Auto
+    PureMyHA.Failover.ErrantGtid
     PureMyHA.Failover.Switchover
     PureMyHA.IPC.Protocol
     PureMyHA.IPC.Server
@@ -91,6 +92,7 @@ test-suite purermyha-test
     PureMyHA.AutoSpec
     PureMyHA.SwitchoverSpec
     PureMyHA.DiscoverySpec
+    PureMyHA.ErrantGtidSpec
   build-depends:
     purermyha,
     hspec            >= 2.9,
