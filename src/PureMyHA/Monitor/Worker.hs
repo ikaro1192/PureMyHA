@@ -6,19 +6,19 @@ module PureMyHA.Monitor.Worker
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, Async)
 import Control.Concurrent.STM (atomically)
-import Control.Exception (SomeException, try, catch)
-import Data.Map.Strict (Map)
+import Control.Exception (SomeException, catch)
+import Control.Monad (when)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import qualified Data.Text as T
-import Data.Time (getCurrentTime, addUTCTime)
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailoverConfig (..))
+import Data.Time (getCurrentTime)
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), HooksConfig (..))
+import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
 import PureMyHA.Logger (Logger, logInfo, logWarn)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
 import PureMyHA.Types
-import PureMyHA.Monitor.Detector (detectNodeHealth, detectClusterHealth, identifySource)
+import PureMyHA.Monitor.Detector (detectClusterHealth, identifySource)
 
 -- | Start one async monitor worker per node in a cluster
 startMonitorWorkers
@@ -26,25 +26,27 @@ startMonitorWorkers
   -> ClusterConfig
   -> MonitoringConfig
   -> Text             -- ^ password
+  -> Maybe HooksConfig
   -> Logger
   -> IO [Async ()]
-startMonitorWorkers tvar cc mc password logger = do
+startMonitorWorkers tvar cc mc password mHooks logger = do
   let nodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
-  mapM (\nid -> async (runWorker tvar cc mc password nid logger)) nodes
+  mapM (\nid -> async (runWorker tvar cc mc password mHooks nid logger)) nodes
 
 runWorker
   :: TVarDaemonState
   -> ClusterConfig
   -> MonitoringConfig
   -> Text
+  -> Maybe HooksConfig
   -> NodeId
   -> Logger
   -> IO ()
-runWorker tvar cc mc password nid logger = loop
+runWorker tvar cc mc password mHooks nid logger = loop
   where
     intervalMicros = round (mcInterval mc * 1_000_000) :: Int
     loop = do
-      monitorNode tvar cc mc password nid logger
+      monitorNode tvar cc mc password mHooks nid logger
         `catch` (\(_ :: SomeException) -> pure ())
       threadDelay intervalMicros
       loop
@@ -55,10 +57,11 @@ monitorNode
   -> ClusterConfig
   -> MonitoringConfig
   -> Text
+  -> Maybe HooksConfig
   -> NodeId
   -> Logger
   -> IO ()
-monitorNode tvar cc mc password nid logger = do
+monitorNode tvar cc _mc password mHooks nid logger = do
   now <- getCurrentTime
   let user = credUser (ccCredentials cc)
       ci   = makeConnectInfo nid user password
@@ -98,7 +101,7 @@ monitorNode tvar cc mc password nid logger = do
   logHealthChange logger (ccName cc) nid mOldNs ns'
   atomically $ updateNodeState tvar (ccName cc) ns'
   -- Recompute cluster-level health
-  recomputeClusterHealth tvar (ccName cc)
+  recomputeClusterHealth tvar cc mHooks
 
 logHealthChange :: Logger -> ClusterName -> NodeId -> Maybe NodeState -> NodeState -> IO ()
 logHealthChange logger clusterName nid mOld new = do
@@ -133,9 +136,9 @@ enrichErrantGtids tvar clusterName ns user password = do
               Left _         -> pure ns
               Right errant   -> pure ns { nsErrantGtids = errant }
 
-recomputeClusterHealth :: TVarDaemonState -> ClusterName -> IO ()
-recomputeClusterHealth tvar clusterName = do
-  mTopo <- getClusterTopology tvar clusterName
+recomputeClusterHealth :: TVarDaemonState -> ClusterConfig -> Maybe HooksConfig -> IO ()
+recomputeClusterHealth tvar cc mHooks = do
+  mTopo <- getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure ()
     Just topo -> do
@@ -145,4 +148,16 @@ recomputeClusterHealth tvar clusterName = do
             { ctHealth       = newHealth
             , ctSourceNodeId = newSrcId
             }
+      -- Fire on_failure_detection hook on transition to a dead state
+      when (ctHealth topo /= newHealth) $
+        case newHealth of
+          DeadSource -> do
+            ts <- getCurrentTimestamp
+            let env = HookEnv (ccName cc) Nothing Nothing (Just "DeadSource") ts
+            runHookFireForget mHooks hcOnFailureDetection env
+          DeadSourceAndAllReplicas -> do
+            ts <- getCurrentTimestamp
+            let env = HookEnv (ccName cc) Nothing Nothing (Just "DeadSourceAndAllReplicas") ts
+            runHookFireForget mHooks hcOnFailureDetection env
+          _ -> pure ()
       atomically $ updateClusterTopology tvar topo'

@@ -76,10 +76,12 @@ data CandidatePriority = CandidatePriority
   } deriving (Show, Generic)
 
 data HooksConfig = HooksConfig
-  { hcPreFailover   :: Maybe FilePath
-  , hcPostFailover  :: Maybe FilePath
-  , hcPreSwitchover :: Maybe FilePath
-  , hcPostSwitchover :: Maybe FilePath
+  { hcPreFailover              :: Maybe FilePath
+  , hcPostFailover             :: Maybe FilePath
+  , hcPreSwitchover            :: Maybe FilePath
+  , hcPostSwitchover           :: Maybe FilePath
+  , hcOnFailureDetection       :: Maybe FilePath
+  , hcPostUnsuccessfulFailover :: Maybe FilePath
   } deriving (Show, Generic)
 
 -- | Parse duration strings like "3s", "10s", "3600s"
@@ -163,6 +165,8 @@ instance FromJSON HooksConfig where
       <*> o .:? "post_failover"
       <*> o .:? "pre_switchover"
       <*> o .:? "post_switchover"
+      <*> o .:? "on_failure_detection"
+      <*> o .:? "post_unsuccessful_failover"
 
 loadConfig :: FilePath -> IO (Either String Config)
 loadConfig path = do

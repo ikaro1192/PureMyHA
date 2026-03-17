@@ -62,7 +62,7 @@ main = do
         ]
 
   allWorkers <- fmap concat $ mapM
-    (\((cc, pw), _) -> startMonitorWorkers tvar cc (cfgMonitoring cfg) pw logger)
+    (\((cc, pw), _) -> startMonitorWorkers tvar cc (cfgMonitoring cfg) pw (cfgHooks cfg) logger)
     (zip clusterPasswords clusterEntries)
 
   ipcAsync <- async $ startIPCServer tvar clusterMap (optSocketPath opts) logger

@@ -1,19 +1,31 @@
 module PureMyHA.Hook
   ( runHook
+  , runHookFireForget
+  , runHookOrAbort
+  , getCurrentTimestamp
   , HookEnv (..)
   ) where
 
+import Control.Concurrent.Async (async)
 import Control.Exception (try, SomeException)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
 import System.Exit (ExitCode (..))
 import System.Process (createProcess, proc, waitForProcess, env)
+import PureMyHA.Config (HooksConfig (..))
 
 data HookEnv = HookEnv
   { hookClusterName :: Text
   , hookNewSource   :: Maybe Text
   , hookOldSource   :: Maybe Text
+  , hookFailureType :: Maybe Text   -- e.g. "DeadSource", "PromoteFailed"
+  , hookTimestamp   :: Text         -- ISO-8601 UTC: "2026-03-17T12:00:00Z"
   }
+
+getCurrentTimestamp :: IO Text
+getCurrentTimestamp =
+  T.pack . formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" <$> getCurrentTime
 
 -- | Execute a hook script and wait for it to complete.
 -- Returns Left with error message if the hook fails.
@@ -23,7 +35,9 @@ runHook scriptPath hookEnv = do
         [ ("PURERMYHA_CLUSTER", T.unpack (hookClusterName hookEnv))
         ] ++
         maybe [] (\h -> [("PURERMYHA_NEW_SOURCE", T.unpack h)]) (hookNewSource hookEnv) ++
-        maybe [] (\h -> [("PURERMYHA_OLD_SOURCE", T.unpack h)]) (hookOldSource hookEnv)
+        maybe [] (\h -> [("PURERMYHA_OLD_SOURCE", T.unpack h)]) (hookOldSource hookEnv) ++
+        maybe [] (\ft -> [("PURERMYHA_FAILURE_TYPE", T.unpack ft)]) (hookFailureType hookEnv) ++
+        [("PURERMYHA_TIMESTAMP", T.unpack (hookTimestamp hookEnv))]
   result <- try @SomeException $ do
     (_, _, _, ph) <- createProcess (proc scriptPath [T.unpack (hookClusterName hookEnv)])
       { env = Just envVars }
@@ -36,3 +50,23 @@ runHook scriptPath hookEnv = do
       pure $ Right ()
     Right (ExitFailure n) ->
       pure $ Left $ "Hook exited with code " <> T.pack (show n)
+
+-- | Non-blocking fire-and-forget (post hooks, detection hooks)
+runHookFireForget
+  :: Maybe HooksConfig -> (HooksConfig -> Maybe FilePath) -> HookEnv -> IO ()
+runHookFireForget Nothing _ _ = pure ()
+runHookFireForget (Just hc) getter hookEnv =
+  case getter hc of
+    Nothing   -> pure ()
+    Just path -> do
+      _ <- async (runHook path hookEnv)
+      pure ()
+
+-- | Blocking: run hook and return Left if it fails, aborting the operation
+runHookOrAbort
+  :: Maybe HooksConfig -> (HooksConfig -> Maybe FilePath) -> HookEnv -> IO (Either Text ())
+runHookOrAbort Nothing _ _ = pure (Right ())
+runHookOrAbort (Just hc) getter hookEnv =
+  case getter hc of
+    Nothing   -> pure (Right ())
+    Just path -> runHook path hookEnv

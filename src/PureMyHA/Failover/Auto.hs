@@ -4,7 +4,6 @@ module PureMyHA.Failover.Auto
   ) where
 
 import Control.Concurrent.STM
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -12,6 +11,7 @@ import Data.Time (UTCTime, getCurrentTime)
 import PureMyHA.Config
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
+  ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
 import PureMyHA.Logger (Logger, logInfo, logError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
@@ -102,27 +102,41 @@ executeFailover tvar cc fc fdc password mHooks logger topo = do
       let user          = credUser (ccCredentials cc)
           oldSourceHost = fmap nodeHost (ctSourceNodeId topo)
 
-      runHookMaybe mHooks hcPreFailover cc oldSourceHost (Just (nodeHost candidateId))
-
-      promoteResult <- promoteCandidate user password candidateId
-      case promoteResult of
+      ts <- getCurrentTimestamp
+      let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost
+                     (Just "DeadSource") ts
+      preResult <- runHookOrAbort mHooks hcPreFailover preEnv
+      case preResult of
         Left err -> do
-          logError logger $ "[" <> ccName cc <> "] Auto-failover failed: Promote failed: " <> err
-          pure (Left $ "Promote failed: " <> err)
+          logError logger $ "[" <> ccName cc <> "] Pre-failover hook aborted failover: " <> err
+          pure (Left $ "Pre-failover hook failed: " <> err)
         Right () -> do
-          let otherReplicas = filter
-                (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
-                (Map.elems (ctNodes topo))
-          mapM_ (reconnectReplica user password candidateId) otherReplicas
+          promoteResult <- promoteCandidate user password candidateId
+          case promoteResult of
+            Left err -> do
+              logError logger $ "[" <> ccName cc <> "] Auto-failover failed: Promote failed: " <> err
+              ts2 <- getCurrentTimestamp
+              let failEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost
+                              (Just "PromoteFailed") ts2
+              runHookFireForget mHooks hcPostUnsuccessfulFailover failEnv
+              pure (Left $ "Promote failed: " <> err)
+            Right () -> do
+              let otherReplicas = filter
+                    (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
+                    (Map.elems (ctNodes topo))
+              mapM_ (reconnectReplica user password candidateId) otherReplicas
 
-          now <- getCurrentTime
-          atomically $ do
-            recordFailover tvar (ccName cc) now
-            setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
+              now <- getCurrentTime
+              atomically $ do
+                recordFailover tvar (ccName cc) now
+                setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
 
-          runHookMaybe mHooks hcPostFailover cc oldSourceHost (Just (nodeHost candidateId))
-          logInfo logger $ "[" <> ccName cc <> "] Auto-failover completed: new source is " <> nodeHost candidateId
-          pure (Right ())
+              ts3 <- getCurrentTimestamp
+              let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost
+                              (Just "DeadSource") ts3
+              runHookFireForget mHooks hcPostFailover postEnv
+              logInfo logger $ "[" <> ccName cc <> "] Auto-failover completed: new source is " <> nodeHost candidateId
+              pure (Right ())
 
 promoteCandidate :: Text -> Text -> NodeId -> IO (Either Text ())
 promoteCandidate user password nid = do
@@ -144,21 +158,4 @@ reconnectReplica user password newSourceId ns = do
     startReplica conn
   pure ()
 
-runHookMaybe
-  :: Maybe HooksConfig
-  -> (HooksConfig -> Maybe FilePath)
-  -> ClusterConfig
-  -> Maybe Text
-  -> Maybe Text
-  -> IO ()
-runHookMaybe Nothing _ _ _ _ = pure ()
-runHookMaybe (Just hc) getter cc oldSrc newSrc =
-  case getter hc of
-    Nothing -> pure ()
-    Just path -> do
-      _ <- runHook path HookEnv
-        { hookClusterName = ccName cc
-        , hookNewSource   = newSrc
-        , hookOldSource   = oldSrc
-        }
-      pure ()
+
