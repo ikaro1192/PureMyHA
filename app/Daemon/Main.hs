@@ -87,14 +87,16 @@ main = do
 
   -- Start monitor workers (returns registry per cluster)
   (registries, workerLists) <- fmap unzip $ mapM
-    (\((cc, pw), _) -> startMonitorWorkers tvar cc mcVar hooksVar pw logger)
+    (\((cc, pw), (lock, _, fc, fdc, _, _)) ->
+        startMonitorWorkers tvar cc mcVar hooksVar lock fc fdc pw logger)
     (zip clusterPasswords clusterEntries)
   let monitorWorkers = concat workerLists
 
   -- Start topology refresh workers
   refreshWorkers <- mapM
-    (\((cc, pw), reg) -> startTopologyRefreshWorker tvar cc mcVar hooksVar pw reg logger)
-    (zip clusterPasswords registries)
+    (\((cc, pw), (lock, _, fc, fdc, _, _), reg) ->
+        startTopologyRefreshWorker tvar cc mcVar hooksVar lock fc fdc pw reg logger)
+    (zip3 clusterPasswords clusterEntries registries)
 
   ipcAsync <- async $ startIPCServer tvar clusterMap (optSocketPath opts) logger
 
