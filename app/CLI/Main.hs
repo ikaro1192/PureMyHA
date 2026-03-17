@@ -11,9 +11,10 @@ import PureMyHA.IPC.Protocol
 import PureMyHA.IPC.Server (defaultSocketPath)
 
 data CLIOptions = CLIOptions
-  { optSocketPath :: FilePath
-  , optCluster    :: Maybe Text
-  , optCommand    :: Command
+  { optSocketPath  :: FilePath
+  , optCluster     :: Maybe Text
+  , optJsonOutput  :: Bool
+  , optCommand     :: Command
   }
 
 data Command
@@ -36,6 +37,10 @@ cliOptions = CLIOptions
         <> short 'C'
         <> metavar "NAME"
         <> help "Cluster name" ))
+  <*> switch
+        ( long "json"
+        <> short 'j'
+        <> help "Output in JSON format" )
   <*> subparser
         ( command "status"
             (info (pure CmdStatus) (progDesc "Show cluster status"))
@@ -65,6 +70,7 @@ main = do
 
   let socketPath = optSocketPath opts
       mCluster   = optCluster opts
+      json       = optJsonOutput opts
       req = case optCommand opts of
         CmdStatus           -> ReqStatus mCluster
         CmdTopology         -> ReqTopology mCluster
@@ -79,10 +85,10 @@ main = do
       hPutStrLn stderr $ "Error: " <> T.unpack err
       exitFailure
     Right resp -> case resp of
-      RespStatus statuses      -> printStatus statuses
-      RespTopology views       -> printTopology views
-      RespOperation result     -> printOperationResult result
-      RespErrantGtids gtids    -> printErrantGtids gtids
+      RespStatus statuses      -> printStatus json statuses
+      RespTopology views       -> printTopology json views
+      RespOperation result     -> printOperationResult json result
+      RespErrantGtids gtids    -> printErrantGtids json gtids
       RespError msg            -> do
         hPutStrLn stderr $ "Daemon error: " <> T.unpack msg
         exitFailure

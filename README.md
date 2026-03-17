@@ -121,6 +121,14 @@ See `config/config.yaml.example` for a full annotated example.
 purermyhad --config /etc/purermyha/config.yaml
 ```
 
+### Global flags
+
+| Flag | Short | Default | Description |
+|------|-------|---------|-------------|
+| `--socket PATH` | — | `/run/purermyhad.sock` | Daemon socket path |
+| `--cluster NAME` | `-C` | — | Target cluster (omit to apply to all) |
+| `--json` | `-j` | — | Output in JSON format instead of text |
+
 ### CLI commands
 
 ```bash
@@ -141,6 +149,16 @@ purermyha errant-gtid [--cluster=<name>]
 
 # Fix errant GTIDs by injecting empty transactions
 purermyha fix-errant-gtid [--cluster=<name>]
+
+# JSON output (for scripting / Prometheus exporters)
+purermyha --json status
+purermyha -j topology
+purermyha -j errant-gtid
+purermyha -j switchover --to db2
+
+# Pipe to jq
+purermyha -j status | jq '.[0].health'
+purermyha -j topology | jq '.[0].nodes[].host'
 ```
 
 ## Failover Flow
@@ -181,7 +199,7 @@ When `DeadSource` is detected, the daemon automatically:
 # Build
 cabal build all
 
-# Run tests (51 tests)
+# Run tests
 cabal test
 
 # Run with a local config

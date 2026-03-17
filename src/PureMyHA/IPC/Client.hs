@@ -59,8 +59,9 @@ recvResponse sock = go []
             else go acc'
 
 -- | Print cluster status in tabular format
-printStatus :: [ClusterStatus] -> IO ()
-printStatus statuses = do
+printStatus :: Bool -> [ClusterStatus] -> IO ()
+printStatus True  statuses = BLC.putStrLn (encode statuses)
+printStatus False statuses = do
   putStrLn $ padR 20 "CLUSTER" <> padR 25 "HEALTH" <> padR 20 "SOURCE" <> padR 6 "NODES" <> "RECOVERY BLOCKED"
   putStrLn (replicate 80 '-')
   mapM_ printClusterStatus statuses
@@ -78,8 +79,9 @@ printClusterStatus cs = do
            <> blocked
 
 -- | Print topology in tree format
-printTopology :: [ClusterTopologyView] -> IO ()
-printTopology views = mapM_ printClusterTopology views
+printTopology :: Bool -> [ClusterTopologyView] -> IO ()
+printTopology True  views = BLC.putStrLn (encode views)
+printTopology False views = mapM_ printClusterTopology views
 
 printClusterTopology :: ClusterTopologyView -> IO ()
 printClusterTopology ctv = do
@@ -103,14 +105,16 @@ printNode isSource nsv = do
   putStrLn $ prefix <> host <> " [" <> health <> "]" <> lag <> errant
 
 -- | Print an operation result
-printOperationResult :: OperationResult -> IO ()
-printOperationResult (OperationSuccess msg) = TIO.putStrLn $ "OK: " <> msg
-printOperationResult (OperationFailure msg) = TIO.putStrLn $ "ERROR: " <> msg
+printOperationResult :: Bool -> OperationResult -> IO ()
+printOperationResult True  result = BLC.putStrLn (encode result)
+printOperationResult False (OperationSuccess msg) = TIO.putStrLn $ "OK: " <> msg
+printOperationResult False (OperationFailure msg) = TIO.putStrLn $ "ERROR: " <> msg
 
 -- | Print errant GTID info
-printErrantGtids :: [ErrantGtidInfo] -> IO ()
-printErrantGtids [] = putStrLn "No errant GTIDs detected."
-printErrantGtids infos = do
+printErrantGtids :: Bool -> [ErrantGtidInfo] -> IO ()
+printErrantGtids True  infos = BLC.putStrLn (encode infos)
+printErrantGtids False [] = putStrLn "No errant GTIDs detected."
+printErrantGtids False infos = do
   putStrLn "Errant GTIDs:"
   mapM_ printErrantGtidInfo infos
 
