@@ -1,6 +1,7 @@
 module PureMyHA.MySQL.GTID
   ( isEmptyGtidSet
   , parseGtidIntervals
+  , gtidTransactionCount
   , GtidInterval (..)
   , GtidEntry (..)
   ) where
@@ -51,3 +52,15 @@ parseGtidIntervals t
             (Just start, Just end) -> Right (GtidInterval start end)
             _ -> Left $ "Invalid GTID interval: " <> T.unpack iv
         _ -> Left $ "Invalid GTID interval: " <> T.unpack iv
+
+-- | GTID セット文字列中のトランザクション総数を返す。
+-- パースエラーまたは空文字列の場合は 0 を返す。
+gtidTransactionCount :: Text -> Integer
+gtidTransactionCount t =
+  case parseGtidIntervals t of
+    Left  _       -> 0
+    Right entries -> sum
+      [ giEnd iv - giStart iv + 1
+      | entry <- entries
+      , iv    <- geIntervals entry
+      ]

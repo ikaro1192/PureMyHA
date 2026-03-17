@@ -18,6 +18,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import PureMyHA.Types
 import PureMyHA.Config (CandidatePriority (..))
+import PureMyHA.MySQL.GTID (gtidTransactionCount)
 
 data CandidateInfo = CandidateInfo
   { ciNodeId       :: NodeId
@@ -92,7 +93,6 @@ priorityRank priorities host =
     (rank:_) -> rank
     []       -> maxBound
 
--- | Rough proxy for GTID progress: length of Executed_Gtid_Set string
--- In production, MySQL GTID_SUBSET should be used for real comparison
-gtidScore :: CandidateInfo -> Int
-gtidScore = T.length . ciExecutedGtid
+-- | GTID セット中のトランザクション総数をスコアとして返す。
+gtidScore :: CandidateInfo -> Integer
+gtidScore = gtidTransactionCount . ciExecutedGtid

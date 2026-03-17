@@ -169,8 +169,17 @@ spec = do
     it "returns 0 for empty GTID" $
       gtidScore (CandidateInfo (NodeId "db2" 3306) "" 0) `shouldBe` 0
 
-    it "returns string length for non-empty GTID" $
-      gtidScore (CandidateInfo (NodeId "db2" 3306) "uuid1:1-100" 0) `shouldBe` 11
+    it "returns transaction count for a range" $
+      gtidScore (CandidateInfo (NodeId "db2" 3306) "uuid1:1-100" 0) `shouldBe` 100
+
+    it "returns 1 for a single transaction" $
+      gtidScore (CandidateInfo (NodeId "db2" 3306) "uuid1:5" 0) `shouldBe` 1
+
+    it "returns 0 for invalid GTID" $
+      gtidScore (CandidateInfo (NodeId "db2" 3306) ":invalid" 0) `shouldBe` 0
+
+    it "sums transactions across multiple UUIDs" $
+      gtidScore (CandidateInfo (NodeId "db2" 3306) "uuid1:1-100,uuid2:1-3" 0) `shouldBe` 103
 
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True
