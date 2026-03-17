@@ -13,10 +13,10 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Anti-Flap Protection** — Blocks repeated automatic failovers via configurable `recovery_block_period`
 - **Hook Support** — Pre/post hooks for failover and switchover events
 - **MySQL 8.4 Native** — Uses only modern syntax (`SHOW REPLICA STATUS`, `CHANGE REPLICATION SOURCE TO`, etc.)
-- **Graceful Shutdown** — SIGTERM/SIGINT でソケットファイルをクリーンアップして終了
-- **Config Hot-Reload** — SIGHUP で monitoring / hooks 設定を再読み込み（再起動不要）
-- **Topology Auto-Discovery** — 設定可能な間隔で新規ノードを自動検出し監視を追加
-- **Dry-run Mode** — `switchover --dry-run` で候補選択のみ実行（SQL 不実行）
+- **Graceful Shutdown** — Cleans up the socket file and exits on SIGTERM/SIGINT
+- **Config Hot-Reload** — Reloads monitoring and hooks config on SIGHUP without restart
+- **Topology Auto-Discovery** — Automatically detects and begins monitoring new nodes at a configurable interval
+- **Dry-run Mode** — Run `switchover --dry-run` to preview the candidate selection without executing any SQL
 
 ## Requirements
 
