@@ -1,5 +1,6 @@
 module PureMyHA.Failover.Switchover
   ( runSwitchover
+  , dryRunSwitchover
   , switchoverReconnectTargets
   ) where
 
@@ -155,3 +156,20 @@ reconnectToNew user password newSourceId ns = do
     changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId)
     startReplica conn
   pure ()
+
+-- | Dry-run switchover: validate and select candidate without executing SQL
+dryRunSwitchover
+  :: TVarDaemonState
+  -> ClusterConfig
+  -> FailoverConfig
+  -> Maybe Text          -- ^ --to host
+  -> IO (Either Text Text)
+dryRunSwitchover tvar cc fc mToHost = do
+  mTopo <- getClusterTopology tvar (ccName cc)
+  case mTopo of
+    Nothing   -> pure (Left "Cluster not found")
+    Just topo ->
+      case selectCandidate (ctNodes topo) (fcCandidatePriority fc) mToHost of
+        Left  err         -> pure (Left err)
+        Right candidateId ->
+          pure (Right ("Dry run: would promote " <> nodeHost candidateId <> " to source"))

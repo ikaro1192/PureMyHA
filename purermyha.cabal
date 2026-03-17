@@ -58,7 +58,8 @@ library
     yaml             >= 0.11,
     optparse-applicative >= 0.16,
     network          >= 3.1,
-    katip            >= 0.8
+    katip            >= 0.8,
+    unix             >= 2.7
 
 executable purermyhad
   import:          common-options
@@ -67,7 +68,8 @@ executable purermyhad
   build-depends:
     purermyha,
     optparse-applicative >= 0.16,
-    katip            >= 0.8
+    katip            >= 0.8,
+    unix             >= 2.7
 
 executable purermyha
   import:          common-options

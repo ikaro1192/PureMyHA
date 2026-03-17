@@ -13,6 +13,10 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Anti-Flap Protection** — Blocks repeated automatic failovers via configurable `recovery_block_period`
 - **Hook Support** — Pre/post hooks for failover and switchover events
 - **MySQL 8.4 Native** — Uses only modern syntax (`SHOW REPLICA STATUS`, `CHANGE REPLICATION SOURCE TO`, etc.)
+- **Graceful Shutdown** — SIGTERM/SIGINT でソケットファイルをクリーンアップして終了
+- **Config Hot-Reload** — SIGHUP で monitoring / hooks 設定を再読み込み（再起動不要）
+- **Topology Auto-Discovery** — 設定可能な間隔で新規ノードを自動検出し監視を追加
+- **Dry-run Mode** — `switchover --dry-run` で候補選択のみ実行（SQL 不実行）
 
 ## Requirements
 
@@ -94,6 +98,7 @@ monitoring:
   connect_timeout: 2s
   replication_lag_warning: 10s
   replication_lag_critical: 30s
+  discovery_interval: 300s   # Optional; 0s = disabled. Default: 300s
 
 failure_detection:
   recovery_block_period: 3600s   # Block auto-failover for this long after a failover
@@ -126,6 +131,21 @@ See `config/config.yaml.example` for a full annotated example.
 purermyhad --config /etc/purermyha/config.yaml
 ```
 
+### Daemon management
+
+| Signal | Effect |
+|--------|--------|
+| `SIGTERM` / `SIGINT` | Graceful shutdown — stops all workers and removes the socket file |
+| `SIGHUP` | Hot-reload `monitoring` and `hooks` config without restart |
+
+```bash
+# Reload config (e.g. after editing intervals or hooks)
+kill -HUP $(pidof purermyhad)
+
+# Graceful stop
+kill -TERM $(pidof purermyhad)
+```
+
 ### Global flags
 
 | Flag | Short | Default | Description |
@@ -145,6 +165,9 @@ purermyha topology
 
 # Manual switchover (planned maintenance)
 purermyha switchover [--to=<host>] [--cluster=<name>]
+
+# Dry-run: show which replica would be promoted without executing
+purermyha switchover --dry-run [--to=<host>]
 
 # Acknowledge recovery block (re-enable auto-failover after anti-flap period)
 purermyha ack-recovery [--cluster=<name>]
@@ -179,6 +202,10 @@ PureMyHA writes structured, timestamped logs via [katip](https://hackage.haskell
 | Node recovered | Info |
 | Auto-failover started / completed / failed | Info / Error |
 | Switchover started / completed / failed | Info / Error |
+| Config reloaded (SIGHUP) | Info |
+| Config reload failed (SIGHUP) | Warn |
+| Topology refresh: N new node(s) found | Info |
+| Daemon shutting down | Info |
 
 ### Example output
 

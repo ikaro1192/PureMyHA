@@ -59,6 +59,7 @@ data MonitoringConfig = MonitoringConfig
   , mcConnectTimeout         :: NominalDiffTime
   , mcReplicationLagWarning  :: NominalDiffTime
   , mcReplicationLagCritical :: NominalDiffTime
+  , mcDiscoveryInterval      :: NominalDiffTime  -- 0 = disabled, default 300s
   } deriving (Show, Generic)
 
 data FailureDetectionConfig = FailureDetectionConfig
@@ -137,10 +138,11 @@ instance FromJSON Credentials where
 instance FromJSON MonitoringConfig where
   parseJSON = withObject "MonitoringConfig" $ \o ->
     MonitoringConfig
-      <$> (unDuration <$> o .: "interval")
-      <*> (unDuration <$> o .: "connect_timeout")
-      <*> (unDuration <$> o .: "replication_lag_warning")
-      <*> (unDuration <$> o .: "replication_lag_critical")
+      <$> (unDuration <$> o .:  "interval")
+      <*> (unDuration <$> o .:  "connect_timeout")
+      <*> (unDuration <$> o .:  "replication_lag_warning")
+      <*> (unDuration <$> o .:  "replication_lag_critical")
+      <*> (unDuration <$> o .:? "discovery_interval" .!= DurationField 300)
 
 instance FromJSON FailureDetectionConfig where
   parseJSON = withObject "FailureDetectionConfig" $ \o ->

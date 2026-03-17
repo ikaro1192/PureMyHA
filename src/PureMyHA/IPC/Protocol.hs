@@ -129,7 +129,7 @@ instance FromJSON ErrantGtidInfo where
 data Request
   = ReqStatus   { reqCluster :: Maybe ClusterName }
   | ReqTopology { reqCluster :: Maybe ClusterName }
-  | ReqSwitchover { reqCluster :: Maybe ClusterName, reqToHost :: Maybe Text }
+  | ReqSwitchover { reqCluster :: Maybe ClusterName, reqToHost :: Maybe Text, reqDryRun :: Bool }
   | ReqAckRecovery { reqCluster :: Maybe ClusterName }
   | ReqErrantGtid { reqCluster :: Maybe ClusterName }
   | ReqFixErrantGtid { reqCluster :: Maybe ClusterName }
@@ -138,7 +138,7 @@ data Request
 instance ToJSON Request where
   toJSON (ReqStatus mc)          = object ["type" .= ("status" :: Text),         "cluster" .= mc]
   toJSON (ReqTopology mc)        = object ["type" .= ("topology" :: Text),        "cluster" .= mc]
-  toJSON (ReqSwitchover mc mh)   = object ["type" .= ("switchover" :: Text),      "cluster" .= mc, "toHost" .= mh]
+  toJSON (ReqSwitchover mc mh dr) = object ["type" .= ("switchover" :: Text),      "cluster" .= mc, "toHost" .= mh, "dryRun" .= dr]
   toJSON (ReqAckRecovery mc)     = object ["type" .= ("ack-recovery" :: Text),    "cluster" .= mc]
   toJSON (ReqErrantGtid mc)      = object ["type" .= ("errant-gtid" :: Text),     "cluster" .= mc]
   toJSON (ReqFixErrantGtid mc)   = object ["type" .= ("fix-errant-gtid" :: Text), "cluster" .= mc]
@@ -149,7 +149,7 @@ instance FromJSON Request where
     case t of
       "status"          -> ReqStatus        <$> o .:? "cluster"
       "topology"        -> ReqTopology      <$> o .:? "cluster"
-      "switchover"      -> ReqSwitchover    <$> o .:? "cluster" <*> o .:? "toHost"
+      "switchover"      -> ReqSwitchover    <$> o .:? "cluster" <*> o .:? "toHost" <*> o .: "dryRun"
       "ack-recovery"    -> ReqAckRecovery   <$> o .:? "cluster"
       "errant-gtid"     -> ReqErrantGtid    <$> o .:? "cluster"
       "fix-errant-gtid" -> ReqFixErrantGtid <$> o .:? "cluster"

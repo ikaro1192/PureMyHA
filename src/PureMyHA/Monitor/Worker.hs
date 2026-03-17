@@ -1,55 +1,126 @@
 module PureMyHA.Monitor.Worker
   ( startMonitorWorkers
+  , startTopologyRefreshWorker
+  , WorkerRegistry
   , monitorNode
   ) where
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, Async)
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM (atomically, TVar, newTVarIO, modifyTVar', readTVarIO)
 import Control.Exception (SomeException, catch)
-import Control.Monad (when)
+import Control.Monad (when, forM, forM_, unless)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time (getCurrentTime)
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), HooksConfig (..))
 import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
 import PureMyHA.Logger (Logger, logInfo, logWarn)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
+import PureMyHA.Topology.Discovery (discoverTopology)
 import PureMyHA.Topology.State
 import PureMyHA.Types
 import PureMyHA.Monitor.Detector (detectClusterHealth, identifySource)
 
--- | Start one async monitor worker per node in a cluster
+type WorkerRegistry = TVar (Map.Map NodeId (Async ()))
+
+-- | Start one async monitor worker per node in a cluster; also returns registry
 startMonitorWorkers
   :: TVarDaemonState
   -> ClusterConfig
-  -> MonitoringConfig
+  -> TVar MonitoringConfig
+  -> TVar (Maybe HooksConfig)
   -> Text             -- ^ password
-  -> Maybe HooksConfig
   -> Logger
-  -> IO [Async ()]
-startMonitorWorkers tvar cc mc password mHooks logger = do
+  -> IO (WorkerRegistry, [Async ()])
+startMonitorWorkers tvar cc mcVar hooksVar password logger = do
+  reg <- newTVarIO Map.empty
   let nodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
-  mapM (\nid -> async (runWorker tvar cc mc password mHooks nid logger)) nodes
+  asyncs <- forM nodes $ \nid -> do
+    a <- async (runWorker tvar cc mcVar hooksVar password nid logger)
+    atomically $ modifyTVar' reg (Map.insert nid a)
+    pure a
+  pure (reg, asyncs)
 
 runWorker
   :: TVarDaemonState
   -> ClusterConfig
-  -> MonitoringConfig
+  -> TVar MonitoringConfig
+  -> TVar (Maybe HooksConfig)
   -> Text
-  -> Maybe HooksConfig
   -> NodeId
   -> Logger
   -> IO ()
-runWorker tvar cc mc password mHooks nid logger = loop
+runWorker tvar cc mcVar hooksVar password nid logger = loop
   where
-    intervalMicros = round (mcInterval mc * 1_000_000) :: Int
     loop = do
+      mc     <- readTVarIO mcVar
+      mHooks <- readTVarIO hooksVar
+      let intervalMicros = round (mcInterval mc * 1_000_000) :: Int
       monitorNode tvar cc mc password mHooks nid logger
         `catch` (\(_ :: SomeException) -> pure ())
       threadDelay intervalMicros
       loop
+
+-- | Start the topology refresh worker for a cluster
+startTopologyRefreshWorker
+  :: TVarDaemonState
+  -> ClusterConfig
+  -> TVar MonitoringConfig
+  -> TVar (Maybe HooksConfig)
+  -> Text
+  -> WorkerRegistry
+  -> Logger
+  -> IO (Async ())
+startTopologyRefreshWorker tvar cc mcVar hooksVar password reg logger =
+  async (topologyRefreshLoop tvar cc mcVar hooksVar password reg logger)
+
+topologyRefreshLoop
+  :: TVarDaemonState
+  -> ClusterConfig
+  -> TVar MonitoringConfig
+  -> TVar (Maybe HooksConfig)
+  -> Text
+  -> WorkerRegistry
+  -> Logger
+  -> IO ()
+topologyRefreshLoop tvar cc mcVar hooksVar password reg logger = loop
+  where
+    loop = do
+      mc <- readTVarIO mcVar
+      let interval = mcDiscoveryInterval mc
+      if interval <= 0
+        then threadDelay 60_000_000  -- disabled: check every 60s in case config reloads
+        else do
+          threadDelay (round (interval * 1_000_000) :: Int)
+          runTopologyRefresh tvar cc mcVar hooksVar password reg logger
+            `catch` (\(_ :: SomeException) -> pure ())
+      loop
+
+runTopologyRefresh
+  :: TVarDaemonState
+  -> ClusterConfig
+  -> TVar MonitoringConfig
+  -> TVar (Maybe HooksConfig)
+  -> Text
+  -> WorkerRegistry
+  -> Logger
+  -> IO ()
+runTopologyRefresh tvar cc mcVar hooksVar password reg logger = do
+  newTopo    <- discoverTopology cc password
+  atomically $ updateClusterTopology tvar newTopo
+  knownNodes <- Map.keysSet <$> readTVarIO reg
+  let discovered = Map.keysSet (ctNodes newTopo)
+      newNodes   = Set.toList (Set.difference discovered knownNodes)
+  unless (null newNodes) $
+    logInfo logger $ "[" <> ccName cc <> "] Topology refresh: "
+      <> T.pack (show (length newNodes)) <> " new node(s) found"
+  forM_ newNodes $ \nid -> do
+    a <- async (runWorker tvar cc mcVar hooksVar password nid logger)
+    atomically $ modifyTVar' reg (Map.insert nid a)
 
 -- | Perform a single monitoring cycle for a node
 monitorNode

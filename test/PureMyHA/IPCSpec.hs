@@ -18,9 +18,13 @@ spec = do
     it "round-trips ReqTopology" $
       roundTrip (ReqTopology (Just "main")) `shouldBe` Just (ReqTopology (Just "main"))
 
-    it "round-trips ReqSwitchover" $
-      roundTrip (ReqSwitchover (Just "main") (Just "db2"))
-        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2"))
+    it "round-trips ReqSwitchover with dryRun=false" $
+      roundTrip (ReqSwitchover (Just "main") (Just "db2") False)
+        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") False)
+
+    it "round-trips ReqSwitchover with dryRun=true" $
+      roundTrip (ReqSwitchover (Just "main") (Just "db2") True)
+        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") True)
 
     it "round-trips ReqAckRecovery" $
       roundTrip (ReqAckRecovery Nothing) `shouldBe` Just (ReqAckRecovery Nothing)

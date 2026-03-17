@@ -20,7 +20,7 @@ data CLIOptions = CLIOptions
 data Command
   = CmdStatus
   | CmdTopology
-  | CmdSwitchover { cmdToHost :: Maybe Text }
+  | CmdSwitchover (Maybe Text) Bool
   | CmdAckRecovery
   | CmdErrantGtid
   | CmdFixErrantGtid
@@ -62,6 +62,9 @@ switchoverCmd = CmdSwitchover
         ( long "to"
         <> metavar "HOST"
         <> help "Target host to promote" ))
+  <*> switch
+        ( long "dry-run"
+        <> help "Show what would happen without executing" )
 
 main :: IO ()
 main = do
@@ -74,7 +77,7 @@ main = do
       req = case optCommand opts of
         CmdStatus           -> ReqStatus mCluster
         CmdTopology         -> ReqTopology mCluster
-        CmdSwitchover mTo   -> ReqSwitchover mCluster mTo
+        CmdSwitchover mTo dr  -> ReqSwitchover mCluster mTo dr
         CmdAckRecovery      -> ReqAckRecovery mCluster
         CmdErrantGtid       -> ReqErrantGtid mCluster
         CmdFixErrantGtid    -> ReqFixErrantGtid mCluster

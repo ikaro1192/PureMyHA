@@ -5,7 +5,7 @@ module PureMyHA.IPC.Server
 
 import Control.Concurrent.Async (async)
 import Control.Concurrent.STM (atomically)
-import Control.Exception (bracket, try, SomeException, finally)
+import Control.Exception (bracket, try, catch, SomeException, finally)
 import Data.Aeson (encode, eitherDecode)
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
@@ -20,7 +20,8 @@ import Network.Socket hiding (recv, send)
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
-import PureMyHA.Failover.Switchover (runSwitchover)
+import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
+import System.Posix.Files (removeLink)
 import PureMyHA.IPC.Protocol
 import PureMyHA.Logger (Logger)
 import PureMyHA.Topology.State
@@ -40,13 +41,16 @@ startIPCServer
   -> Logger
   -> IO ()
 startIPCServer tvar clusterMap socketPath logger =
-  bracket (openListenSocket socketPath) close $ \sock -> do
+  bracket (openListenSocket socketPath)
+          (\sock -> close sock >> removeLink socketPath `catch` \(_ :: SomeException) -> pure ())
+          $ \sock -> do
     listen sock 5
     acceptLoop sock tvar clusterMap logger
 
 openListenSocket :: FilePath -> IO Socket
 openListenSocket path = do
   sock <- socket AF_UNIX Stream defaultProtocol
+  removeLink path `catch` \(_ :: SomeException) -> pure ()  -- remove stale socket file
   bind sock (SockAddrUnix path)
   pure sock
 
@@ -100,14 +104,21 @@ handleRequest tvar clusterMap logger req = case req of
     let topos = filterClusters mCluster (dsClusters ds)
     pure $ RespTopology (map toClusterTopologyView topos)
 
-  ReqSwitchover mCluster mToHost ->
+  ReqSwitchover mCluster mToHost dryRun ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, fc, _, password, mHooks) -> do
-        result <- runSwitchover tvar cc fc password mToHost mHooks logger
-        pure $ RespOperation $ case result of
-          Left err -> OperationFailure err
-          Right () -> OperationSuccess "Switchover completed"
+      Just (_, cc, fc, _, password, mHooks) ->
+        if dryRun
+          then do
+            result <- dryRunSwitchover tvar cc fc mToHost
+            pure $ RespOperation $ case result of
+              Left err  -> OperationFailure err
+              Right msg -> OperationSuccess msg
+          else do
+            result <- runSwitchover tvar cc fc password mToHost mHooks logger
+            pure $ RespOperation $ case result of
+              Left err -> OperationFailure err
+              Right () -> OperationSuccess "Switchover completed"
 
   ReqAckRecovery mCluster ->
     case lookupCluster mCluster clusterMap of
