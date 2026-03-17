@@ -37,18 +37,11 @@ GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'purermyha'@'%';
 
 ## Architecture
 
-```
-┌─────────────────┐     Unix socket      ┌──────────────────┐
-│   purermyhad    │◄────────────────────►│   purermyha      │
-│   (daemon)      │  /run/purermyhad.sock │   (CLI)          │
-└─────────────────┘                      └──────────────────┘
-        │
-        │  per-node goroutines (STM)
-        ▼
-┌──────────────────────────────────┐
-│  MySQL Cluster                   │
-│  db1 (source) ── db2 (replica)   │
-└──────────────────────────────────┘
+```mermaid
+graph LR
+    CLI["purermyha (CLI)"] <-->|"Unix socket\n/run/purermyhad.sock"| Daemon["purermyhad (daemon)"]
+    Daemon -->|"per-node threads (STM)"| db1["db1 (source)"]
+    db1 -->|replication| db2["db2 (replica)"]
 ```
 
 | Component    | Role |
@@ -60,10 +53,11 @@ Daemon and CLI communicate over a Unix domain socket (`/run/purermyhad.sock`) us
 
 ### Daemon HA with Pacemaker
 
-```
-Node1 (Active)  ─── Corosync/Pacemaker ───  Node2 (Standby)
-                            │
-                       QDevice (quorum arbiter)
+```mermaid
+graph LR
+    Node1["Node1 (Active)"] --- Pacemaker["Corosync/Pacemaker"]
+    Pacemaker --- Node2["Node2 (Standby)"]
+    Pacemaker --- QDevice["QDevice\n(quorum arbiter)"]
 ```
 
 PureMyHA does **not** implement leader election itself — it delegates entirely to Pacemaker. Daemon state is held in memory only and rebuilt from MySQL on restart.

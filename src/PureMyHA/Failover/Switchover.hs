@@ -140,7 +140,7 @@ waitForCatchup ci (Just targetGtid) secondsLeft
         mRs <- showReplicaStatus conn
         case mRs of
           Nothing -> pure True
-          Just rs -> gtidSubset conn (rsExecutedGtidSet rs) targetGtid
+          Just rs -> gtidSubset conn targetGtid (rsExecutedGtidSet rs)
       case result of
         Left _      -> pure False
         Right True  -> pure True
