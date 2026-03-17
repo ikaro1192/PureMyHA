@@ -109,7 +109,12 @@ hooks:
   post_failover: /etc/purermyha/hooks/post_failover.sh
   pre_switchover: /etc/purermyha/hooks/pre_switchover.sh
   post_switchover: /etc/purermyha/hooks/post_switchover.sh
+
+logging:
+  log_file: /var/log/puremyha.log  # Optional; defaults to /var/log/puremyha.log
 ```
+
+The `logging` section is optional. Omitting it entirely uses the default log file path.
 
 See `config/config.yaml.example` for a full annotated example.
 
@@ -159,6 +164,30 @@ purermyha -j switchover --to db2
 # Pipe to jq
 purermyha -j status | jq '.[0].health'
 purermyha -j topology | jq '.[0].nodes[].host'
+```
+
+## Logging
+
+PureMyHA writes structured, timestamped logs via [katip](https://hackage.haskell.org/package/katip). The log file path is configured with `logging.log_file` (default: `/var/log/puremyha.log`).
+
+### Logged events
+
+| Event | Level |
+|-------|-------|
+| Daemon started | Info |
+| Node unreachable / connect failed | Warn |
+| Node recovered | Info |
+| Auto-failover started / completed / failed | Info / Error |
+| Switchover started / completed / failed | Info / Error |
+
+### Example output
+
+```
+[2026-03-17 12:34:56 UTC] [Info] purermyhad started
+[2026-03-17 12:35:01 UTC] [Warn] [main] Node db1 unreachable: Connection refused
+[2026-03-17 12:35:10 UTC] [Info] [main] Auto-failover started
+[2026-03-17 12:35:12 UTC] [Info] [main] Auto-failover completed: new source is db2
+[2026-03-17 12:35:13 UTC] [Info] [main] Node db1 recovered
 ```
 
 ## Failover Flow

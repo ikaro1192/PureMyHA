@@ -22,6 +22,7 @@ import PureMyHA.Config
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover)
 import PureMyHA.IPC.Protocol
+import PureMyHA.Logger (Logger)
 import PureMyHA.Topology.State
 import PureMyHA.Types
 
@@ -36,11 +37,12 @@ startIPCServer
   :: TVarDaemonState
   -> ClusterMap
   -> FilePath
+  -> Logger
   -> IO ()
-startIPCServer tvar clusterMap socketPath =
+startIPCServer tvar clusterMap socketPath logger =
   bracket (openListenSocket socketPath) close $ \sock -> do
     listen sock 5
-    acceptLoop sock tvar clusterMap
+    acceptLoop sock tvar clusterMap logger
 
 openListenSocket :: FilePath -> IO Socket
 openListenSocket path = do
@@ -48,20 +50,20 @@ openListenSocket path = do
   bind sock (SockAddrUnix path)
   pure sock
 
-acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> IO ()
-acceptLoop listenSock tvar clusterMap = do
+acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> Logger -> IO ()
+acceptLoop listenSock tvar clusterMap logger = do
   (clientSock, _) <- accept listenSock
-  _ <- async $ handleClient clientSock tvar clusterMap `finally` close clientSock
-  acceptLoop listenSock tvar clusterMap
+  _ <- async $ handleClient clientSock tvar clusterMap logger `finally` close clientSock
+  acceptLoop listenSock tvar clusterMap logger
 
-handleClient :: Socket -> TVarDaemonState -> ClusterMap -> IO ()
-handleClient sock tvar clusterMap = do
+handleClient :: Socket -> TVarDaemonState -> ClusterMap -> Logger -> IO ()
+handleClient sock tvar clusterMap logger = do
   result <- try @SomeException $ do
     msg <- recvLine sock
     case eitherDecode (BLC.pack msg) of
       Left err  -> sendResponse sock (RespError (T.pack err))
       Right req -> do
-        resp <- handleRequest tvar clusterMap req
+        resp <- handleRequest tvar clusterMap logger req
         sendResponse sock resp
   case result of
     Left _ -> pure ()
@@ -86,8 +88,8 @@ sendResponse sock resp = do
   let bytes = BL.toStrict (encode resp <> BLC.singleton '\n')
   NSB.sendAll sock bytes
 
-handleRequest :: TVarDaemonState -> ClusterMap -> Request -> IO Response
-handleRequest tvar clusterMap req = case req of
+handleRequest :: TVarDaemonState -> ClusterMap -> Logger -> Request -> IO Response
+handleRequest tvar clusterMap logger req = case req of
   ReqStatus mCluster -> do
     ds <- readDaemonState tvar
     let topos = filterClusters mCluster (dsClusters ds)
@@ -102,7 +104,7 @@ handleRequest tvar clusterMap req = case req of
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
       Just (_, cc, fc, _, password, mHooks) -> do
-        result <- runSwitchover tvar cc fc password mToHost mHooks
+        result <- runSwitchover tvar cc fc password mToHost mHooks logger
         pure $ RespOperation $ case result of
           Left err -> OperationFailure err
           Right () -> OperationSuccess "Switchover completed"

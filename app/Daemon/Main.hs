@@ -13,6 +13,7 @@ import System.IO (hPutStrLn, stderr)
 
 import PureMyHA.Config
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath)
+import PureMyHA.Logger (initLogger, logInfo)
 import PureMyHA.Monitor.Worker (startMonitorWorkers)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
@@ -47,6 +48,9 @@ main = do
     Left err  -> die $ "Failed to load config: " <> err
     Right c   -> pure c
 
+  let logFile = lcLogFile (cfgLogging cfg)
+  logger <- initLogger logFile
+
   tvar <- newDaemonState
 
   clusterPasswords <- mapM (\cc -> (cc,) <$> loadPassword (ccCredentials cc)) (cfgClusters cfg)
@@ -58,12 +62,12 @@ main = do
         ]
 
   allWorkers <- fmap concat $ mapM
-    (\((cc, pw), _) -> startMonitorWorkers tvar cc (cfgMonitoring cfg) pw)
+    (\((cc, pw), _) -> startMonitorWorkers tvar cc (cfgMonitoring cfg) pw logger)
     (zip clusterPasswords clusterEntries)
 
-  ipcAsync <- async $ startIPCServer tvar clusterMap (optSocketPath opts)
+  ipcAsync <- async $ startIPCServer tvar clusterMap (optSocketPath opts) logger
 
-  hPutStrLn stderr "purermyhad started"
+  logInfo logger "purermyhad started"
   _ <- waitAnyCancel (ipcAsync : allWorkers)
   pure ()
 

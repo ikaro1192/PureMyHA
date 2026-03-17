@@ -15,6 +15,7 @@ import Database.MySQL.Base (ConnectInfo)
 import PureMyHA.Config
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
+import PureMyHA.Logger (Logger, logInfo, logError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
@@ -39,19 +40,26 @@ runSwitchover
   -> Text              -- ^ password
   -> Maybe Text        -- ^ --to host
   -> Maybe HooksConfig
+  -> Logger
   -> IO (Either Text ())
-runSwitchover tvar cc fc password mToHost mHooks = do
+runSwitchover tvar cc fc password mToHost mHooks logger = do
   mTopo <- getClusterTopology tvar (ccName cc)
   case mTopo of
-    Nothing -> pure (Left "Cluster not found")
+    Nothing -> do
+      logError logger $ "[" <> ccName cc <> "] Switchover failed: Cluster not found"
+      pure (Left "Cluster not found")
     Just topo -> do
       -- Select target
       case selectCandidate (ctNodes topo) (fcCandidatePriority fc) mToHost of
-        Left err -> pure (Left err)
+        Left err -> do
+          logError logger $ "[" <> ccName cc <> "] Switchover failed: " <> err
+          pure (Left err)
         Right candidateId -> do
           let user         = credUser (ccCredentials cc)
               oldSourceId  = ctSourceNodeId topo
               oldSourceHost = fmap nodeHost oldSourceId
+
+          logInfo logger $ "[" <> ccName cc <> "] Switchover started"
 
           -- Pre-switchover hook
           runHookMaybe mHooks hcPreSwitchover cc oldSourceHost (Just (nodeHost candidateId))
@@ -79,7 +87,9 @@ runSwitchover tvar cc fc password mToHost mHooks = do
           caught <- waitForCatchup candidateCi mOldGtid maxWaitSeconds
 
           if not caught
-            then pure (Left "Candidate did not catch up within timeout")
+            then do
+              logError logger $ "[" <> ccName cc <> "] Switchover failed: Candidate did not catch up within timeout"
+              pure (Left "Candidate did not catch up within timeout")
             else do
               -- Step 4: Promote candidate
               promoteResult <- withNodeConn candidateCi $ \conn -> do
@@ -87,7 +97,9 @@ runSwitchover tvar cc fc password mToHost mHooks = do
                 resetReplicaAll conn
                 setReadWrite conn
               case promoteResult of
-                Left err -> pure (Left $ "Promote failed: " <> err)
+                Left err -> do
+                  logError logger $ "[" <> ccName cc <> "] Switchover failed: Promote failed: " <> err
+                  pure (Left $ "Promote failed: " <> err)
                 Right () -> do
                   -- Step 5: Reconnect remaining replicas (including old source)
                   let others = switchoverReconnectTargets (ctNodes topo) candidateId
@@ -96,6 +108,7 @@ runSwitchover tvar cc fc password mToHost mHooks = do
                   -- Post-switchover hook
                   runHookMaybe mHooks hcPostSwitchover cc oldSourceHost (Just (nodeHost candidateId))
 
+                  logInfo logger $ "[" <> ccName cc <> "] Switchover completed: new source is " <> nodeHost candidateId
                   pure (Right ())
 
 waitForCatchup :: ConnectInfo -> Maybe Text -> Int -> IO Bool

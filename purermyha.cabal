@@ -36,6 +36,7 @@ library
   exposed-modules:
     PureMyHA.Types
     PureMyHA.Config
+    PureMyHA.Logger
     PureMyHA.Hook
     PureMyHA.MySQL.Connection
     PureMyHA.MySQL.Query

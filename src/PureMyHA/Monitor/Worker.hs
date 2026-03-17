@@ -13,6 +13,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (getCurrentTime, addUTCTime)
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailoverConfig (..))
+import PureMyHA.Logger (Logger, logInfo, logWarn)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
@@ -25,10 +26,11 @@ startMonitorWorkers
   -> ClusterConfig
   -> MonitoringConfig
   -> Text             -- ^ password
+  -> Logger
   -> IO [Async ()]
-startMonitorWorkers tvar cc mc password = do
+startMonitorWorkers tvar cc mc password logger = do
   let nodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
-  mapM (\nid -> async (runWorker tvar cc mc password nid)) nodes
+  mapM (\nid -> async (runWorker tvar cc mc password nid logger)) nodes
 
 runWorker
   :: TVarDaemonState
@@ -36,12 +38,13 @@ runWorker
   -> MonitoringConfig
   -> Text
   -> NodeId
+  -> Logger
   -> IO ()
-runWorker tvar cc mc password nid = loop
+runWorker tvar cc mc password nid logger = loop
   where
     intervalMicros = round (mcInterval mc * 1_000_000) :: Int
     loop = do
-      monitorNode tvar cc mc password nid
+      monitorNode tvar cc mc password nid logger
         `catch` (\(_ :: SomeException) -> pure ())
       threadDelay intervalMicros
       loop
@@ -53,8 +56,9 @@ monitorNode
   -> MonitoringConfig
   -> Text
   -> NodeId
+  -> Logger
   -> IO ()
-monitorNode tvar cc mc password nid = do
+monitorNode tvar cc mc password nid logger = do
   now <- getCurrentTime
   let user = credUser (ccCredentials cc)
       ci   = makeConnectInfo nid user password
@@ -85,11 +89,28 @@ monitorNode tvar cc mc password nid = do
         , nsConnectError    = Nothing
         , nsErrantGtids     = ""
         }
+  -- Read old state before updating
+  mOldNs <- do
+    mTopo <- getClusterTopology tvar (ccName cc)
+    pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
   -- Update errant GTIDs by querying MySQL
   ns' <- enrichErrantGtids tvar (ccName cc) ns user password
+  logHealthChange logger (ccName cc) nid mOldNs ns'
   atomically $ updateNodeState tvar (ccName cc) ns'
   -- Recompute cluster-level health
   recomputeClusterHealth tvar (ccName cc)
+
+logHealthChange :: Logger -> ClusterName -> NodeId -> Maybe NodeState -> NodeState -> IO ()
+logHealthChange logger clusterName nid mOld new = do
+  let host = nodeHost nid
+  case (fmap nsHealth mOld, nsHealth new) of
+    (Just Healthy, NeedsAttention err) ->
+      logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " unreachable: " <> err
+    (Just (NeedsAttention _), Healthy) ->
+      logInfo logger $ "[" <> clusterName <> "] Node " <> host <> " recovered"
+    (Nothing, NeedsAttention err) ->
+      logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " initial connect failed: " <> err
+    _ -> pure ()
 
 enrichErrantGtids :: TVarDaemonState -> ClusterName -> NodeState -> Text -> Text -> IO NodeState
 enrichErrantGtids tvar clusterName ns user password = do

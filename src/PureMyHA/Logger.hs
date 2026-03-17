@@ -1,0 +1,41 @@
+module PureMyHA.Logger
+  ( Logger
+  , initLogger
+  , closeLogger
+  , logInfo
+  , logWarn
+  , logError
+  ) where
+
+import Data.Text (Text)
+import Katip
+import System.IO (BufferMode (..), IOMode (..), hSetBuffering, openFile)
+
+newtype Logger = Logger LogEnv
+
+initLogger :: FilePath -> IO Logger
+initLogger logFile = do
+  h <- openFile logFile AppendMode
+  hSetBuffering h LineBuffering
+  scribe <- mkHandleScribe ColorIfTerminal h (permitItem InfoS) V2
+  le <- initLogEnv "purermyha" "production"
+  le' <- registerScribe "file" scribe defaultScribeSettings le
+  pure (Logger le')
+
+closeLogger :: Logger -> IO ()
+closeLogger (Logger le) = do
+  _ <- closeScribes le
+  pure ()
+
+logAt :: Logger -> Severity -> Text -> IO ()
+logAt (Logger le) sev msg =
+  runKatipT le $ logMsg "purermyha" sev (logStr msg)
+
+logInfo :: Logger -> Text -> IO ()
+logInfo l = logAt l InfoS
+
+logWarn :: Logger -> Text -> IO ()
+logWarn l = logAt l WarningS
+
+logError :: Logger -> Text -> IO ()
+logError l = logAt l ErrorS

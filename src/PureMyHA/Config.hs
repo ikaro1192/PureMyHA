@@ -7,7 +7,9 @@ module PureMyHA.Config
   , FailureDetectionConfig (..)
   , FailoverConfig (..)
   , HooksConfig (..)
+  , LoggingConfig (..)
   , CandidatePriority (..)
+  , defaultLoggingConfig
   , loadConfig
   , parseDuration
   ) where
@@ -26,7 +28,15 @@ data Config = Config
   , cfgFailureDetection :: FailureDetectionConfig
   , cfgFailover         :: FailoverConfig
   , cfgHooks            :: Maybe HooksConfig
+  , cfgLogging          :: LoggingConfig
   } deriving (Show, Generic)
+
+data LoggingConfig = LoggingConfig
+  { lcLogFile :: FilePath
+  } deriving (Show, Generic)
+
+defaultLoggingConfig :: LoggingConfig
+defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log"
 
 data ClusterConfig = ClusterConfig
   { ccName        :: Text
@@ -97,6 +107,11 @@ instance FromJSON Config where
       <*> o .: "failure_detection"
       <*> o .: "failover"
       <*> o .:? "hooks"
+      <*> o .:? "logging" .!= defaultLoggingConfig
+
+instance FromJSON LoggingConfig where
+  parseJSON = withObject "LoggingConfig" $ \o ->
+    LoggingConfig <$> o .:? "log_file" .!= "/var/log/puremyha.log"
 
 instance FromJSON ClusterConfig where
   parseJSON = withObject "ClusterConfig" $ \o ->

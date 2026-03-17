@@ -12,6 +12,7 @@ import Data.Time (UTCTime, getCurrentTime)
 import PureMyHA.Config
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
+import PureMyHA.Logger (Logger, logInfo, logError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
@@ -26,14 +27,15 @@ runAutoFailover
   -> FailureDetectionConfig
   -> Text              -- ^ password
   -> Maybe HooksConfig
+  -> Logger
   -> IO (Either Text ())
-runAutoFailover tvar lock cc fc fdc password mHooks = do
+runAutoFailover tvar lock cc fc fdc password mHooks logger = do
   -- Try to acquire failover lock (prevent concurrent failovers)
   acquired <- atomically $ tryTakeTMVar lock
   case acquired of
     Nothing -> pure (Left "Failover already in progress")
     Just () -> do
-      result <- doFailover tvar cc fc fdc password mHooks
+      result <- doFailover tvar cc fc fdc password mHooks logger
       atomically $ putTMVar lock ()
       pure result
 
@@ -63,16 +65,23 @@ doFailover
   -> FailureDetectionConfig
   -> Text
   -> Maybe HooksConfig
+  -> Logger
   -> IO (Either Text ())
-doFailover tvar cc fc fdc password mHooks = do
+doFailover tvar cc fc fdc password mHooks logger = do
   mTopo <- getClusterTopology tvar (ccName cc)
   case mTopo of
-    Nothing -> pure (Left "Cluster not found")
+    Nothing -> do
+      logError logger $ "[" <> ccName cc <> "] Auto-failover failed: Cluster not found"
+      pure (Left "Cluster not found")
     Just topo -> do
       now <- getCurrentTime
       case checkAutoFailoverPreconditions now topo (fcMinReplicasForFailover fc) of
-        Left err -> pure (Left err)
-        Right () -> executeFailover tvar cc fc fdc password mHooks topo
+        Left err -> do
+          logError logger $ "[" <> ccName cc <> "] Auto-failover failed: " <> err
+          pure (Left err)
+        Right () -> do
+          logInfo logger $ "[" <> ccName cc <> "] Auto-failover started"
+          executeFailover tvar cc fc fdc password mHooks logger topo
 
 executeFailover
   :: TVarDaemonState
@@ -81,11 +90,14 @@ executeFailover
   -> FailureDetectionConfig
   -> Text
   -> Maybe HooksConfig
+  -> Logger
   -> ClusterTopology
   -> IO (Either Text ())
-executeFailover tvar cc fc fdc password mHooks topo = do
+executeFailover tvar cc fc fdc password mHooks logger topo = do
   case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
-    Left err -> pure (Left err)
+    Left err -> do
+      logError logger $ "[" <> ccName cc <> "] Auto-failover failed: " <> err
+      pure (Left err)
     Right candidateId -> do
       let user          = credUser (ccCredentials cc)
           oldSourceHost = fmap nodeHost (ctSourceNodeId topo)
@@ -94,7 +106,9 @@ executeFailover tvar cc fc fdc password mHooks topo = do
 
       promoteResult <- promoteCandidate user password candidateId
       case promoteResult of
-        Left err -> pure (Left $ "Promote failed: " <> err)
+        Left err -> do
+          logError logger $ "[" <> ccName cc <> "] Auto-failover failed: Promote failed: " <> err
+          pure (Left $ "Promote failed: " <> err)
         Right () -> do
           let otherReplicas = filter
                 (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
@@ -107,6 +121,7 @@ executeFailover tvar cc fc fdc password mHooks topo = do
             setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
 
           runHookMaybe mHooks hcPostFailover cc oldSourceHost (Just (nodeHost candidateId))
+          logInfo logger $ "[" <> ccName cc <> "] Auto-failover completed: new source is " <> nodeHost candidateId
           pure (Right ())
 
 promoteCandidate :: Text -> Text -> NodeId -> IO (Either Text ())
