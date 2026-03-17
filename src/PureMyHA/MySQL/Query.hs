@@ -125,9 +125,8 @@ gtidSubset conn replicaGtid sourceGtid = do
   (_, stream) <- query_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
   rows <- consumeRows stream
   case rows of
-    [[MySQLInt8 1]]  -> pure True
-    [[MySQLInt8U 1]] -> pure True
-    _                -> pure False
+    [[v]] -> pure (intVal v == 1)
+    _     -> pure False
 
 -- | Inject an empty transaction for a given GTID (for errant GTID repair)
 injectEmptyTransaction :: MySQLConn -> Text -> IO ()
