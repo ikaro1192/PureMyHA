@@ -88,6 +88,9 @@ test-suite purermyha-test
     PureMyHA.CandidateSpec
     PureMyHA.TopologySpec
     PureMyHA.IPCSpec
+    PureMyHA.AutoSpec
+    PureMyHA.SwitchoverSpec
+    PureMyHA.DiscoverySpec
   build-depends:
     purermyha,
     hspec            >= 2.9,

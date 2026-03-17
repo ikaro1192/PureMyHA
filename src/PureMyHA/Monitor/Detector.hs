@@ -1,6 +1,7 @@
 module PureMyHA.Monitor.Detector
   ( detectClusterHealth
   , detectNodeHealth
+  , detectReplicaHealth
   , identifySource
   ) where
 

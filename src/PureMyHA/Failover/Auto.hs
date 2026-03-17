@@ -1,5 +1,6 @@
 module PureMyHA.Failover.Auto
   ( runAutoFailover
+  , checkAutoFailoverPreconditions
   ) where
 
 import Control.Concurrent.STM
@@ -7,7 +8,7 @@ import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (getCurrentTime)
+import Data.Time (UTCTime, getCurrentTime)
 import PureMyHA.Config
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
@@ -36,6 +37,25 @@ runAutoFailover tvar lock cc fc fdc password mHooks = do
       atomically $ putTMVar lock ()
       pure result
 
+-- | Check preconditions for auto failover (pure)
+checkAutoFailoverPreconditions
+  :: UTCTime
+  -> ClusterTopology
+  -> Int               -- ^ fcMinReplicasForFailover
+  -> Either Text ()
+checkAutoFailoverPreconditions now topo minReplicas = do
+  case ctRecoveryBlockedUntil topo of
+    Just deadline | now < deadline ->
+      Left "Failover blocked by anti-flap period"
+    _ -> Right ()
+  case ctHealth topo of
+    DeadSource -> Right ()
+    h          -> Left $ "Cluster not in DeadSource state: " <> T.pack (show h)
+  let replicas = filter (not . nsIsSource) (Map.elems (ctNodes topo))
+  if length replicas < minReplicas
+    then Left $ "Not enough replicas for failover (need " <> T.pack (show minReplicas) <> ")"
+    else Right ()
+
 doFailover
   :: TVarDaemonState
   -> ClusterConfig
@@ -49,14 +69,10 @@ doFailover tvar cc fc fdc password mHooks = do
   case mTopo of
     Nothing -> pure (Left "Cluster not found")
     Just topo -> do
-      -- Check anti-flap
       now <- getCurrentTime
-      case ctRecoveryBlockedUntil topo of
-        Just deadline | now < deadline ->
-          pure (Left "Failover blocked by anti-flap period")
-        _ -> case ctHealth topo of
-          DeadSource -> executeFailover tvar cc fc fdc password mHooks topo
-          h          -> pure (Left $ "Cluster not in DeadSource state: " <> T.pack (show h))
+      case checkAutoFailoverPreconditions now topo (fcMinReplicasForFailover fc) of
+        Left err -> pure (Left err)
+        Right () -> executeFailover tvar cc fc fdc password mHooks topo
 
 executeFailover
   :: TVarDaemonState
@@ -68,34 +84,30 @@ executeFailover
   -> ClusterTopology
   -> IO (Either Text ())
 executeFailover tvar cc fc fdc password mHooks topo = do
-  let replicas = filter (not . nsIsSource) (Map.elems (ctNodes topo))
-  if length replicas < fcMinReplicasForFailover fc
-    then pure (Left $ "Not enough replicas for failover (need " <>
-               T.pack (show (fcMinReplicasForFailover fc)) <> ")")
-    else case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
-      Left err -> pure (Left err)
-      Right candidateId -> do
-        let user          = credUser (ccCredentials cc)
-            oldSourceHost = fmap nodeHost (ctSourceNodeId topo)
+  case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
+    Left err -> pure (Left err)
+    Right candidateId -> do
+      let user          = credUser (ccCredentials cc)
+          oldSourceHost = fmap nodeHost (ctSourceNodeId topo)
 
-        runHookMaybe mHooks hcPreFailover cc oldSourceHost (Just (nodeHost candidateId))
+      runHookMaybe mHooks hcPreFailover cc oldSourceHost (Just (nodeHost candidateId))
 
-        promoteResult <- promoteCandidate user password candidateId
-        case promoteResult of
-          Left err -> pure (Left $ "Promote failed: " <> err)
-          Right () -> do
-            let otherReplicas = filter
-                  (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
-                  (Map.elems (ctNodes topo))
-            mapM_ (reconnectReplica user password candidateId) otherReplicas
+      promoteResult <- promoteCandidate user password candidateId
+      case promoteResult of
+        Left err -> pure (Left $ "Promote failed: " <> err)
+        Right () -> do
+          let otherReplicas = filter
+                (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
+                (Map.elems (ctNodes topo))
+          mapM_ (reconnectReplica user password candidateId) otherReplicas
 
-            now <- getCurrentTime
-            atomically $ do
-              recordFailover tvar (ccName cc) now
-              setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
+          now <- getCurrentTime
+          atomically $ do
+            recordFailover tvar (ccName cc) now
+            setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
 
-            runHookMaybe mHooks hcPostFailover cc oldSourceHost (Just (nodeHost candidateId))
-            pure (Right ())
+          runHookMaybe mHooks hcPostFailover cc oldSourceHost (Just (nodeHost candidateId))
+          pure (Right ())
 
 promoteCandidate :: Text -> Text -> NodeId -> IO (Either Text ())
 promoteCandidate user password nid = do

@@ -1,11 +1,13 @@
 module Fixtures
   ( mkNodeState
   , mkReplicaStatus
+  , fixedTime
   , healthySource
   , healthyReplica
   , replicaWithErrantGtid
   , replicaWithIOError
   , unreachableNode
+  , unreachableReplica
   , clusterWithDeadSource
   , clusterHealthy
   ) where
@@ -77,6 +79,9 @@ unreachableNode nid = NodeState
   , nsConnectError    = Just "Connection refused"
   , nsErrantGtids     = ""
   }
+
+unreachableReplica :: NodeState
+unreachableReplica = unreachableNode (NodeId "db5" 3306)
 
 -- | Cluster where source is unreachable, replicas show IO=No
 clusterWithDeadSource :: Map NodeId NodeState

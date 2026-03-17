@@ -1,5 +1,6 @@
 module PureMyHA.Failover.Switchover
   ( runSwitchover
+  , switchoverReconnectTargets
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -21,6 +22,14 @@ import PureMyHA.Types
 
 maxWaitSeconds :: Int
 maxWaitSeconds = 60
+
+-- | Nodes to reconnect after switchover: all nodes except the new source (pure)
+switchoverReconnectTargets
+  :: Map NodeId NodeState
+  -> NodeId             -- ^ candidateId (promoted, excluded from result)
+  -> [NodeState]
+switchoverReconnectTargets nodes candidateId =
+  filter (\ns -> nsNodeId ns /= candidateId) (Map.elems nodes)
 
 -- | Execute a manual switchover
 runSwitchover
@@ -81,8 +90,7 @@ runSwitchover tvar cc fc password mToHost mHooks = do
                 Left err -> pure (Left $ "Promote failed: " <> err)
                 Right () -> do
                   -- Step 5: Reconnect remaining replicas (including old source)
-                  let allNodes = Map.elems (ctNodes topo)
-                      others   = filter (\ns -> nsNodeId ns /= candidateId) allNodes
+                  let others = switchoverReconnectTargets (ctNodes topo) candidateId
                   mapM_ (reconnectToNew user password candidateId) others
 
                   -- Post-switchover hook

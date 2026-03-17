@@ -2,6 +2,11 @@ module PureMyHA.Failover.Candidate
   ( selectCandidate
   , rankCandidates
   , CandidateInfo (..)
+  , isEligibleCandidate
+  , hasErrantGtid
+  , hasConnectError
+  , priorityRank
+  , gtidScore
   ) where
 
 import Data.List (sortBy)
