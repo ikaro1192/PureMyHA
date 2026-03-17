@@ -7,7 +7,8 @@ import Control.Exception (bracket, try, SomeException)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Database.MySQL.Base (ConnectInfo (..), defaultConnectInfo, connect, close, MySQLConn)
+import Database.MySQL.Base (ConnectInfo (..), defaultConnectInfo, close, MySQLConn)
+import PureMyHA.MySQL.Auth (connectWithAuth)
 import PureMyHA.Types (NodeId (..))
 
 -- | Build ConnectInfo from NodeId and credentials
@@ -26,7 +27,7 @@ withNodeConn
   -> (MySQLConn -> IO a)
   -> IO (Either Text a)
 withNodeConn ci action = do
-  result <- try @SomeException $ bracket (connect ci) close action
+  result <- try @SomeException $ bracket (connectWithAuth ci) close action
   pure $ case result of
     Left err -> Left (T.pack (show err))
     Right v  -> Right v

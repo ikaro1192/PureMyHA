@@ -38,6 +38,7 @@ library
     PureMyHA.Config
     PureMyHA.Logger
     PureMyHA.Hook
+    PureMyHA.MySQL.Auth
     PureMyHA.MySQL.Connection
     PureMyHA.MySQL.Query
     PureMyHA.MySQL.GTID
@@ -59,7 +60,13 @@ library
     optparse-applicative >= 0.16,
     network          >= 3.1,
     katip            >= 0.8,
-    unix             >= 2.7
+    unix             >= 2.7,
+    binary           >= 0.8,
+    crypton          >= 0.31,
+    memory           >= 0.14,
+    pem              >= 0.2,
+    asn1-encoding    >= 0.9,
+    asn1-types       >= 0.3
 
 executable purermyhad
   import:          common-options
