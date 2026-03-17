@@ -16,7 +16,7 @@ import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Network.Socket hiding (recv, send)
+import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)

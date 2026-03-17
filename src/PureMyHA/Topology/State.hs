@@ -14,7 +14,6 @@ module PureMyHA.Topology.State
   ) where
 
 import Control.Concurrent.STM
-import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime, addUTCTime, NominalDiffTime)
 import PureMyHA.Types

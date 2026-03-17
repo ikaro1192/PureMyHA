@@ -22,8 +22,6 @@ import PureMyHA.Types
   , ErrantGtidInfo (..)
   , NodeId (..)
   )
-import Data.Time (UTCTime)
-
 -- JSON instances for core types
 
 instance ToJSON NodeId where

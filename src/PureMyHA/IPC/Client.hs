@@ -12,12 +12,11 @@ import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
-import Data.List (intercalate)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import Data.Time (UTCTime, formatTime, defaultTimeLocale)
-import Network.Socket hiding (recv)
+import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.IPC.Protocol
 import PureMyHA.Types

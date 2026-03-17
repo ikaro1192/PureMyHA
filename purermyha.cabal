@@ -62,7 +62,7 @@ library
     katip            >= 0.8,
     unix             >= 2.7,
     binary           >= 0.8,
-    crypton          >= 0.31,
+    crypton          >= 0.31 && < 1.1,
     memory           >= 0.14,
     pem              >= 0.2,
     asn1-encoding    >= 0.9,
