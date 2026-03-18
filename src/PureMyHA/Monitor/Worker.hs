@@ -24,7 +24,7 @@ import PureMyHA.MySQL.Query
 import PureMyHA.Topology.Discovery (discoverTopology)
 import PureMyHA.Topology.State
 import PureMyHA.Types
-import PureMyHA.Monitor.Detector (detectClusterHealth, identifySource)
+import PureMyHA.Monitor.Detector (detectClusterHealth, detectNodeHealth, identifySource)
 
 type WorkerRegistry = TVar (Map.Map NodeId (Async ()))
 
@@ -126,7 +126,7 @@ runTopologyRefresh
   -> Logger
   -> IO ()
 runTopologyRefresh tvar cc mcVar hooksVar lock fc fdc password reg logger = do
-  newTopo    <- discoverTopology cc password
+  newTopo    <- discoverTopology cc password logger
   atomically $ updateClusterTopology tvar newTopo
   knownNodes <- Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes newTopo)
@@ -188,8 +188,9 @@ monitorNode tvar cc _mc lock fc fdc password mHooks nid logger = do
         }
   -- Update errant GTIDs by querying MySQL
   ns' <- enrichErrantGtids tvar (ccName cc) ns user password
-  logHealthChange logger (ccName cc) nid mOldNs ns'
-  atomically $ updateNodeState tvar (ccName cc) ns'
+  let ns'' = ns' { nsHealth = detectNodeHealth ns' }
+  logHealthChange logger (ccName cc) nid mOldNs ns''
+  atomically $ updateNodeState tvar (ccName cc) ns''
   -- Recompute cluster-level health
   recomputeClusterHealth tvar cc lock fc fdc password mHooks logger
 

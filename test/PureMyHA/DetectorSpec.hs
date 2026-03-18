@@ -35,12 +35,28 @@ spec = do
     it "returns NeedsAttention for empty cluster" $
       detectClusterHealth Map.empty `shouldSatisfy` isNeedsAttention
 
-    it "returns UnreachableSource when source is unreachable but replica IO is Connecting" $ do
+    it "returns DeadSource when source is unreachable and replica IO is Connecting" $ do
       let cluster = Map.fromList
             [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })
             , (NodeId "db2" 3306, NodeState
                 { nsNodeId        = NodeId "db2" 3306
                 , nsReplicaStatus = Just (mkReplicaStatus "db1" 3306 IOConnecting "")
+                , nsGtidExecuted  = ""
+                , nsIsSource      = False
+                , nsHealth        = Healthy
+                , nsLastSeen      = Just fixedTime
+                , nsConnectError  = Nothing
+                , nsErrantGtids   = ""
+                })
+            ]
+      detectClusterHealth cluster `shouldBe` DeadSource
+
+    it "returns UnreachableSource when source is unreachable but replica IO is still Yes" $ do
+      let cluster = Map.fromList
+            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })
+            , (NodeId "db2" 3306, NodeState
+                { nsNodeId        = NodeId "db2" 3306
+                , nsReplicaStatus = Just (mkReplicaStatus "db1" 3306 IOYes "")
                 , nsGtidExecuted  = ""
                 , nsIsSource      = False
                 , nsHealth        = Healthy

@@ -15,7 +15,7 @@ import System.Posix.Signals (installHandler, sigTERM, sigINT, sigHUP, Handler(..
 
 import PureMyHA.Config
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath)
-import PureMyHA.Logger (initLogger, logInfo, logWarn, closeLogger)
+import PureMyHA.Logger (Logger, initLogger, logInfo, logWarn, closeLogger)
 import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
@@ -79,7 +79,7 @@ main = do
 
   clusterPasswords <- mapM (\cc -> (cc,) <$> loadPassword (ccCredentials cc)) (cfgClusters cfg)
 
-  clusterEntries <- mapM (initCluster tvar cfg) clusterPasswords
+  clusterEntries <- mapM (initCluster tvar cfg logger) clusterPasswords
   let clusterMap = Map.fromList
         [ (ccName cc, entry)
         | ((cc, _), entry) <- zip clusterPasswords clusterEntries
@@ -116,12 +116,13 @@ main = do
 initCluster
   :: TVarDaemonState
   -> Config
+  -> Logger
   -> (ClusterConfig, Text)
   -> IO (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, Text, Maybe HooksConfig)
-initCluster tvar cfg (cc, password) = do
+initCluster tvar cfg logger (cc, password) = do
   let initTopo = buildInitialTopology cc
   atomically $ updateClusterTopology tvar initTopo
-  topo <- discoverTopology cc password
+  topo <- discoverTopology cc password logger
   atomically $ updateClusterTopology tvar topo
   lock <- newFailoverLock
   pure (lock, cc, cfgFailover cfg, cfgFailureDetection cfg, password, cfgHooks cfg)

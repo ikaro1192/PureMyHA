@@ -11,8 +11,11 @@ import qualified Data.Map.Strict as Map
 import Data.Set (Set)
 import qualified Data.Set as Set
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
+import Control.Monad (when)
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..))
+import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
 import PureMyHA.Types
@@ -22,11 +25,12 @@ import PureMyHA.Monitor.Detector (identifySource, detectClusterHealth)
 discoverTopology
   :: ClusterConfig
   -> Text          -- ^ MySQL password
+  -> Logger
   -> IO ClusterTopology
-discoverTopology cc password = do
+discoverTopology cc password logger = do
   let seedNodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
       user = credUser (ccCredentials cc)
-  nodeStates <- discoverAll user password (Set.fromList seedNodes) Set.empty Map.empty
+  nodeStates <- discoverAll user password (Set.fromList seedNodes) Set.empty Map.empty logger
   pure (buildClusterTopology (ccName cc) nodeStates)
 
 -- | Build a ClusterTopology from discovered node states (pure)
@@ -56,33 +60,43 @@ discoverAll
   -> Set NodeId        -- ^ queue
   -> Set NodeId        -- ^ visited
   -> Map NodeId NodeState
+  -> Logger
   -> IO (Map NodeId NodeState)
-discoverAll user password queue visited acc
+discoverAll user password queue visited acc logger
   | Set.null queue = pure acc
   | otherwise = do
       let (nid, rest) = Set.deleteFindMin queue
       if Set.member nid visited
-        then discoverAll user password rest visited acc
+        then discoverAll user password rest visited acc logger
         else do
-          (ns, replicaIds) <- probeNode user password nid
+          (ns, replicaIds) <- probeNode user password nid logger
           let visited'  = Set.insert nid visited
               acc'      = Map.insert nid ns acc
               fromRs    = nextDiscoveryTargets ns visited' rest
               newQueue  = foldr (\rid q -> if Set.notMember rid visited' then Set.insert rid q else q) fromRs replicaIds
-          discoverAll user password newQueue visited' acc'
+          discoverAll user password newQueue visited' acc' logger
 
 -- | Probe a single node and return its NodeState plus any replicas discovered
--- via SHOW REPLICAS (only populated when the node is a source).
-probeNode :: Text -> Text -> NodeId -> IO (NodeState, [NodeId])
-probeNode user password nid = do
+-- via SHOW PROCESSLIST (only populated when the node is a source).
+probeNode :: Text -> Text -> NodeId -> Logger -> IO (NodeState, [NodeId])
+probeNode user password nid logger = do
   now <- getCurrentTime
   let ci = makeConnectInfo nid user password
   result <- withNodeConn ci $ \conn -> do
     mReplicaStatus <- showReplicaStatus conn
     gtidExec       <- getGtidExecuted conn
     replicaIds <- case mReplicaStatus of
-      Nothing -> showReplicas conn  -- source node: discover downstream replicas
       Just _  -> pure []
+      Nothing -> do
+        -- source node: discover downstream replicas via SHOW PROCESSLIST
+        discovered <- showReplicas conn (nodePort nid)
+        expected   <- countExpectedReplicas conn
+        when (length discovered /= expected) $
+          logInfo logger $ "[" <> nodeHost nid <> "] SHOW REPLICAS reports "
+            <> T.pack (show expected) <> " replica(s) but "
+            <> T.pack (show (length discovered))
+            <> " found via SHOW PROCESSLIST (replicas without report_host may be missing)"
+        pure discovered
     pure (mReplicaStatus, gtidExec, replicaIds)
   let (probeResult, discoveredReplicas) = case result of
         Left err                     -> (Left err, [])

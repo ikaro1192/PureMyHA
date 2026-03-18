@@ -23,7 +23,7 @@ jobs:
       - name: Cache Cabal store
         uses: actions/cache@v4
         with:
-          path: ~/.cabal/store
+          path: ${{ github.workspace }}/.cabal-store
           key: cabal-${{ matrix.arch }}-${{ hashFiles('purermyha.cabal', 'cabal.project') }}
           restore-keys: cabal-${{ matrix.arch }}-
 
@@ -46,7 +46,7 @@ jobs:
             "
 
       - name: Fix Cabal store permissions
-        run: sudo chown -R "$USER" "$HOME/.cabal/store" || true
+        run: sudo chown -R "$USER" "${{ github.workspace }}/.cabal-store" || true
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4

@@ -55,7 +55,7 @@ nsIsReachable ns = isJust (nsLastSeen ns) && nsConnectError ns == Nothing
 replicaIOStopped :: NodeState -> Bool
 replicaIOStopped ns =
   case nsReplicaStatus ns of
-    Just rs -> rsReplicaIORunning rs == IONo
+    Just rs -> rsReplicaIORunning rs /= IOYes
     Nothing -> False
 
 hasIoError :: [NodeState] -> Bool

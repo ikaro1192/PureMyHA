@@ -1,6 +1,7 @@
 module PureMyHA.MySQL.Query
   ( showReplicaStatus
   , showReplicas
+  , countExpectedReplicas
   , getGtidExecuted
   , changeReplicationSourceTo
   , startReplica
@@ -63,19 +64,31 @@ parseIORunning "Yes"        = IOYes
 parseIORunning "Connecting" = IOConnecting
 parseIORunning _            = IONo
 
--- | SHOW REPLICAS — returns NodeIds of connected replicas (MySQL 8.4).
--- Requires report_host (and report_port) to be set on each replica.
--- Replicas with an empty Host are silently skipped.
-showReplicas :: MySQLConn -> IO [NodeId]
-showReplicas conn = do
-  (cols, stream) <- query_ conn "SHOW REPLICAS"
+-- | SHOW REPLICAS — returns the count of replicas listed (MySQL 8.4).
+-- Used only to validate against the SHOW PROCESSLIST discovery count.
+countExpectedReplicas :: MySQLConn -> IO Int
+countExpectedReplicas conn = do
+  (_, stream) <- query_ conn "SHOW REPLICAS"
+  rows <- consumeRows stream
+  pure (length rows)
+
+-- | Discover connected replicas via SHOW PROCESSLIST by inspecting
+-- "Binlog Dump GTID" / "Binlog Dump" threads.  The Host column in
+-- SHOW PROCESSLIST has the form "ip:port", so we can extract the IP
+-- even when report_host is not set on the replica.
+showReplicas :: MySQLConn -> Int -> IO [NodeId]
+showReplicas conn defaultPort = do
+  (cols, stream) <- query_ conn "SHOW PROCESSLIST"
   rows <- consumeRows stream
   let colNames = map (TE.decodeUtf8 . columnName) cols
       toNodeId row =
-        let kvs  = zip colNames row
-            host = textVal (maybe MySQLNull id (lookup "Host" kvs))
-            port = intVal  (maybe MySQLNull id (lookup "Port" kvs))
-        in if host /= "" && port /= 0 then Just (NodeId host port) else Nothing
+        let kvs = zip colNames row
+            cmd = textVal (maybe MySQLNull id (lookup "Command" kvs))
+            h   = textVal (maybe MySQLNull id (lookup "Host"    kvs))
+            ip  = T.takeWhile (/= ':') h
+        in if (cmd == "Binlog Dump GTID" || cmd == "Binlog Dump") && ip /= ""
+             then Just (NodeId ip defaultPort)
+             else Nothing
   pure [nid | Just nid <- map toNodeId rows]
 
 -- | Get @@GLOBAL.gtid_executed
