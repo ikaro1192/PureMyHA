@@ -108,6 +108,7 @@ changeReplicationSourceTo conn host port replUser replPassword = do
             <> ", SOURCE_USER='" <> replUser <> "'"
             <> ", SOURCE_PASSWORD='" <> replPassword <> "'"
             <> ", SOURCE_AUTO_POSITION=1"
+            <> ", SOURCE_GET_SOURCE_PUBLIC_KEY=1"
   _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
   pure ()
 
