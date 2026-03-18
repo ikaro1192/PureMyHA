@@ -1,5 +1,6 @@
 module PureMyHA.MySQL.Query
   ( showReplicaStatus
+  , showReplicas
   , getGtidExecuted
   , changeReplicationSourceTo
   , startReplica
@@ -18,7 +19,7 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BL
 import Database.MySQL.Base
   ( MySQLConn, MySQLValue (..), query_, execute_
-  , Query (..)
+  , Query (..), ColumnDef (..)
   )
 import qualified System.IO.Streams as S
 import PureMyHA.Types
@@ -34,31 +35,48 @@ consumeRows = S.toList
 -- | SHOW REPLICA STATUS (MySQL 8.4 syntax)
 showReplicaStatus :: MySQLConn -> IO (Maybe ReplicaStatus)
 showReplicaStatus conn = do
-  (_, stream) <- query_ conn "SHOW REPLICA STATUS"
+  (cols, stream) <- query_ conn "SHOW REPLICA STATUS"
   rows <- consumeRows stream
   case rows of
     []    -> pure Nothing
-    (r:_) -> pure (parseReplicaStatus r)
+    (r:_) -> pure (parseReplicaStatus (zip (map (TE.decodeUtf8 . columnName) cols) r))
 
-parseReplicaStatus :: [MySQLValue] -> Maybe ReplicaStatus
-parseReplicaStatus row
-  | length row < 52 = Nothing
-  | otherwise = Just ReplicaStatus
-      { rsSourceHost          = textVal (row !! 1)
-      , rsSourcePort          = intVal  (row !! 3)
-      , rsReplicaIORunning    = parseIORunning (textVal (row !! 10))
-      , rsReplicaSQLRunning   = textVal (row !! 11) == "Yes"
-      , rsSecondsBehindSource = maybeIntVal (row !! 32)
-      , rsExecutedGtidSet     = textVal (row !! 51)
-      , rsRetrievedGtidSet    = textVal (row !! 50)
-      , rsLastIOError         = textVal (row !! 38)
-      , rsLastSQLError        = textVal (row !! 37)
-      }
+parseReplicaStatus :: [(Text, MySQLValue)] -> Maybe ReplicaStatus
+parseReplicaStatus kvs =
+  Just ReplicaStatus
+    { rsSourceHost          = look "Source_Host"
+    , rsSourcePort          = intVal (raw "Source_Port")
+    , rsReplicaIORunning    = parseIORunning (look "Replica_IO_Running")
+    , rsReplicaSQLRunning   = look "Replica_SQL_Running" == "Yes"
+    , rsSecondsBehindSource = maybeIntVal (raw "Seconds_Behind_Source")
+    , rsExecutedGtidSet     = look "Executed_Gtid_Set"
+    , rsRetrievedGtidSet    = look "Retrieved_Gtid_Set"
+    , rsLastIOError         = look "Last_IO_Error"
+    , rsLastSQLError        = look "Last_SQL_Error"
+    }
+  where
+    raw  name = maybe MySQLNull id (lookup name kvs)
+    look name = textVal (raw name)
 
 parseIORunning :: Text -> IORunning
 parseIORunning "Yes"        = IOYes
 parseIORunning "Connecting" = IOConnecting
 parseIORunning _            = IONo
+
+-- | SHOW REPLICAS — returns NodeIds of connected replicas (MySQL 8.4).
+-- Requires report_host (and report_port) to be set on each replica.
+-- Replicas with an empty Host are silently skipped.
+showReplicas :: MySQLConn -> IO [NodeId]
+showReplicas conn = do
+  (cols, stream) <- query_ conn "SHOW REPLICAS"
+  rows <- consumeRows stream
+  let colNames = map (TE.decodeUtf8 . columnName) cols
+      toNodeId row =
+        let kvs  = zip colNames row
+            host = textVal (maybe MySQLNull id (lookup "Host" kvs))
+            port = intVal  (maybe MySQLNull id (lookup "Port" kvs))
+        in if host /= "" && port /= 0 then Just (NodeId host port) else Nothing
+  pure [nid | Just nid <- map toNodeId rows]
 
 -- | Get @@GLOBAL.gtid_executed
 getGtidExecuted :: MySQLConn -> IO Text

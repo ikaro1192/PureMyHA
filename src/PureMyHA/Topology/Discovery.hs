@@ -64,22 +64,31 @@ discoverAll user password queue visited acc
       if Set.member nid visited
         then discoverAll user password rest visited acc
         else do
-          ns <- probeNode user password nid
-          let visited' = Set.insert nid visited
-              acc'     = Map.insert nid ns acc
-              newNodes = nextDiscoveryTargets ns visited' rest
-          discoverAll user password newNodes visited' acc'
+          (ns, replicaIds) <- probeNode user password nid
+          let visited'  = Set.insert nid visited
+              acc'      = Map.insert nid ns acc
+              fromRs    = nextDiscoveryTargets ns visited' rest
+              newQueue  = foldr (\rid q -> if Set.notMember rid visited' then Set.insert rid q else q) fromRs replicaIds
+          discoverAll user password newQueue visited' acc'
 
--- | Probe a single node and return its NodeState
-probeNode :: Text -> Text -> NodeId -> IO NodeState
+-- | Probe a single node and return its NodeState plus any replicas discovered
+-- via SHOW REPLICAS (only populated when the node is a source).
+probeNode :: Text -> Text -> NodeId -> IO (NodeState, [NodeId])
 probeNode user password nid = do
   now <- getCurrentTime
   let ci = makeConnectInfo nid user password
   result <- withNodeConn ci $ \conn -> do
     mReplicaStatus <- showReplicaStatus conn
     gtidExec       <- getGtidExecuted conn
-    pure (mReplicaStatus, gtidExec)
-  pure (buildNodeStateFromProbe nid now result)
+    replicaIds <- case mReplicaStatus of
+      Nothing -> showReplicas conn  -- source node: discover downstream replicas
+      Just _  -> pure []
+    pure (mReplicaStatus, gtidExec, replicaIds)
+  let (probeResult, discoveredReplicas) = case result of
+        Left err                     -> (Left err, [])
+        Right (rs, gtid, replicaIds) -> (Right (rs, gtid), replicaIds)
+      ns = buildNodeStateFromProbe nid now probeResult
+  pure (ns, discoveredReplicas)
 
 -- | Build a NodeState from a probe result (pure)
 buildNodeStateFromProbe

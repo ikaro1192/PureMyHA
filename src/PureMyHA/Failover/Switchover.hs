@@ -142,7 +142,9 @@ waitForCatchup ci (Just targetGtid) secondsLeft
           Nothing -> pure True
           Just rs -> gtidSubset conn targetGtid (rsExecutedGtidSet rs)
       case result of
-        Left _      -> pure False
+        Left _      -> do
+          threadDelay 1_000_000
+          waitForCatchup ci (Just targetGtid) (secondsLeft - 1)
         Right True  -> pure True
         Right False -> do
           threadDelay 1_000_000
