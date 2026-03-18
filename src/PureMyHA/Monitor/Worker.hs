@@ -15,7 +15,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (getCurrentTime)
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), HooksConfig (..), FailoverConfig (..), FailureDetectionConfig (..))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), ClusterPasswords (..), MonitoringConfig (..), HooksConfig (..), FailoverConfig (..), FailureDetectionConfig (..))
 import PureMyHA.Failover.Auto (runAutoFailover)
 import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
 import PureMyHA.Logger (Logger, logInfo, logWarn)
@@ -37,14 +37,14 @@ startMonitorWorkers
   -> FailoverLock
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text             -- ^ password
+  -> ClusterPasswords
   -> Logger
   -> IO (WorkerRegistry, [Async ()])
-startMonitorWorkers tvar cc mcVar hooksVar lock fc fdc password logger = do
+startMonitorWorkers tvar cc mcVar hooksVar lock fc fdc pws logger = do
   reg <- newTVarIO Map.empty
   let nodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
   asyncs <- forM nodes $ \nid -> do
-    a <- async (runWorker tvar cc mcVar hooksVar lock fc fdc password nid logger)
+    a <- async (runWorker tvar cc mcVar hooksVar lock fc fdc pws nid logger)
     atomically $ modifyTVar' reg (Map.insert nid a)
     pure a
   pure (reg, asyncs)
@@ -57,17 +57,17 @@ runWorker
   -> FailoverLock
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text
+  -> ClusterPasswords
   -> NodeId
   -> Logger
   -> IO ()
-runWorker tvar cc mcVar hooksVar lock fc fdc password nid logger = loop
+runWorker tvar cc mcVar hooksVar lock fc fdc pws nid logger = loop
   where
     loop = do
       mc     <- readTVarIO mcVar
       mHooks <- readTVarIO hooksVar
       let intervalMicros = round (mcInterval mc * 1_000_000) :: Int
-      monitorNode tvar cc mc lock fc fdc password mHooks nid logger
+      monitorNode tvar cc mc lock fc fdc pws mHooks nid logger
         `catch` (\(_ :: SomeException) -> pure ())
       threadDelay intervalMicros
       loop
@@ -81,12 +81,12 @@ startTopologyRefreshWorker
   -> FailoverLock
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text
+  -> ClusterPasswords
   -> WorkerRegistry
   -> Logger
   -> IO (Async ())
-startTopologyRefreshWorker tvar cc mcVar hooksVar lock fc fdc password reg logger =
-  async (topologyRefreshLoop tvar cc mcVar hooksVar lock fc fdc password reg logger)
+startTopologyRefreshWorker tvar cc mcVar hooksVar lock fc fdc pws reg logger =
+  async (topologyRefreshLoop tvar cc mcVar hooksVar lock fc fdc pws reg logger)
 
 topologyRefreshLoop
   :: TVarDaemonState
@@ -96,11 +96,11 @@ topologyRefreshLoop
   -> FailoverLock
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text
+  -> ClusterPasswords
   -> WorkerRegistry
   -> Logger
   -> IO ()
-topologyRefreshLoop tvar cc mcVar hooksVar lock fc fdc password reg logger = loop
+topologyRefreshLoop tvar cc mcVar hooksVar lock fc fdc pws reg logger = loop
   where
     loop = do
       mc <- readTVarIO mcVar
@@ -109,7 +109,7 @@ topologyRefreshLoop tvar cc mcVar hooksVar lock fc fdc password reg logger = loo
         then threadDelay 60_000_000  -- disabled: check every 60s in case config reloads
         else do
           threadDelay (round (interval * 1_000_000) :: Int)
-          runTopologyRefresh tvar cc mcVar hooksVar lock fc fdc password reg logger
+          runTopologyRefresh tvar cc mcVar hooksVar lock fc fdc pws reg logger
             `catch` (\(_ :: SomeException) -> pure ())
       loop
 
@@ -121,12 +121,12 @@ runTopologyRefresh
   -> FailoverLock
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text
+  -> ClusterPasswords
   -> WorkerRegistry
   -> Logger
   -> IO ()
-runTopologyRefresh tvar cc mcVar hooksVar lock fc fdc password reg logger = do
-  newTopo    <- discoverTopology cc password logger
+runTopologyRefresh tvar cc mcVar hooksVar lock fc fdc pws reg logger = do
+  newTopo    <- discoverTopology cc (cpPassword pws) logger
   atomically $ updateClusterTopology tvar newTopo
   knownNodes <- Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes newTopo)
@@ -135,7 +135,7 @@ runTopologyRefresh tvar cc mcVar hooksVar lock fc fdc password reg logger = do
     logInfo logger $ "[" <> ccName cc <> "] Topology refresh: "
       <> T.pack (show (length newNodes)) <> " new node(s) found"
   forM_ newNodes $ \nid -> do
-    a <- async (runWorker tvar cc mcVar hooksVar lock fc fdc password nid logger)
+    a <- async (runWorker tvar cc mcVar hooksVar lock fc fdc pws nid logger)
     atomically $ modifyTVar' reg (Map.insert nid a)
 
 -- | Perform a single monitoring cycle for a node
@@ -146,15 +146,15 @@ monitorNode
   -> FailoverLock
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text
+  -> ClusterPasswords
   -> Maybe HooksConfig
   -> NodeId
   -> Logger
   -> IO ()
-monitorNode tvar cc _mc lock fc fdc password mHooks nid logger = do
+monitorNode tvar cc _mc lock fc fdc pws mHooks nid logger = do
   now <- getCurrentTime
   let user = credUser (ccCredentials cc)
-      ci   = makeConnectInfo nid user password
+      ci   = makeConnectInfo nid user (cpPassword pws)
   -- Read old state before connecting, so we can preserve nsIsSource on error
   mOldNs <- do
     mTopo <- getClusterTopology tvar (ccName cc)
@@ -187,12 +187,12 @@ monitorNode tvar cc _mc lock fc fdc password mHooks nid logger = do
         , nsErrantGtids     = ""
         }
   -- Update errant GTIDs by querying MySQL
-  ns' <- enrichErrantGtids tvar (ccName cc) ns user password
+  ns' <- enrichErrantGtids tvar (ccName cc) ns user (cpPassword pws)
   let ns'' = ns' { nsHealth = detectNodeHealth ns' }
   logHealthChange logger (ccName cc) nid mOldNs ns''
   atomically $ updateNodeState tvar (ccName cc) ns''
   -- Recompute cluster-level health
-  recomputeClusterHealth tvar cc lock fc fdc password mHooks logger
+  recomputeClusterHealth tvar cc lock fc fdc pws mHooks logger
 
 logHealthChange :: Logger -> ClusterName -> NodeId -> Maybe NodeState -> NodeState -> IO ()
 logHealthChange logger clusterName nid mOld new = do
@@ -233,11 +233,11 @@ recomputeClusterHealth
   -> FailoverLock
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text             -- ^ password
+  -> ClusterPasswords
   -> Maybe HooksConfig
   -> Logger
   -> IO ()
-recomputeClusterHealth tvar cc lock fc fdc password mHooks logger = do
+recomputeClusterHealth tvar cc lock fc fdc pws mHooks logger = do
   mTopo <- getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure ()
@@ -264,5 +264,5 @@ recomputeClusterHealth tvar cc lock fc fdc password mHooks logger = do
       atomically $ updateClusterTopology tvar topo'
       -- Trigger auto-failover on transition to DeadSource
       when (transitioned && newHealth == DeadSource && fcAutoFailover fc) $ do
-        _ <- async (runAutoFailover tvar lock cc fc fdc password mHooks logger)
+        _ <- async (runAutoFailover tvar lock cc fc fdc pws mHooks logger)
         pure ()

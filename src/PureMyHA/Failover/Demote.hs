@@ -3,7 +3,7 @@ module PureMyHA.Failover.Demote (runDemote) where
 import Control.Concurrent.STM (atomically)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import PureMyHA.Config (ClusterConfig (..), Credentials (..))
+import PureMyHA.Config (ClusterConfig (..), Credentials (..), ClusterPasswords (..))
 import PureMyHA.Logger (Logger, logInfo, logError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
@@ -15,12 +15,12 @@ import PureMyHA.Types
 runDemote
   :: TVarDaemonState
   -> ClusterConfig
-  -> Text       -- ^ password
+  -> ClusterPasswords
   -> Text       -- ^ host to demote
   -> Text       -- ^ new source host
   -> Logger
   -> IO (Either Text ())
-runDemote tvar cc password demoteHost srcHost logger = do
+runDemote tvar cc pws demoteHost srcHost logger = do
   mTopo <- getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure (Left "Cluster not found")
@@ -34,13 +34,13 @@ runDemote tvar cc password demoteHost srcHost logger = do
         (demoteNs : _, srcNs : _) -> do
           let demoteId = nsNodeId demoteNs
               srcId    = nsNodeId srcNs
-              ci       = makeConnectInfo demoteId user password
+              ci       = makeConnectInfo demoteId user (cpPassword pws)
           logInfo logger $ "[" <> ccName cc <> "] Demoting " <> demoteHost
                         <> " to replica under " <> srcHost
           result <- withNodeConn ci $ \conn -> do
             stopReplica conn
             setReadOnly conn
-            changeReplicationSourceTo conn (nodeHost srcId) (nodePort srcId)
+            changeReplicationSourceTo conn (nodeHost srcId) (nodePort srcId) (cpReplUser pws) (cpReplPassword pws)
             startReplica conn
           case result of
             Left err -> do

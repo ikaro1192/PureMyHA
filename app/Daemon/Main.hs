@@ -5,6 +5,7 @@ import Control.Concurrent.STM   (atomically, newTVarIO, newEmptyTMVarIO,
                                   putTMVar, takeTMVar, writeTVar)
 import Control.Exception (try, SomeException)
 import Control.Monad (void)
+import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -77,7 +78,7 @@ main = do
           writeTVar hooksVar (cfgHooks cfg')
         logInfo logger "SIGHUP: config reloaded") Nothing
 
-  clusterPasswords <- mapM (\cc -> (cc,) <$> loadPassword (ccCredentials cc)) (cfgClusters cfg)
+  clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
 
   clusterEntries <- mapM (initCluster tvar cfg logger) clusterPasswords
   let clusterMap = Map.fromList
@@ -87,15 +88,15 @@ main = do
 
   -- Start monitor workers (returns registry per cluster)
   (registries, workerLists) <- fmap unzip $ mapM
-    (\((cc, pw), (lock, _, fc, fdc, _, _)) ->
-        startMonitorWorkers tvar cc mcVar hooksVar lock fc fdc pw logger)
+    (\((cc, pws), (lock, _, fc, fdc, _, _)) ->
+        startMonitorWorkers tvar cc mcVar hooksVar lock fc fdc pws logger)
     (zip clusterPasswords clusterEntries)
   let monitorWorkers = concat workerLists
 
   -- Start topology refresh workers
   refreshWorkers <- mapM
-    (\((cc, pw), (lock, _, fc, fdc, _, _), reg) ->
-        startTopologyRefreshWorker tvar cc mcVar hooksVar lock fc fdc pw reg logger)
+    (\((cc, pws), (lock, _, fc, fdc, _, _), reg) ->
+        startTopologyRefreshWorker tvar cc mcVar hooksVar lock fc fdc pws reg logger)
     (zip3 clusterPasswords clusterEntries registries)
 
   ipcAsync <- async $ startIPCServer tvar clusterMap (optSocketPath opts) logger
@@ -117,15 +118,22 @@ initCluster
   :: TVarDaemonState
   -> Config
   -> Logger
-  -> (ClusterConfig, Text)
-  -> IO (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, Text, Maybe HooksConfig)
-initCluster tvar cfg logger (cc, password) = do
+  -> (ClusterConfig, ClusterPasswords)
+  -> IO (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, ClusterPasswords, Maybe HooksConfig)
+initCluster tvar cfg logger (cc, pws) = do
   let initTopo = buildInitialTopology cc
   atomically $ updateClusterTopology tvar initTopo
-  topo <- discoverTopology cc password logger
+  topo <- discoverTopology cc (cpPassword pws) logger
   atomically $ updateClusterTopology tvar topo
   lock <- newFailoverLock
-  pure (lock, cc, cfgFailover cfg, cfgFailureDetection cfg, password, cfgHooks cfg)
+  pure (lock, cc, cfgFailover cfg, cfgFailureDetection cfg, pws, cfgHooks cfg)
+
+loadClusterPasswords :: ClusterConfig -> IO ClusterPasswords
+loadClusterPasswords cc = do
+  monPw <- loadPassword (ccCredentials cc)
+  let replCreds = fromMaybe (ccCredentials cc) (ccReplicationCredentials cc)
+  replPw <- loadPassword replCreds
+  pure $ ClusterPasswords monPw (credUser replCreds) replPw
 
 loadPassword :: Credentials -> IO Text
 loadPassword creds = do

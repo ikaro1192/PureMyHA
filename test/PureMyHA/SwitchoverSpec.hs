@@ -74,9 +74,10 @@ spec = do
 
 testCC :: ClusterConfig
 testCC = ClusterConfig
-  { ccName        = "main"
-  , ccNodes       = []
-  , ccCredentials = Credentials "user" "/dev/null"
+  { ccName                   = "main"
+  , ccNodes                  = []
+  , ccCredentials            = Credentials "user" "/dev/null"
+  , ccReplicationCredentials = Nothing
   }
 
 testFC :: FailoverConfig

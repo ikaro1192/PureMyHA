@@ -8,6 +8,9 @@ clusters:
     credentials:
       user: purermyha
       password_file: /etc/purermyha/mysql.pass
+    replication_credentials:           # optional; falls back to credentials if omitted
+      user: repl
+      password_file: /etc/purermyha/repl.pass
 
 monitoring:
   interval: 3s

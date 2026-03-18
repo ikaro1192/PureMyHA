@@ -31,7 +31,7 @@ import PureMyHA.Types
 defaultSocketPath :: FilePath
 defaultSocketPath = "/run/purermyhad.sock"
 
-type ClusterEntry = (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, Text, Maybe HooksConfig)
+type ClusterEntry = (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, ClusterPasswords, Maybe HooksConfig)
 type ClusterMap   = Map ClusterName ClusterEntry
 
 -- | Start the Unix domain socket IPC server (blocks forever)
@@ -108,7 +108,7 @@ handleRequest tvar clusterMap logger req = case req of
   ReqSwitchover mCluster mToHost dryRun ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, fc, _, password, mHooks) ->
+      Just (_, cc, fc, _, pws, mHooks) ->
         if dryRun
           then do
             result <- dryRunSwitchover tvar cc fc mToHost
@@ -116,7 +116,7 @@ handleRequest tvar clusterMap logger req = case req of
               Left err  -> OperationFailure err
               Right msg -> OperationSuccess msg
           else do
-            result <- runSwitchover tvar cc fc password mToHost mHooks logger
+            result <- runSwitchover tvar cc fc pws mToHost mHooks logger
             pure $ RespOperation $ case result of
               Left err -> OperationFailure err
               Right () -> OperationSuccess "Switchover completed"
@@ -137,8 +137,8 @@ handleRequest tvar clusterMap logger req = case req of
   ReqFixErrantGtid mCluster ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, password, _) -> do
-        result <- runFixErrantGtid tvar cc password
+      Just (_, cc, _, _, pws, _) -> do
+        result <- runFixErrantGtid tvar cc (cpPassword pws)
         pure $ RespOperation $ case result of
           Left err -> OperationFailure err
           Right () -> OperationSuccess "Errant GTIDs fixed on source"
@@ -146,8 +146,8 @@ handleRequest tvar clusterMap logger req = case req of
   ReqDemote mCluster host srcHost ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, password, _) -> do
-        result <- runDemote tvar cc password host srcHost logger
+      Just (_, cc, _, _, pws, _) -> do
+        result <- runDemote tvar cc pws host srcHost logger
         pure $ RespOperation $ case result of
           Left err -> OperationFailure err
           Right () -> OperationSuccess ("Demote completed: " <> host <> " is now a replica")

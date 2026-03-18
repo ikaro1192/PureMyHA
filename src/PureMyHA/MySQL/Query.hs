@@ -101,10 +101,12 @@ getGtidExecuted conn = do
     _         -> pure ""
 
 -- | CHANGE REPLICATION SOURCE TO ... SOURCE_AUTO_POSITION=1
-changeReplicationSourceTo :: MySQLConn -> Text -> Int -> IO ()
-changeReplicationSourceTo conn host port = do
+changeReplicationSourceTo :: MySQLConn -> Text -> Int -> Text -> Text -> IO ()
+changeReplicationSourceTo conn host port replUser replPassword = do
   let sql = "CHANGE REPLICATION SOURCE TO SOURCE_HOST='" <> host
             <> "', SOURCE_PORT=" <> T.pack (show port)
+            <> ", SOURCE_USER='" <> replUser <> "'"
+            <> ", SOURCE_PASSWORD='" <> replPassword <> "'"
             <> ", SOURCE_AUTO_POSITION=1"
   _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
   pure ()

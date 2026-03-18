@@ -3,6 +3,7 @@ module PureMyHA.Config
   , ClusterConfig (..)
   , NodeConfig (..)
   , Credentials (..)
+  , ClusterPasswords (..)
   , MonitoringConfig (..)
   , FailureDetectionConfig (..)
   , FailoverConfig (..)
@@ -39,10 +40,17 @@ defaultLoggingConfig :: LoggingConfig
 defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log"
 
 data ClusterConfig = ClusterConfig
-  { ccName        :: Text
-  , ccNodes       :: [NodeConfig]
-  , ccCredentials :: Credentials
+  { ccName                   :: Text
+  , ccNodes                  :: [NodeConfig]
+  , ccCredentials            :: Credentials
+  , ccReplicationCredentials :: Maybe Credentials
   } deriving (Show, Generic)
+
+data ClusterPasswords = ClusterPasswords
+  { cpPassword     :: Text   -- ^ monitoring/management password
+  , cpReplUser     :: Text   -- ^ replication user
+  , cpReplPassword :: Text   -- ^ replication password
+  } deriving (Show)
 
 data NodeConfig = NodeConfig
   { ncHost :: Text
@@ -119,9 +127,10 @@ instance FromJSON LoggingConfig where
 instance FromJSON ClusterConfig where
   parseJSON = withObject "ClusterConfig" $ \o ->
     ClusterConfig
-      <$> o .: "name"
-      <*> o .: "nodes"
-      <*> o .: "credentials"
+      <$> o .:  "name"
+      <*> o .:  "nodes"
+      <*> o .:  "credentials"
+      <*> o .:? "replication_credentials"
 
 instance FromJSON NodeConfig where
   parseJSON = withObject "NodeConfig" $ \o ->

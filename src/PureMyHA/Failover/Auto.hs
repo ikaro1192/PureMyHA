@@ -25,17 +25,17 @@ runAutoFailover
   -> ClusterConfig
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text              -- ^ password
+  -> ClusterPasswords
   -> Maybe HooksConfig
   -> Logger
   -> IO (Either Text ())
-runAutoFailover tvar lock cc fc fdc password mHooks logger = do
+runAutoFailover tvar lock cc fc fdc pws mHooks logger = do
   -- Try to acquire failover lock (prevent concurrent failovers)
   acquired <- atomically $ tryTakeTMVar lock
   case acquired of
     Nothing -> pure (Left "Failover already in progress")
     Just () -> do
-      result <- doFailover tvar cc fc fdc password mHooks logger
+      result <- doFailover tvar cc fc fdc pws mHooks logger
       atomically $ putTMVar lock ()
       pure result
 
@@ -63,11 +63,11 @@ doFailover
   -> ClusterConfig
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text
+  -> ClusterPasswords
   -> Maybe HooksConfig
   -> Logger
   -> IO (Either Text ())
-doFailover tvar cc fc fdc password mHooks logger = do
+doFailover tvar cc fc fdc pws mHooks logger = do
   mTopo <- getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> do
@@ -81,19 +81,19 @@ doFailover tvar cc fc fdc password mHooks logger = do
           pure (Left err)
         Right () -> do
           logInfo logger $ "[" <> ccName cc <> "] Auto-failover started"
-          executeFailover tvar cc fc fdc password mHooks logger topo
+          executeFailover tvar cc fc fdc pws mHooks logger topo
 
 executeFailover
   :: TVarDaemonState
   -> ClusterConfig
   -> FailoverConfig
   -> FailureDetectionConfig
-  -> Text
+  -> ClusterPasswords
   -> Maybe HooksConfig
   -> Logger
   -> ClusterTopology
   -> IO (Either Text ())
-executeFailover tvar cc fc fdc password mHooks logger topo = do
+executeFailover tvar cc fc fdc pws mHooks logger topo = do
   case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
     Left err -> do
       logError logger $ "[" <> ccName cc <> "] Auto-failover failed: " <> err
@@ -111,7 +111,7 @@ executeFailover tvar cc fc fdc password mHooks logger topo = do
           logError logger $ "[" <> ccName cc <> "] Pre-failover hook aborted failover: " <> err
           pure (Left $ "Pre-failover hook failed: " <> err)
         Right () -> do
-          promoteResult <- promoteCandidate user password candidateId
+          promoteResult <- promoteCandidate user (cpPassword pws) candidateId
           case promoteResult of
             Left err -> do
               logError logger $ "[" <> ccName cc <> "] Auto-failover failed: Promote failed: " <> err
@@ -124,7 +124,7 @@ executeFailover tvar cc fc fdc password mHooks logger topo = do
               let otherReplicas = filter
                     (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
                     (Map.elems (ctNodes topo))
-              mapM_ (reconnectReplica user password candidateId) otherReplicas
+              mapM_ (reconnectReplica user (cpPassword pws) (cpReplUser pws) (cpReplPassword pws) candidateId) otherReplicas
 
               now <- getCurrentTime
               let oldSources = filter nsIsSource (Map.elems (ctNodes topo))
@@ -151,12 +151,12 @@ promoteCandidate user password nid = do
     Left err -> Left err
     Right () -> Right ()
 
-reconnectReplica :: Text -> Text -> NodeId -> NodeState -> IO ()
-reconnectReplica user password newSourceId ns = do
-  let ci = makeConnectInfo (nsNodeId ns) user password
+reconnectReplica :: Text -> Text -> Text -> Text -> NodeId -> NodeState -> IO ()
+reconnectReplica user monPassword replUser replPassword newSourceId ns = do
+  let ci = makeConnectInfo (nsNodeId ns) user monPassword
   _ <- withNodeConn ci $ \conn -> do
     stopReplica conn
-    changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId)
+    changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replUser replPassword
     startReplica conn
   pure ()
 

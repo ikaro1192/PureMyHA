@@ -35,12 +35,12 @@ runSwitchover
   :: TVarDaemonState
   -> ClusterConfig
   -> FailoverConfig
-  -> Text              -- ^ password
+  -> ClusterPasswords
   -> Maybe Text        -- ^ --to host
   -> Maybe HooksConfig
   -> Logger
   -> IO (Either Text ())
-runSwitchover tvar cc fc password mToHost mHooks logger = do
+runSwitchover tvar cc fc pws mToHost mHooks logger = do
   mTopo <- getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> do
@@ -68,12 +68,12 @@ runSwitchover tvar cc fc password mToHost mHooks logger = do
               logError logger $ "[" <> ccName cc <> "] Pre-switchover hook aborted: " <> err
               pure (Left $ "Pre-switchover hook failed: " <> err)
             Right () ->
-              doSwitchover cc user password mHooks logger candidateId oldSourceId oldSourceHost topo
+              doSwitchover cc user pws mHooks logger candidateId oldSourceId oldSourceHost topo
 
 doSwitchover
   :: ClusterConfig
   -> Text
-  -> Text
+  -> ClusterPasswords
   -> Maybe HooksConfig
   -> Logger
   -> NodeId
@@ -81,12 +81,12 @@ doSwitchover
   -> Maybe Text
   -> ClusterTopology
   -> IO (Either Text ())
-doSwitchover cc user password mHooks logger candidateId oldSourceId oldSourceHost topo = do
+doSwitchover cc user pws mHooks logger candidateId oldSourceId oldSourceHost topo = do
   -- Step 1: Set old source to read_only (if reachable)
   case oldSourceId of
     Nothing -> pure ()
     Just srcId -> do
-      let srcCi = makeConnectInfo srcId user password
+      let srcCi = makeConnectInfo srcId user (cpPassword pws)
       _ <- withNodeConn srcCi setReadOnly
       pure ()
 
@@ -94,14 +94,14 @@ doSwitchover cc user password mHooks logger candidateId oldSourceId oldSourceHos
   mOldGtid <- case oldSourceId of
     Nothing -> pure Nothing
     Just srcId -> do
-      let srcCi = makeConnectInfo srcId user password
+      let srcCi = makeConnectInfo srcId user (cpPassword pws)
       result <- withNodeConn srcCi getGtidExecuted
       pure $ case result of
         Right gtid -> Just gtid
         Left _     -> Nothing
 
   -- Step 3: Wait for candidate to catch up
-  let candidateCi = makeConnectInfo candidateId user password
+  let candidateCi = makeConnectInfo candidateId user (cpPassword pws)
   caught <- waitForCatchup candidateCi mOldGtid maxWaitSeconds
 
   if not caught
@@ -121,7 +121,7 @@ doSwitchover cc user password mHooks logger candidateId oldSourceId oldSourceHos
         Right () -> do
           -- Step 5: Reconnect remaining replicas (including old source)
           let others = switchoverReconnectTargets (ctNodes topo) candidateId
-          mapM_ (reconnectToNew user password candidateId) others
+          mapM_ (reconnectToNew user pws candidateId) others
 
           -- Post-switchover hook (fire-and-forget)
           ts <- getCurrentTimestamp
@@ -150,12 +150,12 @@ waitForCatchup ci (Just targetGtid) secondsLeft
           threadDelay 1_000_000
           waitForCatchup ci (Just targetGtid) (secondsLeft - 1)
 
-reconnectToNew :: Text -> Text -> NodeId -> NodeState -> IO ()
-reconnectToNew user password newSourceId ns = do
-  let ci = makeConnectInfo (nsNodeId ns) user password
+reconnectToNew :: Text -> ClusterPasswords -> NodeId -> NodeState -> IO ()
+reconnectToNew user pws newSourceId ns = do
+  let ci = makeConnectInfo (nsNodeId ns) user (cpPassword pws)
   _ <- withNodeConn ci $ \conn -> do
     stopReplica conn
-    changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId)
+    changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) (cpReplUser pws) (cpReplPassword pws)
     startReplica conn
   pure ()
 

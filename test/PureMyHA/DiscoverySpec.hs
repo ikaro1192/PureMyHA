@@ -25,9 +25,10 @@ testRs = mkReplicaStatus "db0" 3306 IOYes "uuid1:1-100"
 
 testCC :: ClusterConfig
 testCC = ClusterConfig
-  { ccName        = "test-cluster"
-  , ccNodes       = [NodeConfig "db1" 3306]
-  , ccCredentials = Credentials "root" "/run/pw"
+  { ccName                   = "test-cluster"
+  , ccNodes                  = [NodeConfig "db1" 3306]
+  , ccCredentials            = Credentials "root" "/run/pw"
+  , ccReplicationCredentials = Nothing
   }
 
 spec :: Spec

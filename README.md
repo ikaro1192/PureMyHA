@@ -25,15 +25,38 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Haskell**: GHC 9.x+, Cabal 3.0+
 - **HA for PureMyHA itself**: Pacemaker + QDevice (recommended)
 
-### MySQL Privileges
+### MySQL Users
+
+PureMyHA uses two distinct MySQL users.
+
+#### Monitoring / management user
+
+Connects to every node for health checks, topology discovery, and failover operations.
 
 ```sql
-GRANT REPLICATION CLIENT, REPLICATION SLAVE ON *.* TO 'purermyha'@'%';
-GRANT SUPER ON *.* TO 'purermyha'@'%';
--- Or fine-grained privileges (MySQL 8.0+):
-GRANT REPLICATION_SLAVE_ADMIN, REPLICATION_APPLIER ON *.* TO 'purermyha'@'%';
-GRANT SYSTEM_VARIABLES_ADMIN ON *.* TO 'purermyha'@'%';
+CREATE USER 'purermyha'@'%' IDENTIFIED BY '...';
+
+-- Fine-grained privileges (MySQL 8.0+, recommended):
+GRANT REPLICATION CLIENT      ON *.* TO 'purermyha'@'%';  -- SHOW REPLICA STATUS, SHOW REPLICAS
+GRANT PROCESS                 ON *.* TO 'purermyha'@'%';  -- SHOW PROCESSLIST (topology discovery)
+GRANT REPLICATION_SLAVE_ADMIN ON *.* TO 'purermyha'@'%';  -- STOP/START REPLICA, RESET REPLICA ALL, CHANGE REPLICATION SOURCE TO
+GRANT SYSTEM_VARIABLES_ADMIN  ON *.* TO 'purermyha'@'%';  -- SET GLOBAL read_only
+GRANT REPLICATION_APPLIER     ON *.* TO 'purermyha'@'%';  -- SET GTID_NEXT (errant GTID repair)
+
+-- Or with the legacy SUPER privilege:
+-- GRANT REPLICATION CLIENT, SUPER ON *.* TO 'purermyha'@'%';
 ```
+
+#### Replication user
+
+Used as `SOURCE_USER` in `CHANGE REPLICATION SOURCE TO` when reconnecting replicas after a failover or switchover. This is the same user already configured on each replica's `CHANGE REPLICATION SOURCE TO` statement.
+
+```sql
+CREATE USER 'repl'@'%' IDENTIFIED BY '...';
+GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
+```
+
+> **Note:** If you use the same account for both monitoring and replication, omit `replication_credentials` from the config. PureMyHA will fall back to `credentials` automatically.
 
 ## Architecture
 
@@ -117,6 +140,9 @@ clusters:
     credentials:
       user: purermyha
       password_file: /etc/purermyha/mysql.pass
+    replication_credentials:           # Optional; falls back to credentials if omitted
+      user: repl
+      password_file: /etc/purermyha/repl.pass
 
 monitoring:
   interval: 3s
@@ -254,7 +280,7 @@ When `DeadSource` is detected, the daemon automatically:
 1. Runs `pre_failover` hook
 2. Selects the best replica (highest `Executed_Gtid_Set`, no errant GTIDs, respects `candidate_priority`)
 3. Promotes: `STOP REPLICA` → `RESET REPLICA ALL` → `SET read_only=OFF`
-4. Reconnects remaining replicas: `CHANGE REPLICATION SOURCE TO ... SOURCE_AUTO_POSITION=1`
+4. Reconnects remaining replicas: `CHANGE REPLICATION SOURCE TO SOURCE_HOST=... SOURCE_USER=... SOURCE_PASSWORD=... SOURCE_AUTO_POSITION=1`
 5. Runs `post_failover` hook
 6. Sets `recovery_block_period` anti-flap timer
 
