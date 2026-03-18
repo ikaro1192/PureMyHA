@@ -24,6 +24,7 @@ failure_detection:
 failover:
   auto_failover: true
   min_replicas_for_failover: 1
+  wait_for_relay_log_apply_timeout: 60s  # optional; default: 60s
   candidate_priority:
     - host: db2
 
