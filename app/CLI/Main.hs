@@ -24,6 +24,7 @@ data Command
   | CmdAckRecovery
   | CmdErrantGtid
   | CmdFixErrantGtid
+  | CmdDemote Text Text   -- host, source
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -54,7 +55,14 @@ cliOptions = CLIOptions
             (info (pure CmdErrantGtid) (progDesc "Show errant GTIDs"))
         <> command "fix-errant-gtid"
             (info (pure CmdFixErrantGtid) (progDesc "Fix errant GTIDs with empty transactions"))
+        <> command "demote"
+            (info demoteCmd (progDesc "Demote a node to replica under specified source"))
         )
+
+demoteCmd :: Parser Command
+demoteCmd = CmdDemote
+  <$> strOption (long "host"   <> metavar "HOST" <> help "Node to demote")
+  <*> strOption (long "source" <> metavar "HOST" <> help "New replication source host")
 
 switchoverCmd :: Parser Command
 switchoverCmd = CmdSwitchover
@@ -81,6 +89,7 @@ main = do
         CmdAckRecovery      -> ReqAckRecovery mCluster
         CmdErrantGtid       -> ReqErrantGtid mCluster
         CmdFixErrantGtid    -> ReqFixErrantGtid mCluster
+        CmdDemote host src  -> ReqDemote mCluster host src
 
   eResp <- sendRequest socketPath req
   case eResp of

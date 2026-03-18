@@ -19,6 +19,7 @@ import qualified Data.Text as T
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
+import PureMyHA.Failover.Demote (runDemote)
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
 import System.Posix.Files (removeLink)
@@ -141,6 +142,15 @@ handleRequest tvar clusterMap logger req = case req of
         pure $ RespOperation $ case result of
           Left err -> OperationFailure err
           Right () -> OperationSuccess "Errant GTIDs fixed on source"
+
+  ReqDemote mCluster host srcHost ->
+    case lookupCluster mCluster clusterMap of
+      Nothing -> pure (RespError "Cluster not found")
+      Just (_, cc, _, _, password, _) -> do
+        result <- runDemote tvar cc password host srcHost logger
+        pure $ RespOperation $ case result of
+          Left err -> OperationFailure err
+          Right () -> OperationSuccess ("Demote completed: " <> host <> " is now a replica")
 
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m
