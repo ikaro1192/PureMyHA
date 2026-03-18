@@ -85,6 +85,7 @@ testFC = FailoverConfig
   { fcAutoFailover           = True
   , fcMinReplicasForFailover = 1
   , fcCandidatePriority      = []
+  , fcWaitRelayLogTimeout    = 60
   }
 
 isRight :: Either a b -> Bool

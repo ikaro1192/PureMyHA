@@ -78,6 +78,7 @@ data FailoverConfig = FailoverConfig
   { fcAutoFailover           :: Bool
   , fcMinReplicasForFailover :: Int
   , fcCandidatePriority      :: [CandidatePriority]
+  , fcWaitRelayLogTimeout    :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
   } deriving (Show, Generic)
 
 data CandidatePriority = CandidatePriority
@@ -164,6 +165,7 @@ instance FromJSON FailoverConfig where
       <$> o .:? "auto_failover" .!= True
       <*> o .:? "min_replicas_for_failover" .!= 1
       <*> o .:? "candidate_priority" .!= []
+      <*> (unDuration <$> o .:? "wait_for_relay_log_apply_timeout" .!= DurationField 60)
 
 instance FromJSON CandidatePriority where
   parseJSON = withObject "CandidatePriority" $ \o ->

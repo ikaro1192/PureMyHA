@@ -111,7 +111,9 @@ executeFailover tvar cc fc fdc pws mHooks logger topo = do
           logError logger $ "[" <> ccName cc <> "] Pre-failover hook aborted failover: " <> err
           pure (Left $ "Pre-failover hook failed: " <> err)
         Right () -> do
-          promoteResult <- promoteCandidate user (cpPassword pws) candidateId
+          let waitTimeout = truncate (fcWaitRelayLogTimeout fc) :: Int
+          logInfo logger $ "[" <> ccName cc <> "] Waiting for relay log apply on " <> nodeHost candidateId <> "..."
+          promoteResult <- promoteCandidate user (cpPassword pws) candidateId waitTimeout logger (ccName cc)
           case promoteResult of
             Left err -> do
               logError logger $ "[" <> ccName cc <> "] Auto-failover failed: Promote failed: " <> err
@@ -140,10 +142,14 @@ executeFailover tvar cc fc fdc pws mHooks logger topo = do
               logInfo logger $ "[" <> ccName cc <> "] Auto-failover completed: new source is " <> nodeHost candidateId
               pure (Right ())
 
-promoteCandidate :: Text -> Text -> NodeId -> IO (Either Text ())
-promoteCandidate user password nid = do
+promoteCandidate :: Text -> Text -> NodeId -> Int -> Logger -> Text -> IO (Either Text ())
+promoteCandidate user password nid waitTimeout logger clusterName = do
   let ci = makeConnectInfo nid user password
   result <- withNodeConn ci $ \conn -> do
+    caughtUp <- waitForRelayLogApply conn waitTimeout
+    if caughtUp
+      then logInfo logger $ "[" <> clusterName <> "] Relay log apply completed on " <> nodeHost nid
+      else logError logger $ "[" <> clusterName <> "] WARNING: Relay log apply timed out on " <> nodeHost nid <> ", proceeding with promotion"
     stopReplica conn
     resetReplicaAll conn
     setReadWrite conn
