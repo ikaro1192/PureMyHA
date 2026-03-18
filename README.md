@@ -126,6 +126,22 @@ cabal build all
 cabal install purermyhad purermyha
 ```
 
+### Docker build (Linux binary)
+
+Build Linux binaries without installing GHC locally.
+
+```bash
+# Build (tests run automatically during build)
+docker build -t purermyha .
+
+# Extract binaries
+mkdir -p dist-bins
+docker create --name tmp purermyha
+docker cp tmp:/usr/bin/purermyha ./dist-bins/
+docker cp tmp:/usr/sbin/purermyhad ./dist-bins/
+docker rm tmp
+```
+
 ## Configuration
 
 Default path: `/etc/purermyha/config.yaml`

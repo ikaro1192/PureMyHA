@@ -1,0 +1,7 @@
+dist-newstyle/
+.git/
+.gitignore
+*.md
+.claude/
+.dockerignore
+Dockerfile
