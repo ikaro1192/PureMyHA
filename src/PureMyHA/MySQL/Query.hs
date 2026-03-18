@@ -18,6 +18,8 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BL
+import Control.Exception (try, SomeException)
+import Network.Socket (getAddrInfo, defaultHints, addrAddress, getNameInfo, NameInfoFlag(NI_NUMERICHOST))
 import Database.MySQL.Base
   ( MySQLConn, MySQLValue (..), query_, execute_
   , Query (..), ColumnDef (..)
@@ -81,15 +83,18 @@ showReplicas conn defaultPort = do
   (cols, stream) <- query_ conn "SHOW PROCESSLIST"
   rows <- consumeRows stream
   let colNames = map (TE.decodeUtf8 . columnName) cols
-      toNodeId row =
+      extractHost row =
         let kvs = zip colNames row
             cmd = textVal (maybe MySQLNull id (lookup "Command" kvs))
             h   = textVal (maybe MySQLNull id (lookup "Host"    kvs))
-            ip  = T.takeWhile (/= ':') h
-        in if (cmd == "Binlog Dump GTID" || cmd == "Binlog Dump") && ip /= ""
-             then Just (NodeId ip defaultPort)
+            host = T.takeWhile (/= ':') h
+        in if (cmd == "Binlog Dump GTID" || cmd == "Binlog Dump") && host /= ""
+             then Just host
              else Nothing
-  pure [nid | Just nid <- map toNodeId rows]
+  let hosts = [h | Just h <- map extractHost rows]
+  mapM (\h -> do
+    ip <- resolveHostToIP h
+    pure (NodeId ip defaultPort)) hosts
 
 -- | Get @@GLOBAL.gtid_executed
 getGtidExecuted :: MySQLConn -> IO Text
@@ -170,6 +175,21 @@ injectEmptyTransaction conn gtid = do
   _ <- execute_ conn "COMMIT"
   _ <- execute_ conn "SET GTID_NEXT='AUTOMATIC'"
   pure ()
+
+-- | Resolve a hostname to a numeric IP address.
+-- If resolution fails (or the input is already an IP), returns the input unchanged.
+resolveHostToIP :: Text -> IO Text
+resolveHostToIP host = do
+  result <- try @SomeException $ do
+    infos <- getAddrInfo (Just defaultHints) (Just (T.unpack host)) Nothing
+    case infos of
+      (ai:_) -> do
+        (Just numericHost, _) <- getNameInfo [NI_NUMERICHOST] True False (addrAddress ai)
+        pure (T.pack numericHost)
+      [] -> pure host
+  pure $ case result of
+    Left _   -> host
+    Right ip -> ip
 
 -- Helpers
 textVal :: MySQLValue -> Text
