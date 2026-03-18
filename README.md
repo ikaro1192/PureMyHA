@@ -139,6 +139,8 @@ hooks:
   post_failover: /etc/purermyha/hooks/post_failover.sh
   pre_switchover: /etc/purermyha/hooks/pre_switchover.sh
   post_switchover: /etc/purermyha/hooks/post_switchover.sh
+  on_failure_detection: /etc/purermyha/hooks/on_failure_detection.sh    # Optional
+  post_unsuccessful_failover: /etc/purermyha/hooks/post_unsuccessful_failover.sh  # Optional
 
 logging:
   log_file: /var/log/puremyha.log  # Optional; defaults to /var/log/puremyha.log
@@ -202,6 +204,9 @@ purermyha errant-gtid [--cluster=<name>]
 
 # Fix errant GTIDs by injecting empty transactions
 purermyha fix-errant-gtid [--cluster=<name>]
+
+# Demote a node to replica under a specified source (resolve split-brain)
+purermyha demote --host db1 --source db2 [--cluster=<name>]
 
 # JSON output (for scripting / Prometheus exporters)
 purermyha --json status
