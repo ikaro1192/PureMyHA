@@ -88,7 +88,7 @@ PureMyHA does **not** implement leader election itself — it delegates entirely
 
 ### From packages (recommended)
 
-Download the latest release from the [Releases page](https://github.com/shokashimizu/PureMyHA/releases).
+Download the latest release from the [Releases page](https://github.com/ikaro1192/PureMyHA/releases).
 
 #### Debian / Ubuntu
 
@@ -120,7 +120,7 @@ sudo systemctl enable --now purermyhad
 - **Build requirements:** GHC 9.x+ and Cabal 3.0+ (not needed for package installs)
 
 ```bash
-git clone https://github.com/shokashimizu/PureMyHA
+git clone https://github.com/ikaro1192/PureMyHA
 cd PureMyHA
 cabal build all
 cabal install purermyhad purermyha
