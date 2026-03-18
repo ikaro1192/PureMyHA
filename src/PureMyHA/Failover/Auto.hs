@@ -127,9 +127,11 @@ executeFailover tvar cc fc fdc password mHooks logger topo = do
               mapM_ (reconnectReplica user password candidateId) otherReplicas
 
               now <- getCurrentTime
+              let oldSources = filter nsIsSource (Map.elems (ctNodes topo))
               atomically $ do
                 recordFailover tvar (ccName cc) now
                 setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
+                mapM_ (\ns -> updateNodeState tvar (ccName cc) (ns { nsIsSource = False })) oldSources
 
               ts3 <- getCurrentTimestamp
               let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost
