@@ -22,7 +22,6 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 
 - **MySQL**: 8.4+ with GTID enabled (`gtid_mode=ON`, `enforce_gtid_consistency=ON`)
 - **OS**: Linux
-- **Haskell**: GHC 9.x+, Cabal 3.0+
 - **HA for PureMyHA itself**: Pacemaker + QDevice (recommended)
 
 ### MySQL Users
@@ -117,6 +116,8 @@ sudo systemctl enable --now purermyhad
 ```
 
 ### From source
+
+- **Build requirements:** GHC 9.x+ and Cabal 3.0+ (not needed for package installs)
 
 ```bash
 git clone https://github.com/shokashimizu/PureMyHA
