@@ -5,6 +5,7 @@ module PureMyHA.Failover.Switchover
   ) where
 
 import Control.Concurrent (threadDelay)
+import Control.Exception (try, SomeException)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -82,54 +83,57 @@ doSwitchover
   -> ClusterTopology
   -> IO (Either Text ())
 doSwitchover cc user pws mHooks logger candidateId oldSourceId oldSourceHost topo = do
-  -- Step 1: Set old source to read_only (if reachable)
-  case oldSourceId of
-    Nothing -> pure ()
+  -- Step 1: Set old source to read_only (abort on failure to prevent split-brain)
+  readOnlyResult <- case oldSourceId of
+    Nothing -> pure (Right ())
     Just srcId -> do
       let srcCi = makeConnectInfo srcId user (cpPassword pws)
-      _ <- withNodeConn srcCi setReadOnly
-      pure ()
+      withNodeConn srcCi setReadOnly
+  case readOnlyResult of
+    Left err -> do
+      logError logger $ "[" <> ccName cc <> "] Switchover aborted: cannot set old source read_only: " <> err
+      pure (Left $ "Cannot set old source read_only: " <> err)
+    Right () -> do
+      -- Step 2: Get old source GTID set
+      mOldGtid <- case oldSourceId of
+        Nothing -> pure Nothing
+        Just srcId -> do
+          let srcCi = makeConnectInfo srcId user (cpPassword pws)
+          result <- withNodeConn srcCi getGtidExecuted
+          pure $ case result of
+            Right gtid -> Just gtid
+            Left _     -> Nothing
 
-  -- Step 2: Get old source GTID set
-  mOldGtid <- case oldSourceId of
-    Nothing -> pure Nothing
-    Just srcId -> do
-      let srcCi = makeConnectInfo srcId user (cpPassword pws)
-      result <- withNodeConn srcCi getGtidExecuted
-      pure $ case result of
-        Right gtid -> Just gtid
-        Left _     -> Nothing
+      -- Step 3: Wait for candidate to catch up
+      let candidateCi = makeConnectInfo candidateId user (cpPassword pws)
+      caught <- waitForCatchup candidateCi mOldGtid maxWaitSeconds
 
-  -- Step 3: Wait for candidate to catch up
-  let candidateCi = makeConnectInfo candidateId user (cpPassword pws)
-  caught <- waitForCatchup candidateCi mOldGtid maxWaitSeconds
+      if not caught
+        then do
+          logError logger $ "[" <> ccName cc <> "] Switchover failed: Candidate did not catch up within timeout"
+          pure (Left "Candidate did not catch up within timeout")
+        else do
+          -- Step 4: Promote candidate
+          promoteResult <- withNodeConn candidateCi $ \conn -> do
+            stopReplica conn
+            resetReplicaAll conn
+            setReadWrite conn
+          case promoteResult of
+            Left err -> do
+              logError logger $ "[" <> ccName cc <> "] Switchover failed: Promote failed: " <> err
+              pure (Left $ "Promote failed: " <> err)
+            Right () -> do
+              -- Step 5: Reconnect remaining replicas (including old source)
+              let others = switchoverReconnectTargets (ctNodes topo) candidateId
+              mapM_ (reconnectToNew user pws candidateId) others
 
-  if not caught
-    then do
-      logError logger $ "[" <> ccName cc <> "] Switchover failed: Candidate did not catch up within timeout"
-      pure (Left "Candidate did not catch up within timeout")
-    else do
-      -- Step 4: Promote candidate
-      promoteResult <- withNodeConn candidateCi $ \conn -> do
-        stopReplica conn
-        resetReplicaAll conn
-        setReadWrite conn
-      case promoteResult of
-        Left err -> do
-          logError logger $ "[" <> ccName cc <> "] Switchover failed: Promote failed: " <> err
-          pure (Left $ "Promote failed: " <> err)
-        Right () -> do
-          -- Step 5: Reconnect remaining replicas (including old source)
-          let others = switchoverReconnectTargets (ctNodes topo) candidateId
-          mapM_ (reconnectToNew user pws candidateId) others
+              -- Post-switchover hook (fire-and-forget)
+              ts <- getCurrentTimestamp
+              let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts
+              runHookFireForget mHooks hcPostSwitchover postEnv
 
-          -- Post-switchover hook (fire-and-forget)
-          ts <- getCurrentTimestamp
-          let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts
-          runHookFireForget mHooks hcPostSwitchover postEnv
-
-          logInfo logger $ "[" <> ccName cc <> "] Switchover completed: new source is " <> nodeHost candidateId
-          pure (Right ())
+              logInfo logger $ "[" <> ccName cc <> "] Switchover completed: new source is " <> nodeHost candidateId
+              pure (Right ())
 
 waitForCatchup :: ConnectInfo -> Maybe Text -> Int -> IO Bool
 waitForCatchup _ Nothing _ = pure True
@@ -154,7 +158,7 @@ reconnectToNew :: Text -> ClusterPasswords -> NodeId -> NodeState -> IO ()
 reconnectToNew user pws newSourceId ns = do
   let ci = makeConnectInfo (nsNodeId ns) user (cpPassword pws)
   _ <- withNodeConn ci $ \conn -> do
-    stopReplica conn
+    _ <- try @SomeException (stopReplica conn)
     changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) (cpReplUser pws) (cpReplPassword pws)
     startReplica conn
   pure ()
