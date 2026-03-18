@@ -193,7 +193,8 @@ purermyhad --config /etc/purermyha/config.yaml
 
 ```bash
 # Reload config (e.g. after editing intervals or hooks)
-kill -HUP $(pidof purermyhad)
+systemctl reload purermyhad        # via systemd (preferred)
+kill -HUP $(pidof purermyhad)      # direct signal (non-systemd)
 
 # Graceful stop
 kill -TERM $(pidof purermyhad)
