@@ -7,7 +7,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 ## Features
 
 - **Topology Discovery** — Recursively maps replication trees from seed hosts via `SHOW REPLICA STATUS`
-- **Automatic Failover** — Detects dead sources and promotes the best replica (GTID-aware, errant-GTID-safe)
+- **Automatic Failover** — Detects dead sources and promotes the best replica (GTID-aware, errant-GTID-safe, waits for relay log apply)
 - **Manual Switchover** — Planned maintenance with zero-data-loss semantics
 - **Errant GTID Detection & Repair** — Identifies and fixes errant GTIDs via empty transactions
 - **Anti-Flap Protection** — Blocks repeated automatic failovers via configurable `recovery_block_period`
@@ -174,6 +174,7 @@ failure_detection:
 failover:
   auto_failover: true
   min_replicas_for_failover: 1
+  wait_for_relay_log_apply_timeout: 60s  # Optional; default: 60s
   candidate_priority:            # Optional promotion priority (auto-selected by GTID if omitted)
     - host: db2
 
@@ -300,10 +301,11 @@ When `DeadSource` is detected, the daemon automatically:
 
 1. Runs `pre_failover` hook
 2. Selects the best replica (highest `Executed_Gtid_Set`, no errant GTIDs, respects `candidate_priority`)
-3. Promotes: `STOP REPLICA` → `RESET REPLICA ALL` → `SET read_only=OFF`
-4. Reconnects remaining replicas: `CHANGE REPLICATION SOURCE TO SOURCE_HOST=... SOURCE_USER=... SOURCE_PASSWORD=... SOURCE_AUTO_POSITION=1`
-5. Runs `post_failover` hook
-6. Sets `recovery_block_period` anti-flap timer
+3. Waits for the candidate to apply all retrieved GTIDs (`wait_for_relay_log_apply_timeout`, default 60 s)
+4. Promotes: `STOP REPLICA` → `RESET REPLICA ALL` → `SET read_only=OFF`
+5. Reconnects remaining replicas: `CHANGE REPLICATION SOURCE TO SOURCE_HOST=... SOURCE_USER=... SOURCE_PASSWORD=... SOURCE_AUTO_POSITION=1`
+6. Runs `post_failover` hook
+7. Sets `recovery_block_period` anti-flap timer
 
 ## Failure Scenarios
 

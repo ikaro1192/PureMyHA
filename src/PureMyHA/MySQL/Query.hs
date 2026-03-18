@@ -11,6 +11,7 @@ module PureMyHA.MySQL.Query
   , gtidSubtract
   , gtidSubset
   , injectEmptyTransaction
+  , waitForRelayLogApply
   ) where
 
 import Data.Text (Text)
@@ -19,6 +20,7 @@ import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BL
 import Data.List (nubBy)
 import Control.Exception (try, SomeException)
+import Control.Concurrent (threadDelay)
 import Network.Socket (getAddrInfo, defaultHints, addrAddress, getNameInfo, NameInfoFlag(NI_NUMERICHOST))
 import Database.MySQL.Base
   ( MySQLConn, MySQLValue (..), query_, execute_
@@ -188,6 +190,33 @@ injectEmptyTransaction conn gtid = do
   _ <- execute_ conn "COMMIT"
   _ <- execute_ conn "SET GTID_NEXT='AUTOMATIC'"
   pure ()
+
+-- | Wait until all GTIDs in Retrieved_Gtid_Set are applied (appear in Executed_Gtid_Set).
+-- Polls SHOW REPLICA STATUS at 1-second intervals.
+-- Returns True if caught up, False on timeout.
+-- If no replica status exists, returns True (already promoted or standalone).
+waitForRelayLogApply :: MySQLConn -> Int -> IO Bool
+waitForRelayLogApply conn maxWaitSeconds = go 0
+  where
+    go elapsed
+      | elapsed >= maxWaitSeconds = pure False
+      | otherwise = do
+          mStatus <- showReplicaStatus conn
+          case mStatus of
+            Nothing -> pure True  -- no replica status = nothing to wait for
+            Just rs -> do
+              let retrieved = rsRetrievedGtidSet rs
+                  executed  = rsExecutedGtidSet rs
+              if T.null retrieved || retrieved == executed
+                then pure True
+                else do
+                  -- Check GTID_SUBSET(Retrieved_Gtid_Set, Executed_Gtid_Set)
+                  isSubset <- gtidSubset conn retrieved executed
+                  if isSubset
+                    then pure True
+                    else do
+                      threadDelay 1000000  -- 1 second
+                      go (elapsed + 1)
 
 -- | Resolve a hostname to a numeric IP address.
 -- If resolution fails (or the input is already an IP), returns the input unchanged.
