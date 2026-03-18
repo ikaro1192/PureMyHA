@@ -1,7 +1,6 @@
 module PureMyHA.MySQL.Query
   ( showReplicaStatus
   , showReplicas
-  , countExpectedReplicas
   , getGtidExecuted
   , changeReplicationSourceTo
   , startReplica
@@ -18,6 +17,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BL
+import Data.List (nubBy)
 import Control.Exception (try, SomeException)
 import Network.Socket (getAddrInfo, defaultHints, addrAddress, getNameInfo, NameInfoFlag(NI_NUMERICHOST))
 import Database.MySQL.Base
@@ -66,35 +66,48 @@ parseIORunning "Yes"        = IOYes
 parseIORunning "Connecting" = IOConnecting
 parseIORunning _            = IONo
 
--- | SHOW REPLICAS — returns the count of replicas listed (MySQL 8.4).
--- Used only to validate against the SHOW PROCESSLIST discovery count.
-countExpectedReplicas :: MySQLConn -> IO Int
-countExpectedReplicas conn = do
-  (_, stream) <- query_ conn "SHOW REPLICAS"
-  rows <- consumeRows stream
-  pure (length rows)
-
--- | Discover connected replicas via SHOW PROCESSLIST by inspecting
--- "Binlog Dump GTID" / "Binlog Dump" threads.  The Host column in
--- SHOW PROCESSLIST has the form "ip:port", so we can extract the IP
--- even when report_host is not set on the replica.
-showReplicas :: MySQLConn -> Int -> IO [NodeId]
+-- | Discover connected replicas by combining SHOW REPLICAS (Host column)
+-- and SHOW PROCESSLIST (Binlog Dump threads).  Returns discovered NodeIds
+-- (deduplicated), the expected replica count from SHOW REPLICAS,
+-- and raw hostnames before resolution (for diagnostics).
+showReplicas :: MySQLConn -> Int -> IO ([NodeId], Int, [Text])
 showReplicas conn defaultPort = do
-  (cols, stream) <- query_ conn "SHOW PROCESSLIST"
-  rows <- consumeRows stream
-  let colNames = map (TE.decodeUtf8 . columnName) cols
-      extractHost row =
-        let kvs = zip colNames row
-            cmd = textVal (maybe MySQLNull id (lookup "Command" kvs))
-            h   = textVal (maybe MySQLNull id (lookup "Host"    kvs))
-            host = T.takeWhile (/= ':') h
-        in if (cmd == "Binlog Dump GTID" || cmd == "Binlog Dump") && host /= ""
-             then Just host
-             else Nothing
-  let hosts = [h | Just h <- map extractHost rows]
-  mapM (\h -> do
+  -- 1. SHOW REPLICAS — extract Host column where non-empty
+  --    Wrapped in try: if the user lacks REPLICATION SLAVE privilege,
+  --    we still fall through to SHOW PROCESSLIST.
+  (expectedCount, srHosts) <- do
+    result <- try @SomeException $ do
+      (srCols, srStream) <- query_ conn "SHOW REPLICAS"
+      srRows <- consumeRows srStream
+      let srColNames = map (TE.decodeUtf8 . columnName) srCols
+          hosts = [ h
+                  | row <- srRows
+                  , let kvs = zip srColNames row
+                        h   = textVal (maybe MySQLNull id (lookup "Host" kvs))
+                  , h /= ""
+                  ]
+      pure (length srRows, hosts)
+    pure $ case result of
+      Left _       -> (0, [])
+      Right (n, h) -> (n, h)
+  -- 2. SHOW PROCESSLIST — Binlog Dump threads
+  (plCols, plStream) <- query_ conn "SHOW PROCESSLIST"
+  plRows <- consumeRows plStream
+  let plColNames = map (TE.decodeUtf8 . columnName) plCols
+      plHosts = [ T.takeWhile (/= ':') h
+                | row <- plRows
+                , let kvs = zip plColNames row
+                      cmd = textVal (maybe MySQLNull id (lookup "Command" kvs))
+                      h   = textVal (maybe MySQLNull id (lookup "Host"    kvs))
+                , (cmd == "Binlog Dump GTID" || cmd == "Binlog Dump") && h /= ""
+                ]
+  -- 3. Merge and deduplicate
+  let allHosts = srHosts ++ plHosts
+  nodes <- mapM (\h -> do
     ip <- resolveHostToIP h
-    pure (NodeId ip defaultPort)) hosts
+    pure (NodeId ip defaultPort)) allHosts
+  let deduped = nubBy (\a b -> nodeHost a == nodeHost b && nodePort a == nodePort b) nodes
+  pure (deduped, expectedCount, allHosts)
 
 -- | Get @@GLOBAL.gtid_executed
 getGtidExecuted :: MySQLConn -> IO Text

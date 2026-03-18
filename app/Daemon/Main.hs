@@ -20,6 +20,7 @@ import PureMyHA.Logger (Logger, initLogger, logInfo, logWarn, closeLogger)
 import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
+import PureMyHA.Types (ClusterTopology(..))
 
 data DaemonOptions = DaemonOptions
   { optConfigPath :: FilePath
@@ -124,6 +125,8 @@ initCluster tvar cfg logger (cc, pws) = do
   let initTopo = buildInitialTopology cc
   atomically $ updateClusterTopology tvar initTopo
   topo <- discoverTopology cc (cpPassword pws) logger
+  logInfo logger $ "[" <> ccName cc <> "] Initial discovery found "
+    <> T.pack (show (Map.size (ctNodes topo))) <> " node(s)"
   atomically $ updateClusterTopology tvar topo
   lock <- newFailoverLock
   pure (lock, cc, cfgFailover cfg, cfgFailureDetection cfg, pws, cfgHooks cfg)
