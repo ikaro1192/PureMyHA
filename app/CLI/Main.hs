@@ -25,6 +25,7 @@ data Command
   | CmdErrantGtid
   | CmdFixErrantGtid
   | CmdDemote Text Text   -- host, source
+  | CmdDiscovery
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -57,6 +58,8 @@ cliOptions = CLIOptions
             (info (pure CmdFixErrantGtid) (progDesc "Fix errant GTIDs with empty transactions"))
         <> command "demote"
             (info demoteCmd (progDesc "Demote a node to replica under specified source"))
+        <> command "discovery"
+            (info (pure CmdDiscovery) (progDesc "Trigger manual topology discovery"))
         )
 
 demoteCmd :: Parser Command
@@ -90,6 +93,7 @@ main = do
         CmdErrantGtid       -> ReqErrantGtid mCluster
         CmdFixErrantGtid    -> ReqFixErrantGtid mCluster
         CmdDemote host src  -> ReqDemote mCluster host src
+        CmdDiscovery        -> ReqDiscovery mCluster
 
   eResp <- sendRequest socketPath req
   case eResp of

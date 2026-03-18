@@ -132,6 +132,7 @@ data Request
   | ReqErrantGtid { reqCluster :: Maybe ClusterName }
   | ReqFixErrantGtid { reqCluster :: Maybe ClusterName }
   | ReqDemote { reqCluster :: Maybe ClusterName, reqDemoteHost :: Text, reqDemoteSourceHost :: Text }
+  | ReqDiscovery { reqCluster :: Maybe ClusterName }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Request where
@@ -142,6 +143,7 @@ instance ToJSON Request where
   toJSON (ReqErrantGtid mc)      = object ["type" .= ("errant-gtid" :: Text),     "cluster" .= mc]
   toJSON (ReqFixErrantGtid mc)   = object ["type" .= ("fix-errant-gtid" :: Text), "cluster" .= mc]
   toJSON (ReqDemote mc h s)      = object ["type" .= ("demote" :: Text), "cluster" .= mc, "host" .= h, "sourceHost" .= s]
+  toJSON (ReqDiscovery mc)       = object ["type" .= ("discovery" :: Text),       "cluster" .= mc]
 
 instance FromJSON Request where
   parseJSON = withObject "Request" $ \o -> do
@@ -154,6 +156,7 @@ instance FromJSON Request where
       "errant-gtid"     -> ReqErrantGtid    <$> o .:? "cluster"
       "fix-errant-gtid" -> ReqFixErrantGtid <$> o .:? "cluster"
       "demote"          -> ReqDemote        <$> o .:? "cluster" <*> o .: "host" <*> o .: "sourceHost"
+      "discovery"       -> ReqDiscovery    <$> o .:? "cluster"
       _                 -> fail $ "Unknown request type: " <> show t
 
 -- | IPC Response types

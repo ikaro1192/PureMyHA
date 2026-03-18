@@ -3,6 +3,7 @@ module PureMyHA.Monitor.Worker
   , startTopologyRefreshWorker
   , WorkerRegistry
   , monitorNode
+  , runWorker
   ) where
 
 import Control.Concurrent (threadDelay)

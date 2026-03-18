@@ -1,12 +1,13 @@
 module Main (main) where
 
 import Control.Concurrent.Async (async, waitAnyCancel, race_, cancel)
-import Control.Concurrent.STM   (atomically, newTVarIO, newEmptyTMVarIO,
-                                  putTMVar, takeTMVar, writeTVar)
+import Control.Concurrent.STM   (TVar, atomically, newTVarIO, newEmptyTMVarIO,
+                                  putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
-import Control.Monad (void)
+import Control.Monad (void, forM_)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
+import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Options.Applicative
@@ -15,9 +16,9 @@ import System.IO (hPutStrLn, stderr)
 import System.Posix.Signals (installHandler, sigTERM, sigINT, sigHUP, Handler(..))
 
 import PureMyHA.Config
-import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath)
+import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction)
 import PureMyHA.Logger (Logger, initLogger, logInfo, logWarn, closeLogger)
-import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker)
+import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
 import PureMyHA.Types (ClusterTopology(..))
@@ -100,7 +101,13 @@ main = do
         startTopologyRefreshWorker tvar cc mcVar hooksVar lock fc fdc pws reg logger)
     (zip3 clusterPasswords clusterEntries registries)
 
-  ipcAsync <- async $ startIPCServer tvar clusterMap (optSocketPath opts) logger
+  -- Build discovery callbacks per cluster
+  let discoveryMap = Map.fromList
+        [ (ccName cc, makeDiscoveryAction tvar cc pws mcVar hooksVar lock fc fdc reg logger)
+        | ((cc, pws), (lock, _, fc, fdc, _, _), reg) <- zip3 clusterPasswords clusterEntries registries
+        ]
+
+  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap (optSocketPath opts) logger
 
   logInfo logger "purermyhad started"
 
@@ -144,6 +151,23 @@ loadPassword creds = do
   case result of
     Left err  -> die $ "Failed to read password file: " <> show err
     Right pwd -> pure pwd
+
+makeDiscoveryAction
+  :: TVarDaemonState -> ClusterConfig -> ClusterPasswords
+  -> TVar MonitoringConfig -> TVar (Maybe HooksConfig)
+  -> FailoverLock -> FailoverConfig -> FailureDetectionConfig
+  -> WorkerRegistry -> Logger -> DiscoveryAction
+makeDiscoveryAction tvar cc pws mcVar hooksVar lock fc fdc reg logger = do
+  newTopo <- discoverTopology cc (cpPassword pws) logger
+  atomically $ updateClusterTopology tvar newTopo
+  knownNodes <- Map.keysSet <$> readTVarIO reg
+  let discovered = Map.keysSet (ctNodes newTopo)
+      newNodes   = Set.difference discovered knownNodes
+  forM_ newNodes $ \nid -> do
+    a <- async (runWorker tvar cc mcVar hooksVar lock fc fdc pws nid logger)
+    atomically $ modifyTVar' reg (Map.insert nid a)
+  pure $ Right $ "Discovery complete: " <> T.pack (show (Map.size (ctNodes newTopo)))
+    <> " node(s) found, " <> T.pack (show (Set.size newNodes)) <> " new"
 
 die :: String -> IO a
 die msg = do

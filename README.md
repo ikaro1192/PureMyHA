@@ -252,6 +252,9 @@ purermyha fix-errant-gtid [--cluster=<name>]
 # Demote a node to replica under a specified source (resolve split-brain)
 purermyha demote --host db1 --source db2 [--cluster=<name>]
 
+# Trigger manual topology discovery
+purermyha discovery [--cluster=<name>]
+
 # JSON output (for scripting / Prometheus exporters)
 purermyha --json status
 purermyha -j topology

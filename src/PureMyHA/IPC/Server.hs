@@ -1,6 +1,7 @@
 module PureMyHA.IPC.Server
   ( startIPCServer
   , defaultSocketPath
+  , DiscoveryAction
   ) where
 
 import Control.Concurrent.Async (async)
@@ -13,7 +14,6 @@ import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.Maybe (mapMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Network.Socket
@@ -33,20 +33,23 @@ defaultSocketPath = "/run/purermyhad.sock"
 
 type ClusterEntry = (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, ClusterPasswords, Maybe HooksConfig)
 type ClusterMap   = Map ClusterName ClusterEntry
+type DiscoveryAction = IO (Either Text Text)
+type DiscoveryMap = Map ClusterName DiscoveryAction
 
 -- | Start the Unix domain socket IPC server (blocks forever)
 startIPCServer
   :: TVarDaemonState
   -> ClusterMap
+  -> DiscoveryMap
   -> FilePath
   -> Logger
   -> IO ()
-startIPCServer tvar clusterMap socketPath logger =
+startIPCServer tvar clusterMap discoveryMap socketPath logger =
   bracket (openListenSocket socketPath)
           (\sock -> close sock >> removeLink socketPath `catch` \(_ :: SomeException) -> pure ())
           $ \sock -> do
     listen sock 5
-    acceptLoop sock tvar clusterMap logger
+    acceptLoop sock tvar clusterMap discoveryMap logger
 
 openListenSocket :: FilePath -> IO Socket
 openListenSocket path = do
@@ -55,20 +58,20 @@ openListenSocket path = do
   bind sock (SockAddrUnix path)
   pure sock
 
-acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> Logger -> IO ()
-acceptLoop listenSock tvar clusterMap logger = do
+acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> Logger -> IO ()
+acceptLoop listenSock tvar clusterMap discoveryMap logger = do
   (clientSock, _) <- accept listenSock
-  _ <- async $ handleClient clientSock tvar clusterMap logger `finally` close clientSock
-  acceptLoop listenSock tvar clusterMap logger
+  _ <- async $ handleClient clientSock tvar clusterMap discoveryMap logger `finally` close clientSock
+  acceptLoop listenSock tvar clusterMap discoveryMap logger
 
-handleClient :: Socket -> TVarDaemonState -> ClusterMap -> Logger -> IO ()
-handleClient sock tvar clusterMap logger = do
+handleClient :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> Logger -> IO ()
+handleClient sock tvar clusterMap discoveryMap logger = do
   result <- try @SomeException $ do
     msg <- recvLine sock
     case eitherDecode (BLC.pack msg) of
       Left err  -> sendResponse sock (RespError (T.pack err))
       Right req -> do
-        resp <- handleRequest tvar clusterMap logger req
+        resp <- handleRequest tvar clusterMap discoveryMap logger req
         sendResponse sock resp
   case result of
     Left _ -> pure ()
@@ -93,8 +96,8 @@ sendResponse sock resp = do
   let bytes = BL.toStrict (encode resp <> BLC.singleton '\n')
   NSB.sendAll sock bytes
 
-handleRequest :: TVarDaemonState -> ClusterMap -> Logger -> Request -> IO Response
-handleRequest tvar clusterMap logger req = case req of
+handleRequest :: TVarDaemonState -> ClusterMap -> DiscoveryMap -> Logger -> Request -> IO Response
+handleRequest tvar clusterMap discoveryMap logger req = case req of
   ReqStatus mCluster -> do
     ds <- readDaemonState tvar
     let topos = filterClusters mCluster (dsClusters ds)
@@ -152,6 +155,15 @@ handleRequest tvar clusterMap logger req = case req of
           Left err -> OperationFailure err
           Right () -> OperationSuccess ("Demote completed: " <> host <> " is now a replica")
 
+  ReqDiscovery mCluster ->
+    case lookupDiscovery mCluster discoveryMap of
+      Nothing -> pure (RespError "Cluster not found")
+      Just action -> do
+        result <- action
+        pure $ RespOperation $ case result of
+          Left err  -> OperationFailure err
+          Right msg -> OperationSuccess msg
+
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m
 filterClusters (Just n) m = maybe [] pure (Map.lookup n m)
@@ -159,6 +171,10 @@ filterClusters (Just n) m = maybe [] pure (Map.lookup n m)
 lookupCluster :: Maybe ClusterName -> ClusterMap -> Maybe ClusterEntry
 lookupCluster Nothing  m = case Map.elems m of { [x] -> Just x; _ -> Nothing }
 lookupCluster (Just n) m = Map.lookup n m
+
+lookupDiscovery :: Maybe ClusterName -> DiscoveryMap -> Maybe DiscoveryAction
+lookupDiscovery Nothing  m = case Map.elems m of { [x] -> Just x; _ -> Nothing }
+lookupDiscovery (Just n) m = Map.lookup n m
 
 toClusterStatus :: ClusterTopology -> ClusterStatus
 toClusterStatus ct = ClusterStatus
