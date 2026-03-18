@@ -36,6 +36,7 @@ detectSingleSource nodeList reachableNodes src
   | null reachableNodes           = DeadSourceAndAllReplicas
   | not (nsIsReachable src)       = detectDeadSource nodeList
   | hasIoError nodeList           = NeedsAttention "Replica IO errors detected"
+  | hasIoConnecting nodeList      = NeedsAttention "Replica IO thread not connected"
   | otherwise                     = Healthy
 
 detectDeadSource :: [NodeState] -> NodeHealth
@@ -64,6 +65,12 @@ hasIoError = any $ \ns ->
     Just rs -> not (T.null (rsLastIOError rs))
     Nothing -> False
 
+hasIoConnecting :: [NodeState] -> Bool
+hasIoConnecting = any $ \ns ->
+  case nsReplicaStatus ns of
+    Just rs -> rsReplicaIORunning rs == IOConnecting
+    Nothing -> False
+
 -- | Detect health for a single node
 detectNodeHealth :: NodeState -> NodeHealth
 detectNodeHealth ns
@@ -80,6 +87,8 @@ detectReplicaHealth rs
       NeedsAttention ("IO error: " <> rsLastIOError rs)
   | rsReplicaIORunning rs == IONo =
       NeedsAttention "Replica IO not running"
+  | rsReplicaIORunning rs == IOConnecting =
+      NeedsAttention "Replica IO thread not connected (Connecting)"
   | not (rsReplicaSQLRunning rs) =
       NeedsAttention ("SQL error: " <> rsLastSQLError rs)
   | otherwise = Healthy
