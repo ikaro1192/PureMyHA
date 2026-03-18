@@ -21,10 +21,10 @@ jobs:
             runner: ubuntu-22.04-arm
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Cache Cabal store
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.cabal-store
           key: cabal-${{ matrix.arch }}-${{ hashFiles('purermyha.cabal', 'cabal.project') }}
@@ -52,7 +52,7 @@ jobs:
         run: sudo chown -R "$USER" "${{ github.workspace }}/.cabal-store" || true
 
       - name: Upload binaries
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: binaries-${{ matrix.arch }}
           path: dist-bins/
@@ -69,10 +69,10 @@ jobs:
         pkg_type: [deb, rpm]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download binaries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: binaries-${{ matrix.arch }}
           path: dist-bins/
@@ -82,9 +82,11 @@ jobs:
 
       - name: Install nfpm
         run: |
-          echo 'deb [trusted=yes] https://repo.goreleaser.com/apt/ /' \
-            | sudo tee /etc/apt/sources.list.d/goreleaser.list
-          sudo apt-get update && sudo apt-get install -y nfpm
+          NFPM_VERSION="2.45.1"
+          curl -sSfL \
+            "https://github.com/goreleaser/nfpm/releases/download/v${NFPM_VERSION}/nfpm_${NFPM_VERSION}_amd64.deb" \
+            -o /tmp/nfpm.deb
+          sudo dpkg -i /tmp/nfpm.deb
 
       - name: Determine version and arch
         id: meta
@@ -116,7 +118,7 @@ jobs:
             --target "${PKG_NAME}"
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: pkg-${{ matrix.arch }}-${{ matrix.pkg_type }}
           path: "purermyha*.${{ matrix.pkg_type }}"
@@ -131,7 +133,7 @@ jobs:
 
     steps:
       - name: Download all packages
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: pkg-*
           merge-multiple: true
