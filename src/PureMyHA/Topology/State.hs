@@ -41,8 +41,9 @@ updateNodeState tvar clusterName ns = do
 updateClusterTopology :: TVarDaemonState -> ClusterTopology -> STM ()
 updateClusterTopology tvar ct = do
   ds <- readTVar tvar
-  writeTVar tvar ds
-    { dsClusters = Map.insert (ctClusterName ct) ct (dsClusters ds) }
+  let prevObserved = maybe False ctObservedHealthy (Map.lookup (ctClusterName ct) (dsClusters ds))
+      ct' = ct { ctObservedHealthy = prevObserved || ctObservedHealthy ct }
+  writeTVar tvar ds { dsClusters = Map.insert (ctClusterName ct) ct' (dsClusters ds) }
 
 getClusterTopology :: TVarDaemonState -> ClusterName -> IO (Maybe ClusterTopology)
 getClusterTopology tvar name = do
