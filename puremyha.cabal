@@ -1,11 +1,11 @@
 cabal-version:      3.0
-name:               purermyha
+name:               puremyha
 version:            0.2.0.0
 synopsis:           MySQL 8.4 HA tool in Haskell
 description:        PureMyHA is a simple HA tool for MySQL 8.4 replication topologies.
 license:            MIT
 author:             PureMyHA Authors
-maintainer:         purermyha@example.com
+maintainer:         puremyha@example.com
 build-type:         Simple
 
 common common-options
@@ -69,25 +69,25 @@ library
     asn1-encoding    >= 0.9,
     asn1-types       >= 0.3
 
-executable purermyhad
+executable puremyhad
   import:          common-options
   hs-source-dirs:  app/Daemon
   main-is:         Main.hs
   build-depends:
-    purermyha,
+    puremyha,
     optparse-applicative >= 0.16,
     katip            >= 0.8,
     unix             >= 2.7
 
-executable purermyha
+executable puremyha
   import:          common-options
   hs-source-dirs:  app/CLI
   main-is:         Main.hs
   build-depends:
-    purermyha,
+    puremyha,
     optparse-applicative >= 0.16
 
-test-suite purermyha-test
+test-suite puremyha-test
   import:          common-options
   type:            exitcode-stdio-1.0
   hs-source-dirs:  test
@@ -105,7 +105,7 @@ test-suite purermyha-test
     PureMyHA.DiscoverySpec
     PureMyHA.ErrantGtidSpec
   build-depends:
-    purermyha,
+    puremyha,
     hspec            >= 2.9,
     QuickCheck       >= 2.14,
     hspec-discover   >= 0.8

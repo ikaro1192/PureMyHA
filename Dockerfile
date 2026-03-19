@@ -4,7 +4,7 @@ FROM haskell:9.6 AS build
 WORKDIR /build
 
 # Copy dependency metadata first for layer caching
-COPY purermyha.cabal cabal.project ./
+COPY puremyha.cabal cabal.project ./
 
 # Build only dependencies (cached unless .cabal or cabal.project changes)
 RUN cabal update && cabal build --only-dependencies all
@@ -20,8 +20,8 @@ RUN cabal test
 
 # Stage binaries to a known location
 RUN mkdir -p /staging && \
-    cp "$(cabal list-bin purermyhad)" /staging/purermyhad && \
-    cp "$(cabal list-bin purermyha)"  /staging/purermyha
+    cp "$(cabal list-bin puremyhad)" /staging/puremyhad && \
+    cp "$(cabal list-bin puremyha)"  /staging/puremyha
 
 # Stage 2: runtime
 FROM debian:bookworm-slim
@@ -31,11 +31,11 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 # Copy binaries
-COPY --from=build /staging/purermyhad /usr/sbin/purermyhad
-COPY --from=build /staging/purermyha  /usr/bin/purermyha
+COPY --from=build /staging/puremyhad /usr/sbin/puremyhad
+COPY --from=build /staging/puremyha  /usr/bin/puremyha
 
 # Copy config example and systemd service
-COPY config/config.yaml.example /etc/purermyha/config.yaml.example
-COPY packaging/purermyhad.service /usr/lib/systemd/system/purermyhad.service
+COPY config/config.yaml.example /etc/puremyha/config.yaml.example
+COPY packaging/puremyhad.service /usr/lib/systemd/system/puremyhad.service
 
-CMD ["purermyhad"]
+CMD ["puremyhad"]

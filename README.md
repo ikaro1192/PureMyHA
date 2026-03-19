@@ -33,17 +33,17 @@ PureMyHA uses two distinct MySQL users.
 Connects to every node for health checks, topology discovery, and failover operations.
 
 ```sql
-CREATE USER 'purermyha'@'%' IDENTIFIED BY '...';
+CREATE USER 'puremyha'@'%' IDENTIFIED BY '...';
 
 -- Fine-grained privileges (MySQL 8.0+, recommended):
-GRANT REPLICATION CLIENT      ON *.* TO 'purermyha'@'%';  -- SHOW REPLICA STATUS, SHOW REPLICAS
-GRANT PROCESS                 ON *.* TO 'purermyha'@'%';  -- SHOW PROCESSLIST (topology discovery)
-GRANT REPLICATION_SLAVE_ADMIN ON *.* TO 'purermyha'@'%';  -- STOP/START REPLICA, RESET REPLICA ALL, CHANGE REPLICATION SOURCE TO
-GRANT SYSTEM_VARIABLES_ADMIN  ON *.* TO 'purermyha'@'%';  -- SET GLOBAL read_only
-GRANT REPLICATION_APPLIER     ON *.* TO 'purermyha'@'%';  -- SET GTID_NEXT (errant GTID repair)
+GRANT REPLICATION CLIENT      ON *.* TO 'puremyha'@'%';  -- SHOW REPLICA STATUS, SHOW REPLICAS
+GRANT PROCESS                 ON *.* TO 'puremyha'@'%';  -- SHOW PROCESSLIST (topology discovery)
+GRANT REPLICATION_SLAVE_ADMIN ON *.* TO 'puremyha'@'%';  -- STOP/START REPLICA, RESET REPLICA ALL, CHANGE REPLICATION SOURCE TO
+GRANT SYSTEM_VARIABLES_ADMIN  ON *.* TO 'puremyha'@'%';  -- SET GLOBAL read_only
+GRANT REPLICATION_APPLIER     ON *.* TO 'puremyha'@'%';  -- SET GTID_NEXT (errant GTID repair)
 
 -- Or with the legacy SUPER privilege:
--- GRANT REPLICATION CLIENT, SUPER ON *.* TO 'purermyha'@'%';
+-- GRANT REPLICATION CLIENT, SUPER ON *.* TO 'puremyha'@'%';
 ```
 
 #### Replication user
@@ -61,17 +61,17 @@ GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
 
 ```mermaid
 graph LR
-    CLI["purermyha (CLI)"] <-->|"Unix socket\n/run/purermyhad.sock"| Daemon["purermyhad (daemon)"]
+    CLI["puremyha (CLI)"] <-->|"Unix socket\n/run/puremyhad.sock"| Daemon["puremyhad (daemon)"]
     Daemon -->|"per-node threads (STM)"| db1["db1 (source)"]
     db1 -->|replication| db2["db2 (replica)"]
 ```
 
 | Component    | Role |
 |-------------|------|
-| `purermyhad` | Long-running daemon. Topology monitoring, failure detection, automatic failover |
-| `purermyha`  | CLI tool. Status display and manual operations |
+| `puremyhad` | Long-running daemon. Topology monitoring, failure detection, automatic failover |
+| `puremyha`  | CLI tool. Status display and manual operations |
 
-Daemon and CLI communicate over a Unix domain socket (`/run/purermyhad.sock`) using newline-delimited JSON.
+Daemon and CLI communicate over a Unix domain socket (`/run/puremyhad.sock`) using newline-delimited JSON.
 
 ### Daemon HA with Pacemaker
 
@@ -93,26 +93,26 @@ Download the latest release from the [Releases page](https://github.com/ikaro119
 #### Debian / Ubuntu
 
 ```bash
-sudo dpkg -i purermyha_<VERSION>_amd64.deb    # x86_64
-sudo dpkg -i purermyha_<VERSION>_arm64.deb    # aarch64
+sudo dpkg -i puremyha_<VERSION>_amd64.deb    # x86_64
+sudo dpkg -i puremyha_<VERSION>_arm64.deb    # aarch64
 ```
 
 #### RHEL / Rocky / AlmaLinux
 
 ```bash
-sudo rpm -ivh purermyha-<VERSION>-1.x86_64.rpm   # x86_64
-sudo rpm -ivh purermyha-<VERSION>-1.aarch64.rpm  # aarch64
+sudo rpm -ivh puremyha-<VERSION>-1.x86_64.rpm   # x86_64
+sudo rpm -ivh puremyha-<VERSION>-1.aarch64.rpm  # aarch64
 ```
 
 #### Post-install setup
 
 ```bash
 # Copy the example config and edit it
-sudo cp /etc/purermyha/config.yaml.example /etc/purermyha/config.yaml
-sudo vi /etc/purermyha/config.yaml
+sudo cp /etc/puremyha/config.yaml.example /etc/puremyha/config.yaml
+sudo vi /etc/puremyha/config.yaml
 
 # Enable and start the daemon
-sudo systemctl enable --now purermyhad
+sudo systemctl enable --now puremyhad
 ```
 
 ### From source
@@ -123,7 +123,7 @@ sudo systemctl enable --now purermyhad
 git clone https://github.com/ikaro1192/PureMyHA
 cd PureMyHA
 cabal build all
-cabal install purermyhad purermyha
+cabal install puremyhad puremyha
 ```
 
 ### Docker build (Linux binary)
@@ -132,19 +132,19 @@ Build Linux binaries without installing GHC locally.
 
 ```bash
 # Build (tests run automatically during build)
-docker build -t purermyha .
+docker build -t puremyha .
 
 # Extract binaries
 mkdir -p dist-bins
-docker create --name tmp purermyha
-docker cp tmp:/usr/bin/purermyha ./dist-bins/
-docker cp tmp:/usr/sbin/purermyhad ./dist-bins/
+docker create --name tmp puremyha
+docker cp tmp:/usr/bin/puremyha ./dist-bins/
+docker cp tmp:/usr/sbin/puremyhad ./dist-bins/
 docker rm tmp
 ```
 
 ## Configuration
 
-Default path: `/etc/purermyha/config.yaml`
+Default path: `/etc/puremyha/config.yaml`
 
 ```yaml
 clusters:
@@ -155,11 +155,11 @@ clusters:
       - host: db2
         port: 3306
     credentials:
-      user: purermyha
-      password_file: /etc/purermyha/mysql.pass
+      user: puremyha
+      password_file: /etc/puremyha/mysql.pass
     replication_credentials:           # Optional; falls back to credentials if omitted
       user: repl
-      password_file: /etc/purermyha/repl.pass
+      password_file: /etc/puremyha/repl.pass
 
 monitoring:
   interval: 3s
@@ -179,12 +179,12 @@ failover:
     - host: db2
 
 hooks:
-  pre_failover: /etc/purermyha/hooks/pre_failover.sh
-  post_failover: /etc/purermyha/hooks/post_failover.sh
-  pre_switchover: /etc/purermyha/hooks/pre_switchover.sh
-  post_switchover: /etc/purermyha/hooks/post_switchover.sh
-  on_failure_detection: /etc/purermyha/hooks/on_failure_detection.sh    # Optional
-  post_unsuccessful_failover: /etc/purermyha/hooks/post_unsuccessful_failover.sh  # Optional
+  pre_failover: /etc/puremyha/hooks/pre_failover.sh
+  post_failover: /etc/puremyha/hooks/post_failover.sh
+  pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
+  post_switchover: /etc/puremyha/hooks/post_switchover.sh
+  on_failure_detection: /etc/puremyha/hooks/on_failure_detection.sh    # Optional
+  post_unsuccessful_failover: /etc/puremyha/hooks/post_unsuccessful_failover.sh  # Optional
 
 logging:
   log_file: /var/log/puremyha.log  # Optional; defaults to /var/log/puremyha.log
@@ -199,7 +199,7 @@ See `config/config.yaml.example` for a full annotated example.
 ### Start the daemon
 
 ```bash
-purermyhad --config /etc/purermyha/config.yaml
+puremyhad --config /etc/puremyha/config.yaml
 ```
 
 ### Daemon management
@@ -211,18 +211,18 @@ purermyhad --config /etc/purermyha/config.yaml
 
 ```bash
 # Reload config (e.g. after editing intervals or hooks)
-systemctl reload purermyhad        # via systemd (preferred)
-kill -HUP $(pidof purermyhad)      # direct signal (non-systemd)
+systemctl reload puremyhad        # via systemd (preferred)
+kill -HUP $(pidof puremyhad)      # direct signal (non-systemd)
 
 # Graceful stop
-kill -TERM $(pidof purermyhad)
+kill -TERM $(pidof puremyhad)
 ```
 
 ### Global flags
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--socket PATH` | — | `/run/purermyhad.sock` | Daemon socket path |
+| `--socket PATH` | — | `/run/puremyhad.sock` | Daemon socket path |
 | `--cluster NAME` | `-C` | — | Target cluster (omit to apply to all) |
 | `--json` | `-j` | — | Output in JSON format instead of text |
 
@@ -230,41 +230,41 @@ kill -TERM $(pidof purermyhad)
 
 ```bash
 # Show topology and node health
-purermyha status
+puremyha status
 
 # Show replication tree
-purermyha topology
+puremyha topology
 
 # Manual switchover (planned maintenance)
-purermyha switchover [--to=<host>] [--cluster=<name>]
+puremyha switchover [--to=<host>] [--cluster=<name>]
 
 # Dry-run: show which replica would be promoted without executing
-purermyha switchover --dry-run [--to=<host>]
+puremyha switchover --dry-run [--to=<host>]
 
 # Acknowledge recovery block (re-enable auto-failover after anti-flap period)
-purermyha ack-recovery [--cluster=<name>]
+puremyha ack-recovery [--cluster=<name>]
 
 # Detect errant GTIDs
-purermyha errant-gtid [--cluster=<name>]
+puremyha errant-gtid [--cluster=<name>]
 
 # Fix errant GTIDs by injecting empty transactions
-purermyha fix-errant-gtid [--cluster=<name>]
+puremyha fix-errant-gtid [--cluster=<name>]
 
 # Demote a node to replica under a specified source (resolve split-brain)
-purermyha demote --host db1 --source db2 [--cluster=<name>]
+puremyha demote --host db1 --source db2 [--cluster=<name>]
 
 # Trigger manual topology discovery
-purermyha discovery [--cluster=<name>]
+puremyha discovery [--cluster=<name>]
 
 # JSON output (for scripting / Prometheus exporters)
-purermyha --json status
-purermyha -j topology
-purermyha -j errant-gtid
-purermyha -j switchover --to db2
+puremyha --json status
+puremyha -j topology
+puremyha -j errant-gtid
+puremyha -j switchover --to db2
 
 # Pipe to jq
-purermyha -j status | jq '.[0].health'
-purermyha -j topology | jq '.[0].nodes[].host'
+puremyha -j status | jq '.[0].health'
+puremyha -j topology | jq '.[0].nodes[].host'
 ```
 
 ## Logging
@@ -288,7 +288,7 @@ PureMyHA writes structured, timestamped logs via [katip](https://hackage.haskell
 ### Example output
 
 ```
-[2026-03-17 12:34:56 UTC] [Info] purermyhad started
+[2026-03-17 12:34:56 UTC] [Info] puremyhad started
 [2026-03-17 12:35:01 UTC] [Warn] [main] Node db1 unreachable: Connection refused
 [2026-03-17 12:35:10 UTC] [Info] [main] Auto-failover started
 [2026-03-17 12:35:12 UTC] [Info] [main] Auto-failover completed: new source is db2
@@ -338,7 +338,7 @@ cabal build all
 cabal test
 
 # Run with a local config
-cabal run purermyhad -- --config config/config.yaml.example
+cabal run puremyhad -- --config config/config.yaml.example
 ```
 
 ## License

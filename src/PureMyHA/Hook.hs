@@ -32,12 +32,12 @@ getCurrentTimestamp =
 runHook :: FilePath -> HookEnv -> IO (Either Text ())
 runHook scriptPath hookEnv = do
   let envVars =
-        [ ("PURERMYHA_CLUSTER", T.unpack (hookClusterName hookEnv))
+        [ ("PUREMYHA_CLUSTER", T.unpack (hookClusterName hookEnv))
         ] ++
-        maybe [] (\h -> [("PURERMYHA_NEW_SOURCE", T.unpack h)]) (hookNewSource hookEnv) ++
-        maybe [] (\h -> [("PURERMYHA_OLD_SOURCE", T.unpack h)]) (hookOldSource hookEnv) ++
-        maybe [] (\ft -> [("PURERMYHA_FAILURE_TYPE", T.unpack ft)]) (hookFailureType hookEnv) ++
-        [("PURERMYHA_TIMESTAMP", T.unpack (hookTimestamp hookEnv))]
+        maybe [] (\h -> [("PUREMYHA_NEW_SOURCE", T.unpack h)]) (hookNewSource hookEnv) ++
+        maybe [] (\h -> [("PUREMYHA_OLD_SOURCE", T.unpack h)]) (hookOldSource hookEnv) ++
+        maybe [] (\ft -> [("PUREMYHA_FAILURE_TYPE", T.unpack ft)]) (hookFailureType hookEnv) ++
+        [("PUREMYHA_TIMESTAMP", T.unpack (hookTimestamp hookEnv))]
   result <- try @SomeException $ do
     (_, _, _, ph) <- createProcess (proc scriptPath [T.unpack (hookClusterName hookEnv)])
       { env = Just envVars }

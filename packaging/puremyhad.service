@@ -4,7 +4,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/sbin/purermyhad --config /etc/purermyha/config.yaml
+ExecStart=/usr/sbin/puremyhad --config /etc/puremyha/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s

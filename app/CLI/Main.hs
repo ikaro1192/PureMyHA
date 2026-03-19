@@ -80,7 +80,7 @@ switchoverCmd = CmdSwitchover
 main :: IO ()
 main = do
   opts <- execParser (info (cliOptions <**> helper)
-    (fullDesc <> progDesc "PureMyHA CLI" <> header "purermyha"))
+    (fullDesc <> progDesc "PureMyHA CLI" <> header "puremyha"))
 
   let socketPath = optSocketPath opts
       mCluster   = optCluster opts
