@@ -7,7 +7,7 @@ module PureMyHA.Monitor.Worker
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, Async)
+import Control.Concurrent.Async (async, wait, Async)
 import Control.Concurrent.STM (atomically, TVar, newTVarIO, modifyTVar', readTVarIO)
 import Control.Exception (SomeException, catch)
 import Control.Monad (when, forM, forM_, unless)
@@ -152,7 +152,7 @@ monitorNode
   -> NodeId
   -> Logger
   -> IO ()
-monitorNode tvar cc _mc lock fc fdc pws mHooks nid logger = do
+monitorNode tvar cc mc lock fc fdc pws mHooks nid logger = do
   now <- getCurrentTime
   let user = credUser (ccCredentials cc)
       ci   = makeConnectInfo nid user (cpPassword pws)
@@ -193,7 +193,7 @@ monitorNode tvar cc _mc lock fc fdc pws mHooks nid logger = do
   logHealthChange logger (ccName cc) nid mOldNs ns''
   atomically $ updateNodeState tvar (ccName cc) ns''
   -- Recompute cluster-level health
-  recomputeClusterHealth tvar cc lock fc fdc pws mHooks logger
+  recomputeClusterHealth tvar cc mc lock fc fdc pws mHooks logger
 
 logHealthChange :: Logger -> ClusterName -> NodeId -> Maybe NodeState -> NodeState -> IO ()
 logHealthChange logger clusterName nid mOld new = do
@@ -231,6 +231,7 @@ enrichErrantGtids tvar clusterName ns user password = do
 recomputeClusterHealth
   :: TVarDaemonState
   -> ClusterConfig
+  -> MonitoringConfig
   -> FailoverLock
   -> FailoverConfig
   -> FailureDetectionConfig
@@ -238,7 +239,7 @@ recomputeClusterHealth
   -> Maybe HooksConfig
   -> Logger
   -> IO ()
-recomputeClusterHealth tvar cc lock fc fdc pws mHooks logger = do
+recomputeClusterHealth tvar cc mc lock fc fdc pws mHooks logger = do
   mTopo <- getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure ()
@@ -267,3 +268,31 @@ recomputeClusterHealth tvar cc lock fc fdc pws mHooks logger = do
       when (transitioned && newHealth == DeadSource && fcAutoFailover fc) $ do
         _ <- async (runAutoFailover tvar lock cc fc fdc pws mHooks logger)
         pure ()
+      -- Emergency re-check on first transition to UnreachableSource
+      when (transitioned && newHealth == UnreachableSource) $ do
+        _ <- async (emergencyReplicaCheck tvar cc mc lock fc fdc pws mHooks logger)
+        pure ()
+
+-- | When UnreachableSource is first detected, immediately re-probe IOYes replicas
+-- to confirm whether they can actually reach the source (Orchestrator-style).
+emergencyReplicaCheck
+  :: TVarDaemonState -> ClusterConfig -> MonitoringConfig -> FailoverLock
+  -> FailoverConfig -> FailureDetectionConfig -> ClusterPasswords
+  -> Maybe HooksConfig -> Logger -> IO ()
+emergencyReplicaCheck tvar cc mc lock fc fdc pws mHooks logger = do
+  logInfo logger $ "[" <> ccName cc <> "] UnreachableSource detected: emergency replica re-check"
+  mTopo <- getClusterTopology tvar (ccName cc)
+  case mTopo of
+    Nothing   -> pure ()
+    Just topo -> do
+      let ioYesReplicas = filter isIOYesReplica (Map.elems (ctNodes topo))
+      asyncs <- forM ioYesReplicas $ \ns ->
+        async (monitorNode tvar cc mc lock fc fdc pws mHooks (nsNodeId ns) logger)
+      mapM_ wait asyncs
+
+isIOYesReplica :: NodeState -> Bool
+isIOYesReplica ns =
+  not (nsIsSource ns) &&
+  case nsReplicaStatus ns of
+    Just rs -> rsReplicaIORunning rs == IOYes
+    Nothing -> False
