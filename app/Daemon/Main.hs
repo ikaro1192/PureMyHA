@@ -34,7 +34,7 @@ daemonOptions = DaemonOptions
         ( long "config"
         <> short 'c'
         <> metavar "FILE"
-        <> value "/etc/purermyha/config.yaml"
+        <> value "/etc/puremyha/config.yaml"
         <> help "Path to configuration file" )
   <*> strOption
         ( long "socket"
@@ -45,7 +45,7 @@ daemonOptions = DaemonOptions
 main :: IO ()
 main = do
   opts <- execParser (info (daemonOptions <**> helper)
-    (fullDesc <> progDesc "PureMyHA daemon" <> header "purermyhad"))
+    (fullDesc <> progDesc "PureMyHA daemon" <> header "puremyhad"))
 
   eCfg <- loadConfig (optConfigPath opts)
   cfg <- case eCfg of
@@ -109,7 +109,7 @@ main = do
 
   ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap (optSocketPath opts) logger
 
-  logInfo logger "purermyhad started"
+  logInfo logger "puremyhad started"
 
   let allWorkers = ipcAsync : monitorWorkers <> refreshWorkers
 
@@ -118,7 +118,7 @@ main = do
     (atomically (takeTMVar shutdownVar))
     (void (waitAnyCancel allWorkers))
 
-  logInfo logger "purermyhad shutting down"
+  logInfo logger "puremyhad shutting down"
   mapM_ cancel allWorkers
   closeLogger logger
 

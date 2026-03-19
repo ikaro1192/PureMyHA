@@ -27,7 +27,7 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ github.workspace }}/.cabal-store
-          key: cabal-${{ matrix.arch }}-${{ hashFiles('purermyha.cabal', 'cabal.project') }}
+          key: cabal-${{ matrix.arch }}-${{ hashFiles('puremyha.cabal', 'cabal.project') }}
           restore-keys: cabal-${{ matrix.arch }}-
 
       - name: Build and test in Docker
@@ -42,7 +42,7 @@ jobs:
               cabal build all &&
               cabal test --test-show-details=always &&
               mkdir -p dist-bins &&
-              cabal install exe:purermyhad exe:purermyha \
+              cabal install exe:puremyhad exe:puremyha \
                 --installdir=dist-bins \
                 --install-method=copy \
                 --overwrite-policy=always
@@ -78,7 +78,7 @@ jobs:
           path: dist-bins/
 
       - name: Make binaries executable
-        run: chmod +x dist-bins/purermyhad dist-bins/purermyha
+        run: chmod +x dist-bins/puremyhad dist-bins/puremyha
 
       - name: Install nfpm
         run: |
@@ -106,10 +106,10 @@ jobs:
           PKG_TYPE="${{ matrix.pkg_type }}"
 
           if [ "${PKG_TYPE}" = "deb" ]; then
-            PKG_NAME="purermyha_${VERSION}_${NFPM_ARCH}.deb"
+            PKG_NAME="puremyha_${VERSION}_${NFPM_ARCH}.deb"
           else
             if [ "${NFPM_ARCH}" = "amd64" ]; then RPM_ARCH="x86_64"; else RPM_ARCH="aarch64"; fi
-            PKG_NAME="purermyha-${VERSION}-1.${RPM_ARCH}.rpm"
+            PKG_NAME="puremyha-${VERSION}-1.${RPM_ARCH}.rpm"
           fi
 
           nfpm pkg \
@@ -121,7 +121,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: pkg-${{ matrix.arch }}-${{ matrix.pkg_type }}
-          path: "purermyha*.${{ matrix.pkg_type }}"
+          path: "puremyha*.${{ matrix.pkg_type }}"
           if-no-files-found: error
 
   release:

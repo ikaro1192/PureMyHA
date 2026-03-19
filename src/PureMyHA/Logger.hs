@@ -18,7 +18,7 @@ initLogger logFile = do
   h <- openFile logFile AppendMode
   hSetBuffering h LineBuffering
   scribe <- mkHandleScribe ColorIfTerminal h (permitItem InfoS) V2
-  le <- initLogEnv "purermyha" "production"
+  le <- initLogEnv "puremyha" "production"
   le' <- registerScribe "file" scribe defaultScribeSettings le
   pure (Logger le')
 
@@ -29,7 +29,7 @@ closeLogger (Logger le) = do
 
 logAt :: Logger -> Severity -> Text -> IO ()
 logAt (Logger le) sev msg =
-  runKatipT le $ logMsg "purermyha" sev (logStr msg)
+  runKatipT le $ logMsg "puremyha" sev (logStr msg)
 
 logInfo :: Logger -> Text -> IO ()
 logInfo l = logAt l InfoS

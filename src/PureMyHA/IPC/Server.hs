@@ -29,7 +29,7 @@ import PureMyHA.Topology.State
 import PureMyHA.Types
 
 defaultSocketPath :: FilePath
-defaultSocketPath = "/run/purermyhad.sock"
+defaultSocketPath = "/run/puremyhad.sock"
 
 type ClusterEntry = (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, ClusterPasswords, Maybe HooksConfig)
 type ClusterMap   = Map ClusterName ClusterEntry
