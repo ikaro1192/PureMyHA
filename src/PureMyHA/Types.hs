@@ -66,6 +66,7 @@ data ClusterTopology = ClusterTopology
   , ctNodes                 :: Map NodeId NodeState
   , ctSourceNodeId          :: Maybe NodeId
   , ctHealth                :: NodeHealth
+  , ctObservedHealthy       :: Bool             -- True if cluster has ever been Healthy since daemon start
   , ctRecoveryBlockedUntil  :: Maybe UTCTime
   , ctLastFailoverAt        :: Maybe UTCTime
   } deriving (Show, Generic)

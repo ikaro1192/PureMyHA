@@ -16,6 +16,7 @@ deadSourceTopo = ClusterTopology
   , ctNodes                = clusterWithDeadSource
   , ctSourceNodeId         = Just (NodeId "db1" 3306)
   , ctHealth               = DeadSource
+  , ctObservedHealthy      = True
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
   }

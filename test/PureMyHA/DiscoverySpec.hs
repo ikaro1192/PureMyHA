@@ -62,12 +62,14 @@ spec = do
 
     it "healthy cluster has Healthy health and correct source" $ do
       let topo = buildClusterTopology "prod" clusterHealthy
-      ctHealth       topo `shouldBe` Healthy
-      ctSourceNodeId topo `shouldBe` Just (NodeId "db1" 3306)
+      ctHealth          topo `shouldBe` Healthy
+      ctSourceNodeId    topo `shouldBe` Just (NodeId "db1" 3306)
+      ctObservedHealthy topo `shouldBe` True
 
     it "cluster with dead source has DeadSource health" $ do
       let topo = buildClusterTopology "prod" clusterWithDeadSource
-      ctHealth topo `shouldBe` DeadSource
+      ctHealth          topo `shouldBe` DeadSource
+      ctObservedHealthy topo `shouldBe` False
 
     it "empty cluster has NeedsAttention health and no source" $ do
       let topo = buildClusterTopology "empty" Map.empty

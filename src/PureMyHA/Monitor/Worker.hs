@@ -247,10 +247,12 @@ recomputeClusterHealth tvar cc mc lock fc fdc pws mHooks logger = do
       let newHealth = detectClusterHealth (ctNodes topo)
           newSrcId  = identifySource (Map.elems (ctNodes topo))
           topo' = topo
-            { ctHealth       = newHealth
-            , ctSourceNodeId = newSrcId
+            { ctHealth          = newHealth
+            , ctSourceNodeId    = newSrcId
+            , ctObservedHealthy = newHealth == Healthy
             }
-      let transitioned = ctHealth topo /= newHealth
+      let transitioned     = ctHealth topo /= newHealth
+          observedHealthy  = ctObservedHealthy topo || newHealth == Healthy
       -- Fire on_failure_detection hook on transition to a dead state
       when transitioned $
         case newHealth of
@@ -263,9 +265,13 @@ recomputeClusterHealth tvar cc mc lock fc fdc pws mHooks logger = do
             let env = HookEnv (ccName cc) Nothing Nothing (Just "DeadSourceAndAllReplicas") ts
             runHookFireForget mHooks hcOnFailureDetection env
           _ -> pure ()
+      -- Log all health transitions for observability
+      when transitioned $
+        logInfo logger $ "[" <> ccName cc <> "] Cluster health: "
+          <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
       atomically $ updateClusterTopology tvar topo'
-      -- Trigger auto-failover on transition to DeadSource
-      when (transitioned && newHealth == DeadSource && fcAutoFailover fc) $ do
+      -- Trigger auto-failover on transition to DeadSource only after cluster was observed healthy
+      when (transitioned && newHealth == DeadSource && fcAutoFailover fc && observedHealthy) $ do
         _ <- async (runAutoFailover tvar lock cc fc fdc pws mHooks logger)
         pure ()
       -- Emergency re-check on first transition to UnreachableSource

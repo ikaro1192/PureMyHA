@@ -49,6 +49,7 @@ buildClusterTopology name nodeStates =
        , ctNodes                = nodeStates'
        , ctSourceNodeId         = sourceId
        , ctHealth               = health
+       , ctObservedHealthy      = health == Healthy
        , ctRecoveryBlockedUntil = Nothing
        , ctLastFailoverAt       = Nothing
        }
@@ -166,6 +167,7 @@ buildInitialTopology cc = ClusterTopology
   , ctNodes                = Map.empty
   , ctSourceNodeId         = Nothing
   , ctHealth               = NeedsAttention "Initializing"
+  , ctObservedHealthy      = False
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
   }
