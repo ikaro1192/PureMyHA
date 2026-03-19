@@ -96,12 +96,14 @@ printNode :: Bool -> NodeStateView -> IO ()
 printNode isSource nsv = do
   let prefix = if isSource then "[SOURCE] " else "  [REPLICA] "
       host   = T.unpack (nsvHost nsv) <> ":" <> show (nsvPort nsv)
-      health = showHealth (nsvHealth nsv)
+      status = if nsvPaused nsv
+                 then "[PAUSED]"
+                 else "[" <> showHealth (nsvHealth nsv) <> "]"
       lag    = case nsvLagSeconds nsv of
         Nothing -> ""
         Just s  -> " lag=" <> show s <> "s"
       errant = if nsvErrantGtids nsv == "" then "" else " ERRANT_GTID"
-  putStrLn $ prefix <> host <> " [" <> health <> "]" <> lag <> errant
+  putStrLn $ prefix <> host <> " " <> status <> lag <> errant
 
 -- | Print an operation result
 printOperationResult :: Bool -> OperationResult -> IO ()

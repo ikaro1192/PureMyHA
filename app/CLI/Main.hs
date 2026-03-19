@@ -26,6 +26,8 @@ data Command
   | CmdFixErrantGtid
   | CmdDemote Text Text   -- host, source
   | CmdDiscovery
+  | CmdPauseReplica  Text
+  | CmdResumeReplica Text
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -60,12 +62,22 @@ cliOptions = CLIOptions
             (info demoteCmd (progDesc "Demote a node to replica under specified source"))
         <> command "discovery"
             (info (pure CmdDiscovery) (progDesc "Trigger manual topology discovery"))
+        <> command "pause-replica"
+            (info pauseReplicaCmd (progDesc "Pause replication on a node for maintenance"))
+        <> command "resume-replica"
+            (info resumeReplicaCmd (progDesc "Resume replication on a paused node"))
         )
 
 demoteCmd :: Parser Command
 demoteCmd = CmdDemote
   <$> strOption (long "host"   <> metavar "HOST" <> help "Node to demote")
   <*> strOption (long "source" <> metavar "HOST" <> help "New replication source host")
+
+pauseReplicaCmd :: Parser Command
+pauseReplicaCmd = CmdPauseReplica <$> strOption (long "host" <> metavar "HOST" <> help "Node to pause")
+
+resumeReplicaCmd :: Parser Command
+resumeReplicaCmd = CmdResumeReplica <$> strOption (long "host" <> metavar "HOST" <> help "Node to resume")
 
 switchoverCmd :: Parser Command
 switchoverCmd = CmdSwitchover
@@ -94,6 +106,8 @@ main = do
         CmdFixErrantGtid    -> ReqFixErrantGtid mCluster
         CmdDemote host src  -> ReqDemote mCluster host src
         CmdDiscovery        -> ReqDiscovery mCluster
+        CmdPauseReplica  host -> ReqPauseReplica  mCluster host
+        CmdResumeReplica host -> ReqResumeReplica mCluster host
 
   eResp <- sendRequest socketPath req
   case eResp of

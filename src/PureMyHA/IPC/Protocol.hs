@@ -75,6 +75,7 @@ instance ToJSON NodeStateView where
     , "lagSeconds"   .= nsvLagSeconds
     , "errantGtids"  .= nsvErrantGtids
     , "connectError" .= nsvConnectError
+    , "paused"       .= nsvPaused
     ]
 
 instance FromJSON NodeStateView where
@@ -87,6 +88,7 @@ instance FromJSON NodeStateView where
       <*> o .: "lagSeconds"
       <*> o .: "errantGtids"
       <*> o .: "connectError"
+      <*> o .: "paused"
 
 instance ToJSON ClusterTopologyView where
   toJSON ClusterTopologyView{..} = object
@@ -133,6 +135,8 @@ data Request
   | ReqFixErrantGtid { reqCluster :: Maybe ClusterName }
   | ReqDemote { reqCluster :: Maybe ClusterName, reqDemoteHost :: Text, reqDemoteSourceHost :: Text }
   | ReqDiscovery { reqCluster :: Maybe ClusterName }
+  | ReqPauseReplica  { reqCluster :: Maybe ClusterName, reqPauseHost  :: Text }
+  | ReqResumeReplica { reqCluster :: Maybe ClusterName, reqResumeHost :: Text }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Request where
@@ -144,6 +148,8 @@ instance ToJSON Request where
   toJSON (ReqFixErrantGtid mc)   = object ["type" .= ("fix-errant-gtid" :: Text), "cluster" .= mc]
   toJSON (ReqDemote mc h s)      = object ["type" .= ("demote" :: Text), "cluster" .= mc, "host" .= h, "sourceHost" .= s]
   toJSON (ReqDiscovery mc)       = object ["type" .= ("discovery" :: Text),       "cluster" .= mc]
+  toJSON (ReqPauseReplica  mc h) = object ["type" .= ("pause-replica"  :: Text), "cluster" .= mc, "host" .= h]
+  toJSON (ReqResumeReplica mc h) = object ["type" .= ("resume-replica" :: Text), "cluster" .= mc, "host" .= h]
 
 instance FromJSON Request where
   parseJSON = withObject "Request" $ \o -> do
@@ -157,6 +163,8 @@ instance FromJSON Request where
       "fix-errant-gtid" -> ReqFixErrantGtid <$> o .:? "cluster"
       "demote"          -> ReqDemote        <$> o .:? "cluster" <*> o .: "host" <*> o .: "sourceHost"
       "discovery"       -> ReqDiscovery    <$> o .:? "cluster"
+      "pause-replica"   -> ReqPauseReplica  <$> o .:? "cluster" <*> o .: "host"
+      "resume-replica"  -> ReqResumeReplica <$> o .:? "cluster" <*> o .: "host"
       _                 -> fail $ "Unknown request type: " <> show t
 
 -- | IPC Response types

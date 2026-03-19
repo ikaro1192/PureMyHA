@@ -59,6 +59,7 @@ data NodeState = NodeState
   , nsLastSeen      :: Maybe UTCTime
   , nsConnectError  :: Maybe Text
   , nsErrantGtids   :: Text
+  , nsPaused        :: Bool
   } deriving (Eq, Show, Generic)
 
 data ClusterTopology = ClusterTopology
@@ -97,6 +98,7 @@ data NodeStateView = NodeStateView
   , nsvLagSeconds   :: Maybe Int
   , nsvErrantGtids  :: Text
   , nsvConnectError :: Maybe Text
+  , nsvPaused       :: Bool
   } deriving (Show, Eq, Generic)
 
 data OperationResult

@@ -35,6 +35,12 @@ spec = do
     it "round-trips ReqFixErrantGtid" $
       roundTrip (ReqFixErrantGtid Nothing) `shouldBe` Just (ReqFixErrantGtid Nothing)
 
+    it "round-trips ReqPauseReplica" $
+      roundTrip (ReqPauseReplica (Just "main") "db2") `shouldBe` Just (ReqPauseReplica (Just "main") "db2")
+
+    it "round-trips ReqResumeReplica" $
+      roundTrip (ReqResumeReplica Nothing "db3") `shouldBe` Just (ReqResumeReplica Nothing "db3")
+
   describe "Response JSON round-trip" $ do
     it "round-trips RespError" $
       roundTripResp (RespError "something went wrong")

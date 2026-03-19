@@ -175,6 +175,7 @@ monitorNode tvar cc mc lock fc fdc pws mHooks nid logger = do
         , nsLastSeen        = Nothing
         , nsConnectError    = Just err
         , nsErrantGtids     = ""
+        , nsPaused          = maybe False nsPaused mOldNs
         }
     Right (mRs, gtidExec) ->
       pure NodeState
@@ -186,6 +187,7 @@ monitorNode tvar cc mc lock fc fdc pws mHooks nid logger = do
         , nsLastSeen        = Just now
         , nsConnectError    = Nothing
         , nsErrantGtids     = ""
+        , nsPaused          = maybe False nsPaused mOldNs
         }
   -- Update errant GTIDs by querying MySQL
   ns' <- enrichErrantGtids tvar (ccName cc) ns user (cpPassword pws)
@@ -198,14 +200,16 @@ monitorNode tvar cc mc lock fc fdc pws mHooks nid logger = do
 logHealthChange :: Logger -> ClusterName -> NodeId -> Maybe NodeState -> NodeState -> IO ()
 logHealthChange logger clusterName nid mOld new = do
   let host = nodeHost nid
-  case (fmap nsHealth mOld, nsHealth new) of
-    (Just Healthy, NeedsAttention err) ->
-      logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " unreachable: " <> err
-    (Just (NeedsAttention _), Healthy) ->
-      logInfo logger $ "[" <> clusterName <> "] Node " <> host <> " recovered"
-    (Nothing, NeedsAttention err) ->
-      logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " initial connect failed: " <> err
-    _ -> pure ()
+  if nsPaused new
+    then pure ()
+    else case (fmap nsHealth mOld, nsHealth new) of
+      (Just Healthy, NeedsAttention err) ->
+        logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " unreachable: " <> err
+      (Just (NeedsAttention _), Healthy) ->
+        logInfo logger $ "[" <> clusterName <> "] Node " <> host <> " recovered"
+      (Nothing, NeedsAttention err) ->
+        logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " initial connect failed: " <> err
+      _ -> pure ()
 
 enrichErrantGtids :: TVarDaemonState -> ClusterName -> NodeState -> Text -> Text -> IO NodeState
 enrichErrantGtids tvar clusterName ns user password = do

@@ -20,6 +20,7 @@ import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
 import PureMyHA.Failover.Demote (runDemote)
+import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica)
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
 import System.Posix.Files (removeLink)
@@ -164,6 +165,24 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
           Left err  -> OperationFailure err
           Right msg -> OperationSuccess msg
 
+  ReqPauseReplica mCluster host ->
+    case lookupCluster mCluster clusterMap of
+      Nothing -> pure (RespError "Cluster not found")
+      Just (_, cc, _, _, pws, _) -> do
+        result <- runPauseReplica tvar cc pws host logger
+        pure $ RespOperation $ case result of
+          Left err -> OperationFailure err
+          Right () -> OperationSuccess ("Replication paused on " <> host)
+
+  ReqResumeReplica mCluster host ->
+    case lookupCluster mCluster clusterMap of
+      Nothing -> pure (RespError "Cluster not found")
+      Just (_, cc, _, _, pws, _) -> do
+        result <- runResumeReplica tvar cc pws host logger
+        pure $ RespOperation $ case result of
+          Left err -> OperationFailure err
+          Right () -> OperationSuccess ("Replication resumed on " <> host)
+
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m
 filterClusters (Just n) m = maybe [] pure (Map.lookup n m)
@@ -200,6 +219,7 @@ toNodeStateView ns = NodeStateView
   , nsvLagSeconds  = nsReplicaStatus ns >>= rsSecondsBehindSource
   , nsvErrantGtids = nsErrantGtids ns
   , nsvConnectError = nsConnectError ns
+  , nsvPaused      = nsPaused ns
   }
 
 clusterErrantGtids :: ClusterTopology -> [ErrantGtidInfo]

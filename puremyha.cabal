@@ -49,6 +49,7 @@ library
     PureMyHA.Failover.Candidate
     PureMyHA.Failover.Auto
     PureMyHA.Failover.Demote
+    PureMyHA.Failover.PauseReplica
     PureMyHA.Failover.ErrantGtid
     PureMyHA.Failover.Switchover
     PureMyHA.IPC.Protocol
