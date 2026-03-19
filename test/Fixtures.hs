@@ -47,6 +47,7 @@ mkNodeState nid isSource mRs health = NodeState
   , nsLastSeen        = Just fixedTime
   , nsConnectError    = Nothing
   , nsErrantGtids     = ""
+  , nsPaused          = False
   }
 
 healthySource :: NodeState
@@ -78,6 +79,7 @@ unreachableNode nid = NodeState
   , nsLastSeen        = Nothing
   , nsConnectError    = Just "Connection refused"
   , nsErrantGtids     = ""
+  , nsPaused          = False
   }
 
 unreachableReplica :: NodeState
@@ -96,6 +98,7 @@ clusterWithDeadSource = Map.fromList
       , nsLastSeen  = Just fixedTime
       , nsConnectError = Nothing
       , nsErrantGtids = ""
+      , nsPaused = False
       })
   ]
 

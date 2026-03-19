@@ -47,6 +47,7 @@ spec = do
                 , nsLastSeen      = Just fixedTime
                 , nsConnectError  = Nothing
                 , nsErrantGtids   = ""
+                , nsPaused        = False
                 })
             ]
       detectClusterHealth cluster `shouldBe` DeadSource
@@ -63,6 +64,7 @@ spec = do
                 , nsLastSeen      = Just fixedTime
                 , nsConnectError  = Nothing
                 , nsErrantGtids   = ""
+                , nsPaused        = False
                 })
             ]
       detectClusterHealth cluster `shouldBe` UnreachableSource
