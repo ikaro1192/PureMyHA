@@ -6,6 +6,9 @@ module PureMyHA.Topology.Discovery
   , nextDiscoveryTargets
   ) where
 
+import Control.Monad (when)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (asks)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Set (Set)
@@ -13,8 +16,8 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
-import Control.Monad (when)
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..))
+import PureMyHA.Env (App, envCluster, envLogger, getMySQLUser, getMonPassword)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
@@ -22,15 +25,14 @@ import PureMyHA.Types
 import PureMyHA.Monitor.Detector (identifySource, detectClusterHealth)
 
 -- | Discover all nodes reachable from the seed nodes
-discoverTopology
-  :: ClusterConfig
-  -> Text          -- ^ MySQL password
-  -> Logger
-  -> IO ClusterTopology
-discoverTopology cc password logger = do
+discoverTopology :: App ClusterTopology
+discoverTopology = do
+  cc       <- asks envCluster
+  user     <- getMySQLUser
+  password <- getMonPassword
+  logger   <- asks envLogger
   let seedNodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
-      user = credUser (ccCredentials cc)
-  nodeStates <- discoverAll user password (Set.fromList seedNodes) Set.empty Map.empty logger
+  nodeStates <- liftIO $ discoverAll user password (Set.fromList seedNodes) Set.empty Map.empty logger
   pure (buildClusterTopology (ccName cc) nodeStates)
 
 -- | Build a ClusterTopology from discovered node states (pure)

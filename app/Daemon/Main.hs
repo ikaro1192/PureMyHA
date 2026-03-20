@@ -132,22 +132,23 @@ initCluster
 initCluster tvar cfg mcVar hooksVar logger (cc, pws) = do
   let initTopo = buildInitialTopology cc
   atomically $ updateClusterTopology tvar initTopo
-  topo <- discoverTopology cc (cpPassword pws) logger
+  lock <- newFailoverLock
+  let env = ClusterEnv
+        { envDaemonState = tvar
+        , envCluster     = cc
+        , envFailover    = cfgFailover cfg
+        , envDetection   = cfgFailureDetection cfg
+        , envPasswords   = pws
+        , envMonitoring  = mcVar
+        , envHooks       = hooksVar
+        , envLock        = lock
+        , envLogger      = logger
+        }
+  topo <- runApp env discoverTopology
   logInfo logger $ "[" <> ccName cc <> "] Initial discovery found "
     <> T.pack (show (Map.size (ctNodes topo))) <> " node(s)"
   atomically $ updateClusterTopology tvar topo
-  lock <- newFailoverLock
-  pure ClusterEnv
-    { envDaemonState = tvar
-    , envCluster     = cc
-    , envFailover    = cfgFailover cfg
-    , envDetection   = cfgFailureDetection cfg
-    , envPasswords   = pws
-    , envMonitoring  = mcVar
-    , envHooks       = hooksVar
-    , envLock        = lock
-    , envLogger      = logger
-    }
+  pure env
 
 loadClusterPasswords :: ClusterConfig -> IO ClusterPasswords
 loadClusterPasswords cc = do
@@ -165,11 +166,9 @@ loadPassword creds = do
 
 makeDiscoveryAction :: ClusterEnv -> WorkerRegistry -> DiscoveryAction
 makeDiscoveryAction env reg = do
-  let tvar   = envDaemonState env
-      cc     = envCluster env
-      pws    = envPasswords env
-      logger = envLogger env
-  newTopo <- discoverTopology cc (cpPassword pws) logger
+  let tvar = envDaemonState env
+      cc   = envCluster env
+  newTopo <- runApp env discoverTopology
   atomically $ updateClusterTopology tvar newTopo
   knownNodes <- Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes newTopo)
