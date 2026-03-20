@@ -1,0 +1,9 @@
+[mysqld]
+server-id=2
+gtid_mode=ON
+enforce_gtid_consistency=ON
+binlog_format=ROW
+log_bin=mysql-bin
+report_host=mysql-replica1
+read_only=ON
+log_replica_updates=ON

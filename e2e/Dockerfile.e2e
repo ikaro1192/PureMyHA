@@ -1,0 +1,27 @@
+# Stage 1: build (reuse production build)
+FROM haskell:9.6 AS build
+
+WORKDIR /build
+
+COPY puremyha.cabal cabal.project ./
+RUN cabal update && cabal build --only-dependencies all
+
+COPY . .
+RUN cabal build all
+
+RUN mkdir -p /staging && \
+    cp "$(cabal list-bin puremyhad)" /staging/puremyhad && \
+    cp "$(cabal list-bin puremyha)"  /staging/puremyha
+
+# Stage 2: runtime with test utilities
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      libgmp10 zlib1g socat jq default-mysql-client procps && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /staging/puremyhad /usr/sbin/puremyhad
+COPY --from=build /staging/puremyha  /usr/bin/puremyha
+
+CMD ["puremyhad"]

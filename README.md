@@ -347,6 +347,47 @@ cabal test
 cabal run puremyhad -- --config config/config.yaml.example
 ```
 
+### E2E Tests
+
+The `e2e/` directory contains a Docker Compose based end-to-end test framework. It spins up a real MySQL 8.4 GTID-replication cluster (1 source + 2 replicas) and runs failover scenarios against the `puremyhad` daemon.
+
+**Prerequisites:** Docker and Docker Compose.
+
+```bash
+cd e2e
+
+# Run all tests
+make e2e
+
+# Run a specific test (e.g., auto-failover only)
+make e2e-test T=02
+
+# Follow puremyhad logs (useful for debugging)
+make e2e-logs
+
+# Check container status
+make e2e-status
+
+# Tear down the environment
+make e2e-clean
+```
+
+#### Test scenarios
+
+| # | Test | What it verifies |
+|---|------|-----------------|
+| 01 | Topology Discovery | All 3 nodes discovered, source/replica roles identified correctly |
+| 02 | Auto-Failover | Source crash (`docker stop`) triggers automatic promotion of preferred candidate |
+| 03 | Network Partition | Source pause (`docker pause`) detected as `UnreachableSource`, no false failover |
+| 04 | Manual Switchover | Dry-run leaves cluster unchanged; real switchover promotes the specified replica |
+| 05 | Errant GTID | Injected errant transaction detected and repaired via `fix-errant-gtid` |
+| 06 | Anti-Flap | Recovery block set after failover, cleared by `ack-recovery` |
+| 07 | Hook Execution | Pre/post failover hooks fire and write marker files |
+| 08 | Pause / Resume Replica | Pause replication via IPC, verify data stops flowing, resume and confirm catch-up |
+| 09 | Demote | Switchover then demote a replica to replicate from the new source; verify replication chain |
+
+The test environment uses accelerated timings (`interval: 1s`, `recovery_block_period: 30s`) so the full suite completes in a few minutes. Cluster state is automatically reset between tests.
+
 ## License
 
 MIT

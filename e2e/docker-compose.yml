@@ -1,0 +1,82 @@
+services:
+  mysql-source:
+    image: mysql:8.4
+    container_name: e2e-source
+    hostname: mysql-source
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - ./mysql-conf/source.cnf:/etc/mysql/conf.d/source.cnf:ro
+      - ./mysql-init/01-source-init.sql:/docker-entrypoint-initdb.d/01-source-init.sql:ro
+    networks:
+      e2e-net:
+        aliases: [mysql-source]
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-prootpass"]
+      interval: 2s
+      retries: 30
+
+  mysql-replica1:
+    image: mysql:8.4
+    container_name: e2e-replica1
+    hostname: mysql-replica1
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - ./mysql-conf/replica1.cnf:/etc/mysql/conf.d/replica.cnf:ro
+    networks:
+      e2e-net:
+        aliases: [mysql-replica1]
+    depends_on:
+      mysql-source:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-prootpass"]
+      interval: 2s
+      retries: 30
+
+  mysql-replica2:
+    image: mysql:8.4
+    container_name: e2e-replica2
+    hostname: mysql-replica2
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - ./mysql-conf/replica2.cnf:/etc/mysql/conf.d/replica.cnf:ro
+    networks:
+      e2e-net:
+        aliases: [mysql-replica2]
+    depends_on:
+      mysql-source:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-prootpass"]
+      interval: 2s
+      retries: 30
+
+  puremyhad:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.e2e
+    container_name: e2e-puremyhad
+    hostname: puremyhad
+    volumes:
+      - ./config:/etc/puremyha:ro
+      - ipc-socket:/run
+    command: ["puremyhad", "--config", "/etc/puremyha/puremyha.yaml", "--socket", "/run/puremyhad.sock"]
+    networks:
+      e2e-net:
+    depends_on:
+      mysql-source:
+        condition: service_healthy
+      mysql-replica1:
+        condition: service_healthy
+      mysql-replica2:
+        condition: service_healthy
+
+networks:
+  e2e-net:
+    driver: bridge
+
+volumes:
+  ipc-socket:
