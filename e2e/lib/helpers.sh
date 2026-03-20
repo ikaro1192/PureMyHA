@@ -83,6 +83,21 @@ ipc_ack_recovery() {
   ipc_request '{"type":"ack-recovery"}'
 }
 
+ipc_demote() {
+  local host="$1" source_host="$2"
+  ipc_request "{\"type\":\"demote\",\"host\":\"${host}\",\"sourceHost\":\"${source_host}\"}"
+}
+
+ipc_pause_replica() {
+  local host="$1"
+  ipc_request "{\"type\":\"pause-replica\",\"host\":\"${host}\"}"
+}
+
+ipc_resume_replica() {
+  local host="$1"
+  ipc_request "{\"type\":\"resume-replica\",\"host\":\"${host}\"}"
+}
+
 ipc_errant_gtid() {
   ipc_request '{"type":"errant-gtid"}'
 }

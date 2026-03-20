@@ -377,6 +377,8 @@ make e2e-clean
 | 05 | Errant GTID | Injected errant transaction detected and repaired via `fix-errant-gtid` |
 | 06 | Anti-Flap | Recovery block set after failover, cleared by `ack-recovery` |
 | 07 | Hook Execution | Pre/post failover hooks fire and write marker files |
+| 08 | Pause / Resume Replica | Pause replication via IPC, verify data stops flowing, resume and confirm catch-up |
+| 09 | Demote | Switchover then demote a replica to replicate from the new source; verify replication chain |
 
 The test environment uses accelerated timings (`interval: 1s`, `recovery_block_period: 30s`) so the full suite completes in a few minutes. Cluster state is automatically reset between tests.
 
