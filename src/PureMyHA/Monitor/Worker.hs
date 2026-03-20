@@ -85,9 +85,14 @@ runTopologyRefresh reg = do
   let cc   = envCluster env
       tvar = envDaemonState env
   newTopo <- discoverTopology
-  liftIO $ atomically $ updateClusterTopology tvar newTopo
+  mOldTopo <- liftIO $ getClusterTopology tvar (ccName cc)
+  let mergedTopo = case mOldTopo of
+        Nothing      -> newTopo
+        Just oldTopo ->
+          newTopo { ctNodes = Map.union (ctNodes newTopo) (ctNodes oldTopo) }
+  liftIO $ atomically $ updateClusterTopology tvar mergedTopo
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
-  let discovered = Map.keysSet (ctNodes newTopo)
+  let discovered = Map.keysSet (ctNodes mergedTopo)
       newNodes   = Set.toList (Set.difference discovered knownNodes)
   unless (null newNodes) $
     appLogInfo $ "[" <> ccName cc <> "] Topology refresh: "
