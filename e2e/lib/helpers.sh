@@ -132,6 +132,11 @@ mysql_exec() {
   $COMPOSE exec -T "$container" mysql -uroot -prootpass -N -e "$*" 2>/dev/null
 }
 
+mysql_exec_verbose() {
+  local container="$1"; shift
+  $COMPOSE exec -T "$container" mysql -uroot -prootpass -N -e "$*"
+}
+
 mysql_exec_puremyha() {
   local container="$1"; shift
   $COMPOSE exec -T "$container" mysql -upuremyha -ppuremyha_pass -N -e "$*" 2>/dev/null
@@ -163,18 +168,10 @@ wait_for_replication() {
   for i in $(seq 1 "$max_wait"); do
     local status
     status=$($COMPOSE exec -T "$container" mysql -uroot -prootpass -N -e \
-      "SELECT Replica_IO_Running, Replica_SQL_Running FROM performance_schema.replication_connection_status rcs JOIN performance_schema.replication_applier_status ras ON 1=1 LIMIT 1;" 2>/dev/null || echo "")
-    # Fallback: use SHOW REPLICA STATUS
-    if [ -z "$status" ]; then
-      local io_running sql_running
-      io_running=$($COMPOSE exec -T "$container" mysql -uroot -prootpass -e \
-        "SHOW REPLICA STATUS\G" 2>/dev/null | grep "Replica_IO_Running:" | awk '{print $2}' || echo "")
-      sql_running=$($COMPOSE exec -T "$container" mysql -uroot -prootpass -e \
-        "SHOW REPLICA STATUS\G" 2>/dev/null | grep "Replica_SQL_Running:" | head -1 | awk '{print $2}' || echo "")
-      if [ "$io_running" = "Yes" ] && [ "$sql_running" = "Yes" ]; then
-        echo "  Replication running on $container (${i}s)"
-        return 0
-      fi
+      "SELECT rcs.SERVICE_STATE, ras.SERVICE_STATE FROM performance_schema.replication_connection_status rcs JOIN performance_schema.replication_applier_status ras ON 1=1 LIMIT 1;" 2>/dev/null || echo "")
+    if echo "$status" | grep -q "ON.*ON"; then
+      echo "  Replication running on $container (${i}s)"
+      return 0
     fi
     sleep 1
   done
@@ -245,20 +242,31 @@ wait_for_health_not() {
 setup_replication() {
   echo "Setting up replication..."
   for replica in mysql-replica1 mysql-replica2; do
-    # Clear GTID history generated during MySQL container init
-    # (root user creation etc.) to avoid false errant GTID detection
-    mysql_exec "$replica" "
-      STOP REPLICA;
-      RESET BINARY LOGS AND GTIDS;
-      CHANGE REPLICATION SOURCE TO
-        SOURCE_HOST='mysql-source',
-        SOURCE_PORT=3306,
-        SOURCE_USER='repl',
-        SOURCE_PASSWORD='repl_pass',
-        SOURCE_AUTO_POSITION=1,
-        GET_SOURCE_PUBLIC_KEY=1;
-      START REPLICA;
-    "
+    echo "  Configuring $replica..."
+    local ok=0
+    for attempt in $(seq 1 5); do
+      if mysql_exec_verbose "$replica" "
+        STOP REPLICA;
+        RESET BINARY LOGS AND GTIDS;
+        CHANGE REPLICATION SOURCE TO
+          SOURCE_HOST='mysql-source',
+          SOURCE_PORT=3306,
+          SOURCE_USER='repl',
+          SOURCE_PASSWORD='repl_pass',
+          SOURCE_AUTO_POSITION=1,
+          GET_SOURCE_PUBLIC_KEY=1;
+        START REPLICA;
+      "; then
+        ok=1
+        break
+      fi
+      echo "  Attempt $attempt failed for $replica, retrying in 3s..."
+      sleep 3
+    done
+    if [ "$ok" -ne 1 ]; then
+      echo "  ERROR: Failed to configure replication on $replica after 5 attempts" >&2
+      return 1
+    fi
   done
   wait_for_replication mysql-replica1 60
   wait_for_replication mysql-replica2 60

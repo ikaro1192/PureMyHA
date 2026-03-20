@@ -68,7 +68,7 @@ jobs:
         run: |
           cd e2e
           bash run-all.sh
-        timeout-minutes: 20
+        timeout-minutes: 30
 
       - name: Dump logs on failure
         if: failure()
