@@ -61,8 +61,8 @@ recvResponse sock = go []
 printStatus :: Bool -> [ClusterStatus] -> IO ()
 printStatus True  statuses = BLC.putStrLn (encode statuses)
 printStatus False statuses = do
-  putStrLn $ padR 20 "CLUSTER" <> padR 25 "HEALTH" <> padR 20 "SOURCE" <> padR 6 "NODES" <> "RECOVERY BLOCKED"
-  putStrLn (replicate 80 '-')
+  putStrLn $ padR 20 "CLUSTER" <> padR 25 "HEALTH" <> padR 20 "SOURCE" <> padR 6 "NODES" <> padR 8 "PAUSED" <> "RECOVERY BLOCKED"
+  putStrLn (replicate 88 '-')
   mapM_ printClusterStatus statuses
 
 printClusterStatus :: ClusterStatus -> IO ()
@@ -70,11 +70,13 @@ printClusterStatus cs = do
   let health      = showHealth (csHealth cs)
       source      = maybe "-" T.unpack (csSourceHost cs)
       nodes       = show (csNodeCount cs)
+      paused      = if csPaused cs then "yes" else "no"
       blocked     = maybe "-" showTime (csRecoveryBlockedUntil cs)
   putStrLn $ padR 20 (T.unpack (csClusterName cs))
            <> padR 25 health
            <> padR 20 source
            <> padR 6  nodes
+           <> padR 8  paused
            <> blocked
 
 -- | Print topology in tree format

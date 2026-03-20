@@ -7,6 +7,8 @@ module PureMyHA.Topology.State
   , setRecoveryBlock
   , clearRecoveryBlock
   , recordFailover
+  , setClusterPause
+  , clearClusterPause
   , TVarDaemonState
   , FailoverLock
   , newFailoverLock
@@ -54,7 +56,9 @@ updateClusterTopology tvar ct = do
       ctVar <- newTVar ct
       writeTVar tvar (Map.insert name ctVar clusters)
     Just ctVar -> modifyTVar' ctVar $ \prevCt ->
-      ct { ctObservedHealthy = ctObservedHealthy prevCt || ctObservedHealthy ct }
+      ct { ctObservedHealthy = ctObservedHealthy prevCt || ctObservedHealthy ct
+         , ctPaused = ctPaused prevCt
+         }
 
 getClusterTopology :: TVarDaemonState -> ClusterName -> IO (Maybe ClusterTopology)
 getClusterTopology tvar name = do
@@ -93,3 +97,17 @@ acquireFailoverLock :: FailoverLock -> STM Bool
 acquireFailoverLock lock = do
   mt <- tryTakeTMVar lock
   pure (mt /= Nothing)
+
+setClusterPause :: TVarDaemonState -> ClusterName -> STM ()
+setClusterPause tvar clusterName = do
+  mctVar <- lookupClusterTVar tvar clusterName
+  case mctVar of
+    Nothing    -> pure ()
+    Just ctVar -> modifyTVar' ctVar $ \ct -> ct { ctPaused = True }
+
+clearClusterPause :: TVarDaemonState -> ClusterName -> STM ()
+clearClusterPause tvar clusterName = do
+  mctVar <- lookupClusterTVar tvar clusterName
+  case mctVar of
+    Nothing    -> pure ()
+    Just ctVar -> modifyTVar' ctVar $ \ct -> ct { ctPaused = False }

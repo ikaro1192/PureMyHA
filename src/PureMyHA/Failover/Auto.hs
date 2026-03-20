@@ -4,6 +4,7 @@ module PureMyHA.Failover.Auto
   ) where
 
 import Control.Concurrent.STM
+import Control.Monad (when)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -46,6 +47,7 @@ checkAutoFailoverPreconditions
   -> Int               -- ^ fcMinReplicasForFailover
   -> Either Text ()
 checkAutoFailoverPreconditions now topo minReplicas = do
+  when (ctPaused topo) $ Left "Failover paused by operator (pause-failover)"
   case ctRecoveryBlockedUntil topo of
     Just deadline | now < deadline ->
       Left "Failover blocked by anti-flap period"

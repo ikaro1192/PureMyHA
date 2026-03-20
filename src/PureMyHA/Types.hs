@@ -70,6 +70,7 @@ data ClusterTopology = ClusterTopology
   , ctObservedHealthy       :: Bool             -- True if cluster has ever been Healthy since daemon start
   , ctRecoveryBlockedUntil  :: Maybe UTCTime
   , ctLastFailoverAt        :: Maybe UTCTime
+  , ctPaused                :: Bool
   } deriving (Show, Generic)
 
 data DaemonState = DaemonState
@@ -83,6 +84,7 @@ data ClusterStatus = ClusterStatus
   , csSourceHost  :: Maybe Text
   , csNodeCount   :: Int
   , csRecoveryBlockedUntil :: Maybe UTCTime
+  , csPaused    :: Bool
   } deriving (Show, Eq, Generic)
 
 data ClusterTopologyView = ClusterTopologyView

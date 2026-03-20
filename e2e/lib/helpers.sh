@@ -98,6 +98,14 @@ ipc_resume_replica() {
   ipc_request "{\"type\":\"resume-replica\",\"host\":\"${host}\"}"
 }
 
+ipc_pause_failover() {
+  ipc_request '{"type":"pause-failover"}'
+}
+
+ipc_resume_failover() {
+  ipc_request '{"type":"resume-failover"}'
+}
+
 ipc_errant_gtid() {
   ipc_request '{"type":"errant-gtid"}'
 }
@@ -117,6 +125,10 @@ get_source_host() {
 
 get_node_count() {
   ipc_status | jq -r '.data[0].nodeCount // empty' 2>/dev/null || echo ""
+}
+
+get_paused() {
+  ipc_status | jq -r '.data[0].paused // empty' 2>/dev/null || echo ""
 }
 
 get_recovery_blocked() {
@@ -324,8 +336,9 @@ reset_cluster() {
   wait_for_replication mysql-replica1 60 || true
   wait_for_replication mysql-replica2 60 || true
 
-  # Clear recovery block via IPC
+  # Clear recovery block and resume failover via IPC
   ipc_ack_recovery >/dev/null 2>&1 || true
+  ipc_resume_failover >/dev/null 2>&1 || true
 
   # Clear hook marker files
   $COMPOSE exec -T puremyhad rm -f /tmp/hook_*.log 2>/dev/null || true
