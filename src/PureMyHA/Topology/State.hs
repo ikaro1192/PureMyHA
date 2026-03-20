@@ -18,68 +18,72 @@ import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime, addUTCTime, NominalDiffTime)
 import PureMyHA.Types
 
-type TVarDaemonState = TVar DaemonState
+type TVarDaemonState = TVar (Map.Map ClusterName (TVar ClusterTopology))
 type FailoverLock = TMVar ()
 
+lookupClusterTVar :: TVarDaemonState -> ClusterName -> STM (Maybe (TVar ClusterTopology))
+lookupClusterTVar tvar name = Map.lookup name <$> readTVar tvar
+
 newDaemonState :: IO TVarDaemonState
-newDaemonState = newTVarIO (DaemonState Map.empty)
+newDaemonState = newTVarIO Map.empty
 
+-- Two-level read: outer Map then all inner TVars
 readDaemonState :: TVarDaemonState -> IO DaemonState
-readDaemonState = readTVarIO
+readDaemonState tvar = do
+  clusterTVars <- readTVarIO tvar
+  clusters <- traverse readTVarIO clusterTVars
+  pure (DaemonState clusters)
 
+-- Only touches inner TVar; outer TVar stays in STM read-set, never written
 updateNodeState :: TVarDaemonState -> ClusterName -> NodeState -> STM ()
 updateNodeState tvar clusterName ns = do
-  ds <- readTVar tvar
-  let clusters = dsClusters ds
-  case Map.lookup clusterName clusters of
-    Nothing -> pure ()  -- cluster not yet initialized
-    Just ct ->
-      let newNodes = Map.insert (nsNodeId ns) ns (ctNodes ct)
-          ct'      = ct { ctNodes = newNodes }
-      in writeTVar tvar ds { dsClusters = Map.insert clusterName ct' clusters }
+  mctVar <- lookupClusterTVar tvar clusterName
+  case mctVar of
+    Nothing    -> pure ()
+    Just ctVar -> modifyTVar' ctVar $ \ct ->
+      ct { ctNodes = Map.insert (nsNodeId ns) ns (ctNodes ct) }
 
+-- On first call: creates inner TVar and writes outer Map (startup only)
+-- On subsequent calls: modifyTVar' on inner TVar only
 updateClusterTopology :: TVarDaemonState -> ClusterTopology -> STM ()
 updateClusterTopology tvar ct = do
-  ds <- readTVar tvar
-  let prevObserved = maybe False ctObservedHealthy (Map.lookup (ctClusterName ct) (dsClusters ds))
-      ct' = ct { ctObservedHealthy = prevObserved || ctObservedHealthy ct }
-  writeTVar tvar ds { dsClusters = Map.insert (ctClusterName ct) ct' (dsClusters ds) }
+  clusters <- readTVar tvar
+  let name = ctClusterName ct
+  case Map.lookup name clusters of
+    Nothing    -> do
+      ctVar <- newTVar ct
+      writeTVar tvar (Map.insert name ctVar clusters)
+    Just ctVar -> modifyTVar' ctVar $ \prevCt ->
+      ct { ctObservedHealthy = ctObservedHealthy prevCt || ctObservedHealthy ct }
 
 getClusterTopology :: TVarDaemonState -> ClusterName -> IO (Maybe ClusterTopology)
 getClusterTopology tvar name = do
-  ds <- readTVarIO tvar
-  pure $ Map.lookup name (dsClusters ds)
+  clusters <- readTVarIO tvar
+  case Map.lookup name clusters of
+    Nothing    -> pure Nothing
+    Just ctVar -> Just <$> readTVarIO ctVar
 
 setRecoveryBlock :: TVarDaemonState -> ClusterName -> UTCTime -> NominalDiffTime -> STM ()
 setRecoveryBlock tvar clusterName now period = do
-  ds <- readTVar tvar
-  let deadline = addUTCTime period now
-  case Map.lookup clusterName (dsClusters ds) of
-    Nothing -> pure ()
-    Just ct ->
-      let ct' = ct { ctRecoveryBlockedUntil = Just deadline }
-      in writeTVar tvar ds
-           { dsClusters = Map.insert clusterName ct' (dsClusters ds) }
+  mctVar <- lookupClusterTVar tvar clusterName
+  case mctVar of
+    Nothing    -> pure ()
+    Just ctVar -> modifyTVar' ctVar $ \ct ->
+      ct { ctRecoveryBlockedUntil = Just (addUTCTime period now) }
 
 clearRecoveryBlock :: TVarDaemonState -> ClusterName -> STM ()
 clearRecoveryBlock tvar clusterName = do
-  ds <- readTVar tvar
-  case Map.lookup clusterName (dsClusters ds) of
-    Nothing -> pure ()
-    Just ct ->
-      let ct' = ct { ctRecoveryBlockedUntil = Nothing }
-      in writeTVar tvar ds
-           { dsClusters = Map.insert clusterName ct' (dsClusters ds) }
+  mctVar <- lookupClusterTVar tvar clusterName
+  case mctVar of
+    Nothing    -> pure ()
+    Just ctVar -> modifyTVar' ctVar $ \ct -> ct { ctRecoveryBlockedUntil = Nothing }
 
 recordFailover :: TVarDaemonState -> ClusterName -> UTCTime -> STM ()
 recordFailover tvar clusterName now = do
-  ds <- readTVar tvar
-  case Map.lookup clusterName (dsClusters ds) of
-    Nothing -> pure ()
-    Just ct ->
-      let ct' = ct { ctLastFailoverAt = Just now }
-      in writeTVar tvar ds
-           { dsClusters = Map.insert clusterName ct' (dsClusters ds) }
+  mctVar <- lookupClusterTVar tvar clusterName
+  case mctVar of
+    Nothing    -> pure ()
+    Just ctVar -> modifyTVar' ctVar $ \ct -> ct { ctLastFailoverAt = Just now }
 
 newFailoverLock :: IO FailoverLock
 newFailoverLock = newTMVarIO ()
