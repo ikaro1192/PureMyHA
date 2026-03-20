@@ -1,7 +1,7 @@
 module Main (main) where
 
-import Control.Concurrent.Async (async, waitAnyCancel, race_, cancel)
-import Control.Concurrent.STM   (TVar, atomically, newTVarIO, newEmptyTMVarIO,
+import Control.Concurrent.Async (Async, async, waitAnyCancel, race_, cancel)
+import Control.Concurrent.STM   (TVar, TMVar, atomically, newTVarIO, newEmptyTMVarIO,
                                   putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
 import Control.Monad (void, forM_)
@@ -47,32 +47,39 @@ main :: IO ()
 main = do
   opts <- execParser (info (daemonOptions <**> helper)
     (fullDesc <> progDesc "PureMyHA daemon" <> header "puremyhad"))
+  cfg    <- loadAndValidateConfig (optConfigPath opts)
+  logger <- initLogger (lcLogFile (cfgLogging cfg))
 
-  eCfg <- loadConfig (optConfigPath opts)
-  cfg <- case eCfg of
-    Left err  -> die $ "Failed to load config: " <> err
-    Right c   -> pure c
-
-  let logFile = lcLogFile (cfgLogging cfg)
-  logger <- initLogger logFile
-
-  tvar <- newDaemonState
-
-  -- TVar-wrapped config for hot-reload
+  tvar     <- newDaemonState
   mcVar    <- newTVarIO (cfgMonitoring cfg)
   hooksVar <- newTVarIO (cfgHooks cfg)
 
-  -- Shutdown signal
-  shutdownVar <- newEmptyTMVarIO
+  shutdownVar <- installSignalHandlers (optConfigPath opts) mcVar hooksVar logger
 
-  -- SIGTERM / SIGINT: graceful shutdown
+  clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
+  clusterEnvs      <- mapM (initCluster tvar cfg mcVar hooksVar logger) clusterPasswords
+
+  allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar
+  logInfo logger "puremyhad started"
+  awaitShutdownAndCleanup logger shutdownVar allWorkers
+
+loadAndValidateConfig :: FilePath -> IO Config
+loadAndValidateConfig path = do
+  eCfg <- loadConfig path
+  case eCfg of
+    Left err -> die $ "Failed to load config: " <> err
+    Right c  -> pure c
+
+installSignalHandlers
+  :: FilePath -> TVar MonitoringConfig -> TVar (Maybe HooksConfig) -> Logger
+  -> IO (TMVar ())
+installSignalHandlers configPath mcVar hooksVar logger = do
+  shutdownVar <- newEmptyTMVarIO
   let shutdownHandler = CatchOnce (atomically (putTMVar shutdownVar ()))
   _ <- installHandler sigTERM shutdownHandler Nothing
   _ <- installHandler sigINT  shutdownHandler Nothing
-
-  -- SIGHUP: hot-reload config
   _ <- installHandler sigHUP (Catch $ do
-    eCfg' <- loadConfig (optConfigPath opts)
+    eCfg' <- loadConfig configPath
     case eCfg' of
       Left err   -> logWarn logger $ "SIGHUP: config reload failed: " <> T.pack err
       Right cfg' -> do
@@ -80,43 +87,38 @@ main = do
           writeTVar mcVar    (cfgMonitoring cfg')
           writeTVar hooksVar (cfgHooks cfg')
         logInfo logger "SIGHUP: config reloaded") Nothing
+  pure shutdownVar
 
-  clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
-
-  clusterEnvs <- mapM (initCluster tvar cfg mcVar hooksVar logger) clusterPasswords
+startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> IO [Async ()]
+startAllWorkers clusterEnvs socketPath tvar = do
   let clusterMap = Map.fromList
         [ (ccName (envCluster env), env)
         | env <- clusterEnvs
         ]
 
-  -- Start monitor workers (returns registry per cluster)
   (registries, workerLists) <- fmap unzip $ mapM
     (\env -> runApp env startMonitorWorkers)
     clusterEnvs
   let monitorWorkers = concat workerLists
 
-  -- Start topology refresh workers
   refreshWorkers <- mapM
     (\(env, reg) -> runApp env (startTopologyRefreshWorker reg))
     (zip clusterEnvs registries)
 
-  -- Build discovery callbacks per cluster
   let discoveryMap = Map.fromList
         [ (ccName (envCluster env), makeDiscoveryAction env reg)
         | (env, reg) <- zip clusterEnvs registries
         ]
 
-  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap (optSocketPath opts)
+  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap socketPath
 
-  logInfo logger "puremyhad started"
+  pure $ ipcAsync : monitorWorkers <> refreshWorkers
 
-  let allWorkers = ipcAsync : monitorWorkers <> refreshWorkers
-
-  -- Wait for shutdown signal or any worker death
+awaitShutdownAndCleanup :: Logger -> TMVar () -> [Async ()] -> IO ()
+awaitShutdownAndCleanup logger shutdownVar allWorkers = do
   race_
     (atomically (takeTMVar shutdownVar))
     (void (waitAnyCancel allWorkers))
-
   logInfo logger "puremyhad shutting down"
   mapM_ cancel allWorkers
   closeLogger logger
