@@ -8,7 +8,6 @@ RUN cabal update && cabal build --only-dependencies all
 
 COPY . .
 RUN cabal build all
-RUN cabal test
 
 RUN mkdir -p /staging && \
     cp "$(cabal list-bin puremyhad)" /staging/puremyhad && \

@@ -230,8 +230,11 @@ wait_for_health_not() {
 setup_replication() {
   echo "Setting up replication..."
   for replica in mysql-replica1 mysql-replica2; do
+    # Clear GTID history generated during MySQL container init
+    # (root user creation etc.) to avoid false errant GTID detection
     mysql_exec "$replica" "
       STOP REPLICA;
+      RESET BINARY LOGS AND GTIDS;
       CHANGE REPLICATION SOURCE TO
         SOURCE_HOST='mysql-source',
         SOURCE_PORT=3306,
@@ -269,8 +272,10 @@ reset_cluster() {
   wait_for_mysql mysql-replica1 60
   wait_for_mysql mysql-replica2 60
 
-  # Ensure source has correct read_only setting
+  # Ensure source has correct read_only setting and clean GTID/replica state
+  mysql_exec mysql-source "STOP REPLICA; RESET REPLICA ALL;" || true
   mysql_exec mysql-source "SET GLOBAL read_only = OFF;" || true
+  mysql_exec mysql-source "RESET BINARY LOGS AND GTIDS;" || true
 
   # Ensure replicas are read_only
   mysql_exec mysql-replica1 "SET GLOBAL read_only = ON;" || true
@@ -281,6 +286,7 @@ reset_cluster() {
     mysql_exec "$replica" "
       STOP REPLICA;
       RESET REPLICA ALL;
+      RESET BINARY LOGS AND GTIDS;
       CHANGE REPLICATION SOURCE TO
         SOURCE_HOST='mysql-source',
         SOURCE_PORT=3306,

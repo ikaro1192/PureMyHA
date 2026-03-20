@@ -62,7 +62,6 @@ services:
     hostname: puremyhad
     volumes:
       - ./config:/etc/puremyha:ro
-      - ./hooks:/etc/puremyha/hooks:ro
       - ipc-socket:/run
     command: ["puremyhad", "--config", "/etc/puremyha/puremyha.yaml", "--socket", "/run/puremyhad.sock"]
     networks:
