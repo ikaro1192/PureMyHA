@@ -27,7 +27,7 @@ assert_eq "Source is mysql-replica1" "mysql-replica1" "$source_host"
 # After switchover, mysql-replica2 should already replicate from mysql-replica1,
 # but let's verify the demote command works by explicitly pointing it there.
 # First, check current replication source of mysql-replica2 via MySQL
-current_repl_source=$(mysql_exec mysql-replica2 "SHOW REPLICA STATUS\G" | grep "Source_Host:" | awk '{print $2}' || echo "")
+current_repl_source=$(mysql_exec mysql-replica2 "SELECT HOST FROM performance_schema.replication_connection_configuration LIMIT 1;" | tr -d '[:space:]')
 echo "  mysql-replica2 current replication source: $current_repl_source"
 
 echo "  Demoting mysql-replica2 to replicate from mysql-replica1..."
@@ -41,7 +41,7 @@ assert_not_empty "Demote returns success message" "$demote_success"
 sleep 5
 
 # Verify mysql-replica2's replication source changed to mysql-replica1
-new_repl_source=$(mysql_exec mysql-replica2 "SHOW REPLICA STATUS\G" | grep "Source_Host:" | awk '{print $2}' || echo "")
+new_repl_source=$(mysql_exec mysql-replica2 "SELECT HOST FROM performance_schema.replication_connection_configuration LIMIT 1;" | tr -d '[:space:]')
 echo "  mysql-replica2 new replication source: $new_repl_source"
 assert_eq "mysql-replica2 replicates from mysql-replica1" "mysql-replica1" "$new_repl_source"
 
