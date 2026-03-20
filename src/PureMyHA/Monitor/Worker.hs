@@ -82,27 +82,24 @@ topologyRefreshLoop reg = do
 runTopologyRefresh :: WorkerRegistry -> App ()
 runTopologyRefresh reg = do
   env <- ask
-  let cc     = envCluster env
-      pws    = envPasswords env
-      logger = envLogger env
-      tvar   = envDaemonState env
-  liftIO $ do
-    newTopo <- discoverTopology cc (cpPassword pws) logger
-    mOldTopo <- getClusterTopology tvar (ccName cc)
-    let mergedTopo = case mOldTopo of
-          Nothing      -> newTopo
-          Just oldTopo ->
-            newTopo { ctNodes = Map.union (ctNodes newTopo) (ctNodes oldTopo) }
-    atomically $ updateClusterTopology tvar mergedTopo
-    knownNodes <- Map.keysSet <$> readTVarIO reg
-    let discovered = Map.keysSet (ctNodes mergedTopo)
-        newNodes   = Set.toList (Set.difference discovered knownNodes)
-    unless (null newNodes) $
-      logInfo logger $ "[" <> ccName cc <> "] Topology refresh: "
-        <> T.pack (show (length newNodes)) <> " new node(s) found"
-    forM_ newNodes $ \nid -> do
-      a <- async (runApp env (runWorker nid))
-      atomically $ modifyTVar' reg (Map.insert nid a)
+  let cc   = envCluster env
+      tvar = envDaemonState env
+  newTopo <- discoverTopology
+  mOldTopo <- liftIO $ getClusterTopology tvar (ccName cc)
+  let mergedTopo = case mOldTopo of
+        Nothing      -> newTopo
+        Just oldTopo ->
+          newTopo { ctNodes = Map.union (ctNodes newTopo) (ctNodes oldTopo) }
+  liftIO $ atomically $ updateClusterTopology tvar mergedTopo
+  knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
+  let discovered = Map.keysSet (ctNodes mergedTopo)
+      newNodes   = Set.toList (Set.difference discovered knownNodes)
+  unless (null newNodes) $
+    appLogInfo $ "[" <> ccName cc <> "] Topology refresh: "
+      <> T.pack (show (length newNodes)) <> " new node(s) found"
+  liftIO $ forM_ newNodes $ \nid -> do
+    a <- async (runApp env (runWorker nid))
+    atomically $ modifyTVar' reg (Map.insert nid a)
 
 -- | Perform a single monitoring cycle for a node
 monitorNode :: NodeId -> App ()
