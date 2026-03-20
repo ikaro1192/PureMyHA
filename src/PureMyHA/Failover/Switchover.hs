@@ -160,6 +160,7 @@ reconnectToNew user pws newSourceId ns = do
   _ <- withNodeConn ci $ \conn -> do
     _ <- try @SomeException (stopReplica conn)
     changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) (cpReplUser pws) (cpReplPassword pws)
+    setReadOnly conn
     startReplica conn
   pure ()
 
