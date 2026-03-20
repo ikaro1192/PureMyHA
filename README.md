@@ -253,6 +253,12 @@ puremyha fix-errant-gtid [--cluster=<name>]
 # Demote a node to replica under a specified source (resolve split-brain)
 puremyha demote --host db1 --source db2 [--cluster=<name>]
 
+# Pause replication on a replica (STOP REPLICA + stop monitoring)
+puremyha pause-replica --host db2 [--cluster=<name>]
+
+# Resume replication on a paused replica (START REPLICA + resume monitoring)
+puremyha resume-replica --host db2 [--cluster=<name>]
+
 # Trigger manual topology discovery
 puremyha discovery [--cluster=<name>]
 
