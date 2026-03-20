@@ -19,21 +19,20 @@ import qualified Data.Text as T
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
+import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Failover.Demote (runDemote)
 import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica)
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
 import System.Posix.Files (removeLink)
 import PureMyHA.IPC.Protocol
-import PureMyHA.Logger (Logger)
 import PureMyHA.Topology.State
 import PureMyHA.Types
 
 defaultSocketPath :: FilePath
 defaultSocketPath = "/run/puremyhad.sock"
 
-type ClusterEntry = (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, ClusterPasswords, Maybe HooksConfig)
-type ClusterMap   = Map ClusterName ClusterEntry
+type ClusterMap   = Map ClusterName ClusterEnv
 type DiscoveryAction = IO (Either Text Text)
 type DiscoveryMap = Map ClusterName DiscoveryAction
 
@@ -43,14 +42,13 @@ startIPCServer
   -> ClusterMap
   -> DiscoveryMap
   -> FilePath
-  -> Logger
   -> IO ()
-startIPCServer tvar clusterMap discoveryMap socketPath logger =
+startIPCServer tvar clusterMap discoveryMap socketPath =
   bracket (openListenSocket socketPath)
           (\sock -> close sock >> removeLink socketPath `catch` \(_ :: SomeException) -> pure ())
           $ \sock -> do
     listen sock 5
-    acceptLoop sock tvar clusterMap discoveryMap logger
+    acceptLoop sock tvar clusterMap discoveryMap
 
 openListenSocket :: FilePath -> IO Socket
 openListenSocket path = do
@@ -59,20 +57,20 @@ openListenSocket path = do
   bind sock (SockAddrUnix path)
   pure sock
 
-acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> Logger -> IO ()
-acceptLoop listenSock tvar clusterMap discoveryMap logger = do
+acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> IO ()
+acceptLoop listenSock tvar clusterMap discoveryMap = do
   (clientSock, _) <- accept listenSock
-  _ <- async $ handleClient clientSock tvar clusterMap discoveryMap logger `finally` close clientSock
-  acceptLoop listenSock tvar clusterMap discoveryMap logger
+  _ <- async $ handleClient clientSock tvar clusterMap discoveryMap `finally` close clientSock
+  acceptLoop listenSock tvar clusterMap discoveryMap
 
-handleClient :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> Logger -> IO ()
-handleClient sock tvar clusterMap discoveryMap logger = do
+handleClient :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> IO ()
+handleClient sock tvar clusterMap discoveryMap = do
   result <- try @SomeException $ do
     msg <- recvLine sock
     case eitherDecode (BLC.pack msg) of
       Left err  -> sendResponse sock (RespError (T.pack err))
       Right req -> do
-        resp <- handleRequest tvar clusterMap discoveryMap logger req
+        resp <- handleRequest tvar clusterMap discoveryMap req
         sendResponse sock resp
   case result of
     Left _ -> pure ()
@@ -97,8 +95,8 @@ sendResponse sock resp = do
   let bytes = BL.toStrict (encode resp <> BLC.singleton '\n')
   NSB.sendAll sock bytes
 
-handleRequest :: TVarDaemonState -> ClusterMap -> DiscoveryMap -> Logger -> Request -> IO Response
-handleRequest tvar clusterMap discoveryMap logger req = case req of
+handleRequest :: TVarDaemonState -> ClusterMap -> DiscoveryMap -> Request -> IO Response
+handleRequest tvar clusterMap discoveryMap req = case req of
   ReqStatus mCluster -> do
     ds <- readDaemonState tvar
     let topos = filterClusters mCluster (dsClusters ds)
@@ -112,15 +110,15 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
   ReqSwitchover mCluster mToHost dryRun ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, fc, _, pws, mHooks) ->
+      Just env ->
         if dryRun
           then do
-            result <- dryRunSwitchover tvar cc fc mToHost
+            result <- runApp env $ dryRunSwitchover mToHost
             pure $ RespOperation $ case result of
               Left err  -> OperationFailure err
               Right msg -> OperationSuccess msg
           else do
-            result <- runSwitchover tvar cc fc pws mToHost mHooks logger
+            result <- runApp env $ runSwitchover mToHost
             pure $ RespOperation $ case result of
               Left err -> OperationFailure err
               Right () -> OperationSuccess "Switchover completed"
@@ -128,8 +126,8 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
   ReqAckRecovery mCluster ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, _, _) -> do
-        atomically $ clearRecoveryBlock tvar (ccName cc)
+      Just env -> do
+        atomically $ clearRecoveryBlock (envDaemonState env) (ccName (envCluster env))
         pure $ RespOperation (OperationSuccess "Recovery block cleared")
 
   ReqErrantGtid mCluster -> do
@@ -141,8 +139,8 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
   ReqFixErrantGtid mCluster ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, pws, _) -> do
-        result <- runFixErrantGtid tvar cc (cpPassword pws)
+      Just env -> do
+        result <- runApp env runFixErrantGtid
         pure $ RespOperation $ case result of
           Left err -> OperationFailure err
           Right () -> OperationSuccess "Errant GTIDs fixed on source"
@@ -150,8 +148,8 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
   ReqDemote mCluster host srcHost ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, pws, _) -> do
-        result <- runDemote tvar cc pws host srcHost logger
+      Just env -> do
+        result <- runApp env $ runDemote host srcHost
         pure $ RespOperation $ case result of
           Left err -> OperationFailure err
           Right () -> OperationSuccess ("Demote completed: " <> host <> " is now a replica")
@@ -168,8 +166,8 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
   ReqPauseReplica mCluster host ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, pws, _) -> do
-        result <- runPauseReplica tvar cc pws host logger
+      Just env -> do
+        result <- runApp env $ runPauseReplica host
         pure $ RespOperation $ case result of
           Left err -> OperationFailure err
           Right () -> OperationSuccess ("Replication paused on " <> host)
@@ -177,8 +175,8 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
   ReqResumeReplica mCluster host ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, pws, _) -> do
-        result <- runResumeReplica tvar cc pws host logger
+      Just env -> do
+        result <- runApp env $ runResumeReplica host
         pure $ RespOperation $ case result of
           Left err -> OperationFailure err
           Right () -> OperationSuccess ("Replication resumed on " <> host)
@@ -186,22 +184,22 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
   ReqPauseFailover mCluster ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, _, _) -> do
-        atomically $ setClusterPause tvar (ccName cc)
+      Just env -> do
+        atomically $ setClusterPause (envDaemonState env) (ccName (envCluster env))
         pure $ RespOperation (OperationSuccess "Failover paused")
 
   ReqResumeFailover mCluster ->
     case lookupCluster mCluster clusterMap of
       Nothing -> pure (RespError "Cluster not found")
-      Just (_, cc, _, _, _, _) -> do
-        atomically $ clearClusterPause tvar (ccName cc)
+      Just env -> do
+        atomically $ clearClusterPause (envDaemonState env) (ccName (envCluster env))
         pure $ RespOperation (OperationSuccess "Failover resumed")
 
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m
 filterClusters (Just n) m = maybe [] pure (Map.lookup n m)
 
-lookupCluster :: Maybe ClusterName -> ClusterMap -> Maybe ClusterEntry
+lookupCluster :: Maybe ClusterName -> ClusterMap -> Maybe ClusterEnv
 lookupCluster Nothing  m = case Map.elems m of { [x] -> Just x; _ -> Nothing }
 lookupCluster (Just n) m = Map.lookup n m
 

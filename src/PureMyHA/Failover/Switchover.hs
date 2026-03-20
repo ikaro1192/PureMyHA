@@ -6,15 +6,17 @@ module PureMyHA.Failover.Switchover
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (try, SomeException)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (asks)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Database.MySQL.Base (ConnectInfo)
 import PureMyHA.Config
+import PureMyHA.Env
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
-import PureMyHA.Logger (Logger, logInfo, logError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
@@ -33,106 +35,102 @@ switchoverReconnectTargets nodes candidateId =
 
 -- | Execute a manual switchover
 runSwitchover
-  :: TVarDaemonState
-  -> ClusterConfig
-  -> FailoverConfig
-  -> ClusterPasswords
-  -> Maybe Text        -- ^ --to host
-  -> Maybe HooksConfig
-  -> Logger
-  -> IO (Either Text ())
-runSwitchover tvar cc fc pws mToHost mHooks logger = do
-  mTopo <- getClusterTopology tvar (ccName cc)
+  :: Maybe Text        -- ^ --to host
+  -> App (Either Text ())
+runSwitchover mToHost = do
+  tvar <- asks envDaemonState
+  cc   <- asks envCluster
+  fc   <- asks envFailover
+  mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> do
-      logError logger $ "[" <> ccName cc <> "] Switchover failed: Cluster not found"
+      appLogError $ "[" <> ccName cc <> "] Switchover failed: Cluster not found"
       pure (Left "Cluster not found")
-    Just topo -> do
-      -- Select target
+    Just topo ->
       case selectCandidate (ctNodes topo) (fcCandidatePriority fc) mToHost of
         Left err -> do
-          logError logger $ "[" <> ccName cc <> "] Switchover failed: " <> err
+          appLogError $ "[" <> ccName cc <> "] Switchover failed: " <> err
           pure (Left err)
         Right candidateId -> do
-          let user          = credUser (ccCredentials cc)
-              oldSourceId   = ctSourceNodeId topo
+          let oldSourceId   = ctSourceNodeId topo
               oldSourceHost = fmap nodeHost oldSourceId
 
-          logInfo logger $ "[" <> ccName cc <> "] Switchover started"
+          appLogInfo $ "[" <> ccName cc <> "] Switchover started"
 
           -- Pre-switchover hook (blocking: non-zero exit aborts)
-          ts <- getCurrentTimestamp
+          mHooks <- getHooksConfig
+          ts <- liftIO getCurrentTimestamp
           let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts
-          preResult <- runHookOrAbort mHooks hcPreSwitchover preEnv
+          preResult <- liftIO $ runHookOrAbort mHooks hcPreSwitchover preEnv
           case preResult of
             Left err -> do
-              logError logger $ "[" <> ccName cc <> "] Pre-switchover hook aborted: " <> err
+              appLogError $ "[" <> ccName cc <> "] Pre-switchover hook aborted: " <> err
               pure (Left $ "Pre-switchover hook failed: " <> err)
             Right () ->
-              doSwitchover cc user pws mHooks logger candidateId oldSourceId oldSourceHost topo
+              doSwitchover candidateId oldSourceId oldSourceHost topo
 
 doSwitchover
-  :: ClusterConfig
-  -> Text
-  -> ClusterPasswords
-  -> Maybe HooksConfig
-  -> Logger
-  -> NodeId
+  :: NodeId
   -> Maybe NodeId
   -> Maybe Text
   -> ClusterTopology
-  -> IO (Either Text ())
-doSwitchover cc user pws mHooks logger candidateId oldSourceId oldSourceHost topo = do
+  -> App (Either Text ())
+doSwitchover candidateId oldSourceId oldSourceHost topo = do
+  cc   <- asks envCluster
+  pws  <- asks envPasswords
+  user <- getMySQLUser
+  password <- getMonPassword
   -- Step 1: Set old source to read_only (abort on failure to prevent split-brain)
-  readOnlyResult <- case oldSourceId of
+  readOnlyResult <- liftIO $ case oldSourceId of
     Nothing -> pure (Right ())
     Just srcId -> do
-      let srcCi = makeConnectInfo srcId user (cpPassword pws)
+      let srcCi = makeConnectInfo srcId user password
       withNodeConn srcCi setReadOnly
   case readOnlyResult of
     Left err -> do
-      logError logger $ "[" <> ccName cc <> "] Switchover aborted: cannot set old source read_only: " <> err
+      appLogError $ "[" <> ccName cc <> "] Switchover aborted: cannot set old source read_only: " <> err
       pure (Left $ "Cannot set old source read_only: " <> err)
     Right () -> do
       -- Step 2: Get old source GTID set
-      mOldGtid <- case oldSourceId of
+      mOldGtid <- liftIO $ case oldSourceId of
         Nothing -> pure Nothing
         Just srcId -> do
-          let srcCi = makeConnectInfo srcId user (cpPassword pws)
+          let srcCi = makeConnectInfo srcId user password
           result <- withNodeConn srcCi getGtidExecuted
           pure $ case result of
             Right gtid -> Just gtid
             Left _     -> Nothing
 
       -- Step 3: Wait for candidate to catch up
-      let candidateCi = makeConnectInfo candidateId user (cpPassword pws)
-      caught <- waitForCatchup candidateCi mOldGtid maxWaitSeconds
+      let candidateCi = makeConnectInfo candidateId user password
+      caught <- liftIO $ waitForCatchup candidateCi mOldGtid maxWaitSeconds
 
       if not caught
         then do
-          logError logger $ "[" <> ccName cc <> "] Switchover failed: Candidate did not catch up within timeout"
+          appLogError $ "[" <> ccName cc <> "] Switchover failed: Candidate did not catch up within timeout"
           pure (Left "Candidate did not catch up within timeout")
         else do
           -- Step 4: Promote candidate
-          promoteResult <- withNodeConn candidateCi $ \conn -> do
+          promoteResult <- liftIO $ withNodeConn candidateCi $ \conn -> do
             stopReplica conn
             resetReplicaAll conn
             setReadWrite conn
           case promoteResult of
             Left err -> do
-              logError logger $ "[" <> ccName cc <> "] Switchover failed: Promote failed: " <> err
+              appLogError $ "[" <> ccName cc <> "] Switchover failed: Promote failed: " <> err
               pure (Left $ "Promote failed: " <> err)
             Right () -> do
               -- Step 5: Reconnect remaining replicas (including old source)
               let others = switchoverReconnectTargets (ctNodes topo) candidateId
-              mapM_ (reconnectToNew user pws candidateId) others
+              mapM_ (reconnectToNew candidateId) others
 
               -- Post-switchover hook (fire-and-forget)
-              ts <- getCurrentTimestamp
+              mHooks <- getHooksConfig
+              ts <- liftIO getCurrentTimestamp
               let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts
-              runHookFireForget mHooks hcPostSwitchover postEnv
+              liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
 
-              logInfo logger $ "[" <> ccName cc <> "] Switchover completed: new source is " <> nodeHost candidateId
+              appLogInfo $ "[" <> ccName cc <> "] Switchover completed: new source is " <> nodeHost candidateId
               pure (Right ())
 
 waitForCatchup :: ConnectInfo -> Maybe Text -> Int -> IO Bool
@@ -154,25 +152,29 @@ waitForCatchup ci (Just targetGtid) secondsLeft
           threadDelay 1_000_000
           waitForCatchup ci (Just targetGtid) (secondsLeft - 1)
 
-reconnectToNew :: Text -> ClusterPasswords -> NodeId -> NodeState -> IO ()
-reconnectToNew user pws newSourceId ns = do
-  let ci = makeConnectInfo (nsNodeId ns) user (cpPassword pws)
-  _ <- withNodeConn ci $ \conn -> do
-    _ <- try @SomeException (stopReplica conn)
-    changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) (cpReplUser pws) (cpReplPassword pws)
-    setReadOnly conn
-    startReplica conn
-  pure ()
+reconnectToNew :: NodeId -> NodeState -> App ()
+reconnectToNew newSourceId ns = do
+  user <- getMySQLUser
+  password <- getMonPassword
+  pws <- asks envPasswords
+  let ci = makeConnectInfo (nsNodeId ns) user password
+  liftIO $ do
+    _ <- withNodeConn ci $ \conn -> do
+      _ <- try @SomeException (stopReplica conn)
+      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) (cpReplUser pws) (cpReplPassword pws)
+      setReadOnly conn
+      startReplica conn
+    pure ()
 
 -- | Dry-run switchover: validate and select candidate without executing SQL
 dryRunSwitchover
-  :: TVarDaemonState
-  -> ClusterConfig
-  -> FailoverConfig
-  -> Maybe Text          -- ^ --to host
-  -> IO (Either Text Text)
-dryRunSwitchover tvar cc fc mToHost = do
-  mTopo <- getClusterTopology tvar (ccName cc)
+  :: Maybe Text          -- ^ --to host
+  -> App (Either Text Text)
+dryRunSwitchover mToHost = do
+  tvar <- asks envDaemonState
+  cc   <- asks envCluster
+  fc   <- asks envFailover
+  mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing   -> pure (Left "Cluster not found")
     Just topo ->

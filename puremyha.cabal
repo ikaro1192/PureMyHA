@@ -38,6 +38,7 @@ library
     PureMyHA.Types
     PureMyHA.Config
     PureMyHA.Logger
+    PureMyHA.Env
     PureMyHA.Hook
     PureMyHA.MySQL.Auth
     PureMyHA.MySQL.Connection
