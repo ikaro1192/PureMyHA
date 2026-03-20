@@ -163,6 +163,7 @@ reconnectReplica user monPassword replUser replPassword newSourceId ns = do
   _ <- withNodeConn ci $ \conn -> do
     stopReplica conn
     changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replUser replPassword
+    setReadOnly conn
     startReplica conn
   pure ()
 
