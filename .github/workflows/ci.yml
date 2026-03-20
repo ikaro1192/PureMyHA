@@ -43,3 +43,33 @@ jobs:
 
       - name: Fix Cabal store permissions
         run: sudo chown -R "$USER" "$HOME/.cabal/store" || true
+
+  e2e:
+    name: E2E Tests (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run E2E tests
+        run: |
+          cd e2e
+          bash run-all.sh
+        timeout-minutes: 20
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          cd e2e
+          docker compose logs puremyhad
+          docker compose logs mysql-source
+          docker compose logs mysql-replica1
+          docker compose logs mysql-replica2
