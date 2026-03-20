@@ -274,8 +274,9 @@ recomputeClusterHealth tvar cc mc lock fc fdc pws mHooks logger = do
         logInfo logger $ "[" <> ccName cc <> "] Cluster health: "
           <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
       atomically $ updateClusterTopology tvar topo'
-      -- Trigger auto-failover on transition to DeadSource only after cluster was observed healthy
-      when (transitioned && newHealth == DeadSource && fcAutoFailover fc && observedHealthy) $ do
+      -- Trigger auto-failover when DeadSource (not just on transition, so resume-failover works)
+      -- The failover lock prevents concurrent execution; anti-flap block prevents repeated failovers
+      when (newHealth == DeadSource && fcAutoFailover fc && observedHealthy) $ do
         _ <- async (runAutoFailover tvar lock cc fc fdc pws mHooks logger)
         pure ()
       -- Emergency re-check on first transition to UnreachableSource

@@ -28,6 +28,8 @@ data Command
   | CmdDiscovery
   | CmdPauseReplica  Text
   | CmdResumeReplica Text
+  | CmdPauseFailover
+  | CmdResumeFailover
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -66,6 +68,10 @@ cliOptions = CLIOptions
             (info pauseReplicaCmd (progDesc "Pause replication on a node for maintenance"))
         <> command "resume-replica"
             (info resumeReplicaCmd (progDesc "Resume replication on a paused node"))
+        <> command "pause-failover"
+            (info (pure CmdPauseFailover) (progDesc "Pause automatic failover for maintenance"))
+        <> command "resume-failover"
+            (info (pure CmdResumeFailover) (progDesc "Resume automatic failover"))
         )
 
 demoteCmd :: Parser Command
@@ -108,6 +114,8 @@ main = do
         CmdDiscovery        -> ReqDiscovery mCluster
         CmdPauseReplica  host -> ReqPauseReplica  mCluster host
         CmdResumeReplica host -> ReqResumeReplica mCluster host
+        CmdPauseFailover     -> ReqPauseFailover  mCluster
+        CmdResumeFailover    -> ReqResumeFailover mCluster
 
   eResp <- sendRequest socketPath req
   case eResp of

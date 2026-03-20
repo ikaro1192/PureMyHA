@@ -52,6 +52,7 @@ buildClusterTopology name nodeStates =
        , ctObservedHealthy      = health == Healthy
        , ctRecoveryBlockedUntil = Nothing
        , ctLastFailoverAt       = Nothing
+       , ctPaused               = False
        }
 
 -- | Recursively discover nodes
@@ -172,4 +173,5 @@ buildInitialTopology cc = ClusterTopology
   , ctObservedHealthy      = False
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
+  , ctPaused               = False
   }

@@ -41,6 +41,12 @@ spec = do
     it "round-trips ReqResumeReplica" $
       roundTrip (ReqResumeReplica Nothing "db3") `shouldBe` Just (ReqResumeReplica Nothing "db3")
 
+    it "round-trips ReqPauseFailover" $
+      roundTrip (ReqPauseFailover (Just "main")) `shouldBe` Just (ReqPauseFailover (Just "main"))
+
+    it "round-trips ReqResumeFailover" $
+      roundTrip (ReqResumeFailover Nothing) `shouldBe` Just (ReqResumeFailover Nothing)
+
   describe "Response JSON round-trip" $ do
     it "round-trips RespError" $
       roundTripResp (RespError "something went wrong")

@@ -55,6 +55,7 @@ instance ToJSON ClusterStatus where
     , "sourceHost"            .= csSourceHost
     , "nodeCount"             .= csNodeCount
     , "recoveryBlockedUntil"  .= csRecoveryBlockedUntil
+    , "paused"                .= csPaused
     ]
 
 instance FromJSON ClusterStatus where
@@ -65,6 +66,7 @@ instance FromJSON ClusterStatus where
       <*> o .: "sourceHost"
       <*> o .: "nodeCount"
       <*> o .: "recoveryBlockedUntil"
+      <*> o .: "paused"
 
 instance ToJSON NodeStateView where
   toJSON NodeStateView{..} = object
@@ -137,6 +139,8 @@ data Request
   | ReqDiscovery { reqCluster :: Maybe ClusterName }
   | ReqPauseReplica  { reqCluster :: Maybe ClusterName, reqPauseHost  :: Text }
   | ReqResumeReplica { reqCluster :: Maybe ClusterName, reqResumeHost :: Text }
+  | ReqPauseFailover  { reqCluster :: Maybe ClusterName }
+  | ReqResumeFailover { reqCluster :: Maybe ClusterName }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Request where
@@ -150,6 +154,8 @@ instance ToJSON Request where
   toJSON (ReqDiscovery mc)       = object ["type" .= ("discovery" :: Text),       "cluster" .= mc]
   toJSON (ReqPauseReplica  mc h) = object ["type" .= ("pause-replica"  :: Text), "cluster" .= mc, "host" .= h]
   toJSON (ReqResumeReplica mc h) = object ["type" .= ("resume-replica" :: Text), "cluster" .= mc, "host" .= h]
+  toJSON (ReqPauseFailover  mc)  = object ["type" .= ("pause-failover"  :: Text), "cluster" .= mc]
+  toJSON (ReqResumeFailover mc)  = object ["type" .= ("resume-failover" :: Text), "cluster" .= mc]
 
 instance FromJSON Request where
   parseJSON = withObject "Request" $ \o -> do
@@ -165,6 +171,8 @@ instance FromJSON Request where
       "discovery"       -> ReqDiscovery    <$> o .:? "cluster"
       "pause-replica"   -> ReqPauseReplica  <$> o .:? "cluster" <*> o .: "host"
       "resume-replica"  -> ReqResumeReplica <$> o .:? "cluster" <*> o .: "host"
+      "pause-failover"  -> ReqPauseFailover  <$> o .:? "cluster"
+      "resume-failover" -> ReqResumeFailover <$> o .:? "cluster"
       _                 -> fail $ "Unknown request type: " <> show t
 
 -- | IPC Response types

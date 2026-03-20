@@ -183,6 +183,20 @@ handleRequest tvar clusterMap discoveryMap logger req = case req of
           Left err -> OperationFailure err
           Right () -> OperationSuccess ("Replication resumed on " <> host)
 
+  ReqPauseFailover mCluster ->
+    case lookupCluster mCluster clusterMap of
+      Nothing -> pure (RespError "Cluster not found")
+      Just (_, cc, _, _, _, _) -> do
+        atomically $ setClusterPause tvar (ccName cc)
+        pure $ RespOperation (OperationSuccess "Failover paused")
+
+  ReqResumeFailover mCluster ->
+    case lookupCluster mCluster clusterMap of
+      Nothing -> pure (RespError "Cluster not found")
+      Just (_, cc, _, _, _, _) -> do
+        atomically $ clearClusterPause tvar (ccName cc)
+        pure $ RespOperation (OperationSuccess "Failover resumed")
+
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m
 filterClusters (Just n) m = maybe [] pure (Map.lookup n m)
@@ -202,6 +216,7 @@ toClusterStatus ct = ClusterStatus
   , csSourceHost           = fmap nodeHost (ctSourceNodeId ct)
   , csNodeCount            = Map.size (ctNodes ct)
   , csRecoveryBlockedUntil = ctRecoveryBlockedUntil ct
+  , csPaused               = ctPaused ct
   }
 
 toClusterTopologyView :: ClusterTopology -> ClusterTopologyView

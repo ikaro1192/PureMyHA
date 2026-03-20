@@ -19,6 +19,7 @@ deadSourceTopo = ClusterTopology
   , ctObservedHealthy      = True
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
+  , ctPaused               = False
   }
 
 healthyTopo :: ClusterTopology
@@ -62,6 +63,10 @@ spec = describe "checkAutoFailoverPreconditions" $ do
 
   it "returns Left when minReplicas=2 but only one replica present" $
     checkAutoFailoverPreconditions now deadSourceTopo 2
+      `shouldSatisfy` isLeft
+
+  it "returns Left when cluster is paused" $
+    checkAutoFailoverPreconditions now (deadSourceTopo { ctPaused = True }) 1
       `shouldSatisfy` isLeft
 
 isLeft :: Either a b -> Bool
