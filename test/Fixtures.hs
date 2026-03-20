@@ -1,6 +1,7 @@
 module Fixtures
   ( mkNodeState
   , mkReplicaStatus
+  , mkTestEnv
   , fixedTime
   , healthySource
   , healthyReplica
@@ -12,10 +13,15 @@ module Fixtures
   , clusterHealthy
   ) where
 
+import Control.Concurrent.STM (newTVarIO)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time (UTCTime, fromGregorian, UTCTime (..))
+import PureMyHA.Config
+import PureMyHA.Env (ClusterEnv (..))
+import PureMyHA.Logger (nullLogger)
+import PureMyHA.Topology.State (TVarDaemonState, newFailoverLock)
 import PureMyHA.Types
 
 fixedTime :: UTCTime
@@ -49,6 +55,27 @@ mkNodeState nid isSource mRs health = NodeState
   , nsErrantGtids     = ""
   , nsPaused          = False
   }
+
+-- | Build a test ClusterEnv with dummy values for fields not under test
+mkTestEnv :: TVarDaemonState -> ClusterConfig -> FailoverConfig -> IO ClusterEnv
+mkTestEnv tvar cc fc = do
+  let pws = ClusterPasswords "" "" ""
+      fdc = FailureDetectionConfig 0
+  mcVar    <- newTVarIO (MonitoringConfig 3 5 30 60 300)
+  hooksVar <- newTVarIO Nothing
+  lock     <- newFailoverLock
+  logger   <- nullLogger
+  pure ClusterEnv
+    { envDaemonState = tvar
+    , envCluster     = cc
+    , envFailover    = fc
+    , envDetection   = fdc
+    , envPasswords   = pws
+    , envMonitoring  = mcVar
+    , envHooks       = hooksVar
+    , envLock        = lock
+    , envLogger      = logger
+    }
 
 healthySource :: NodeState
 healthySource = mkNodeState (mkNodeId "db1" 3306) True Nothing Healthy

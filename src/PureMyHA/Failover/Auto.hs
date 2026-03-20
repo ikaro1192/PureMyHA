@@ -6,40 +6,34 @@ module PureMyHA.Failover.Auto
 import Control.Concurrent.STM
 import Control.Monad (when)
 import Control.Monad.Except (ExceptT (..), runExceptT)
+import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (asks)
 import Control.Monad.Trans.Class (lift)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import PureMyHA.Config
+import PureMyHA.Env
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
-import PureMyHA.Logger (Logger, logInfo, logError)
+import PureMyHA.Logger (logInfo, logError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
 import PureMyHA.Types
 
 -- | Execute automatic failover for a cluster
-runAutoFailover
-  :: TVarDaemonState
-  -> FailoverLock
-  -> ClusterConfig
-  -> FailoverConfig
-  -> FailureDetectionConfig
-  -> ClusterPasswords
-  -> Maybe HooksConfig
-  -> Logger
-  -> IO (Either Text ())
-runAutoFailover tvar lock cc fc fdc pws mHooks logger = do
-  -- Try to acquire failover lock (prevent concurrent failovers)
-  acquired <- atomically $ tryTakeTMVar lock
+runAutoFailover :: App (Either Text ())
+runAutoFailover = do
+  lock <- asks envLock
+  acquired <- liftIO $ atomically $ tryTakeTMVar lock
   case acquired of
     Nothing -> pure (Left "Failover already in progress")
     Just () -> do
-      result <- doFailover tvar cc fc fdc pws mHooks logger
-      atomically $ putTMVar lock ()
+      result <- doFailover
+      liftIO $ atomically $ putTMVar lock ()
       pure result
 
 -- | Check preconditions for auto failover (pure)
@@ -62,130 +56,126 @@ checkAutoFailoverPreconditions now topo minReplicas = do
     then Left $ "Not enough replicas for failover (need " <> T.pack (show minReplicas) <> ")"
     else Right ()
 
-doFailover
-  :: TVarDaemonState
-  -> ClusterConfig
-  -> FailoverConfig
-  -> FailureDetectionConfig
-  -> ClusterPasswords
-  -> Maybe HooksConfig
-  -> Logger
-  -> IO (Either Text ())
-doFailover tvar cc fc fdc pws mHooks logger = do
-  mTopo <- getClusterTopology tvar (ccName cc)
+doFailover :: App (Either Text ())
+doFailover = do
+  tvar <- asks envDaemonState
+  cc   <- asks envCluster
+  fc   <- asks envFailover
+  mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> do
-      logError logger $ "[" <> ccName cc <> "] Auto-failover failed: Cluster not found"
+      appLogError $ "[" <> ccName cc <> "] Auto-failover failed: Cluster not found"
       pure (Left "Cluster not found")
     Just topo -> do
-      now <- getCurrentTime
+      now <- liftIO getCurrentTime
       case checkAutoFailoverPreconditions now topo (fcMinReplicasForFailover fc) of
         Left err -> do
-          logError logger $ "[" <> ccName cc <> "] Auto-failover failed: " <> err
+          appLogError $ "[" <> ccName cc <> "] Auto-failover failed: " <> err
           pure (Left err)
         Right () -> do
-          logInfo logger $ "[" <> ccName cc <> "] Auto-failover started"
-          executeFailover tvar cc fc fdc pws mHooks logger topo
+          appLogInfo $ "[" <> ccName cc <> "] Auto-failover started"
+          executeFailover topo
 
-executeFailover
-  :: TVarDaemonState
-  -> ClusterConfig
-  -> FailoverConfig
-  -> FailureDetectionConfig
-  -> ClusterPasswords
-  -> Maybe HooksConfig
-  -> Logger
-  -> ClusterTopology
-  -> IO (Either Text ())
-executeFailover tvar cc fc fdc pws mHooks logger topo = runExceptT $ do
-  candidateId <- ExceptT $ case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
-    Left err -> logError logger (prefix <> "Auto-failover failed: " <> err) >> pure (Left err)
-    Right c  -> pure (Right c)
+executeFailover :: ClusterTopology -> App (Either Text ())
+executeFailover topo = runExceptT $ do
+  cc <- lift $ asks envCluster
+  fc <- lift $ asks envFailover
+  let prefix = "[" <> ccName cc <> "] "
+  candidateId <- ExceptT $ do
+    case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
+      Left err -> do
+        appLogError (prefix <> "Auto-failover failed: " <> err)
+        pure (Left err)
+      Right c -> pure (Right c)
   let oldSourceHost = fmap nodeHost (ctSourceNodeId topo)
-      user          = credUser (ccCredentials cc)
       waitTimeout   = truncate (fcWaitRelayLogTimeout fc) :: Int
-  ExceptT $ runPreFailoverHook mHooks cc candidateId oldSourceHost logger
-  lift $ logInfo logger $ prefix <> "Waiting for relay log apply on " <> nodeHost candidateId <> "..."
-  ExceptT $ promoteWithOnFailureHook user pws candidateId waitTimeout logger (ccName cc) mHooks oldSourceHost
-  lift $ reconnectOtherReplicas user pws candidateId topo
-  now <- lift getCurrentTime
-  lift $ commitFailoverState tvar cc fdc topo now
-  ts <- lift getCurrentTimestamp
+  ExceptT $ runPreFailoverHook candidateId oldSourceHost
+  lift $ appLogInfo $ prefix <> "Waiting for relay log apply on " <> nodeHost candidateId <> "..."
+  ExceptT $ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost
+  lift $ reconnectOtherReplicas candidateId topo
+  now <- liftIO getCurrentTime
+  lift $ commitFailoverState topo now
+  ts <- liftIO getCurrentTimestamp
+  mHooks <- lift getHooksConfig
   let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts
-  lift $ runHookFireForget mHooks hcPostFailover postEnv
-  lift $ logInfo logger $ prefix <> "Auto-failover completed: new source is " <> nodeHost candidateId
-  where
-    prefix = "[" <> ccName cc <> "] "
+  liftIO $ runHookFireForget mHooks hcPostFailover postEnv
+  lift $ appLogInfo $ prefix <> "Auto-failover completed: new source is " <> nodeHost candidateId
 
-runPreFailoverHook
-  :: Maybe HooksConfig -> ClusterConfig -> NodeId -> Maybe Text -> Logger
-  -> IO (Either Text ())
-runPreFailoverHook mHooks cc candidateId oldSourceHost logger = do
-  ts <- getCurrentTimestamp
+runPreFailoverHook :: NodeId -> Maybe Text -> App (Either Text ())
+runPreFailoverHook candidateId oldSourceHost = do
+  cc     <- asks envCluster
+  mHooks <- getHooksConfig
+  ts <- liftIO getCurrentTimestamp
   let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts
-  preResult <- runHookOrAbort mHooks hcPreFailover preEnv
+  preResult <- liftIO $ runHookOrAbort mHooks hcPreFailover preEnv
   case preResult of
     Left err -> do
-      logError logger $ "[" <> ccName cc <> "] Pre-failover hook aborted failover: " <> err
+      appLogError $ "[" <> ccName cc <> "] Pre-failover hook aborted failover: " <> err
       pure (Left $ "Pre-failover hook failed: " <> err)
     Right () -> pure (Right ())
 
-promoteWithOnFailureHook
-  :: Text -> ClusterPasswords -> NodeId -> Int -> Logger -> Text
-  -> Maybe HooksConfig -> Maybe Text
-  -> IO (Either Text ())
-promoteWithOnFailureHook user pws candidateId waitTimeout logger clusterName mHooks oldSourceHost = do
-  promoteResult <- promoteCandidate user (cpPassword pws) candidateId waitTimeout logger clusterName
+promoteWithOnFailureHook :: NodeId -> Int -> Maybe Text -> App (Either Text ())
+promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
+  clusterName <- getClusterName
+  promoteResult <- promoteCandidate candidateId waitTimeout
   case promoteResult of
     Left err -> do
-      logError logger $ "[" <> clusterName <> "] Auto-failover failed: Promote failed: " <> err
-      ts <- getCurrentTimestamp
+      appLogError $ "[" <> clusterName <> "] Auto-failover failed: Promote failed: " <> err
+      ts <- liftIO getCurrentTimestamp
+      mHooks <- getHooksConfig
       let failEnv = HookEnv clusterName (Just (nodeHost candidateId)) oldSourceHost (Just "PromoteFailed") ts
-      runHookFireForget mHooks hcPostUnsuccessfulFailover failEnv
+      liftIO $ runHookFireForget mHooks hcPostUnsuccessfulFailover failEnv
       pure (Left $ "Promote failed: " <> err)
     Right () -> pure (Right ())
 
-reconnectOtherReplicas
-  :: Text -> ClusterPasswords -> NodeId -> ClusterTopology -> IO ()
-reconnectOtherReplicas user pws candidateId topo = do
+reconnectOtherReplicas :: NodeId -> ClusterTopology -> App ()
+reconnectOtherReplicas candidateId topo = do
   let otherReplicas = filter
         (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
         (Map.elems (ctNodes topo))
-  mapM_ (reconnectReplica user (cpPassword pws) (cpReplUser pws) (cpReplPassword pws) candidateId) otherReplicas
+  mapM_ (reconnectReplica candidateId) otherReplicas
 
-commitFailoverState
-  :: TVarDaemonState -> ClusterConfig -> FailureDetectionConfig
-  -> ClusterTopology -> UTCTime -> IO ()
-commitFailoverState tvar cc fdc topo now = do
+commitFailoverState :: ClusterTopology -> UTCTime -> App ()
+commitFailoverState topo now = do
+  tvar <- asks envDaemonState
+  cc   <- asks envCluster
+  fdc  <- asks envDetection
   let oldSources = filter nsIsSource (Map.elems (ctNodes topo))
-  atomically $ do
+  liftIO $ atomically $ do
     recordFailover tvar (ccName cc) now
     setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
     mapM_ (\ns -> updateNodeState tvar (ccName cc) (ns { nsIsSource = False })) oldSources
 
-promoteCandidate :: Text -> Text -> NodeId -> Int -> Logger -> Text -> IO (Either Text ())
-promoteCandidate user password nid waitTimeout logger clusterName = do
+promoteCandidate :: NodeId -> Int -> App (Either Text ())
+promoteCandidate nid waitTimeout = do
+  user <- getMySQLUser
+  password <- getMonPassword
+  clusterName <- getClusterName
+  logger <- asks envLogger
   let ci = makeConnectInfo nid user password
-  result <- withNodeConn ci $ \conn -> do
-    caughtUp <- waitForRelayLogApply conn waitTimeout
-    if caughtUp
-      then logInfo logger $ "[" <> clusterName <> "] Relay log apply completed on " <> nodeHost nid
-      else logError logger $ "[" <> clusterName <> "] WARNING: Relay log apply timed out on " <> nodeHost nid <> ", proceeding with promotion"
-    stopReplica conn
-    resetReplicaAll conn
-    setReadWrite conn
-  pure $ case result of
-    Left err -> Left err
-    Right () -> Right ()
+  liftIO $ do
+    result <- withNodeConn ci $ \conn -> do
+      caughtUp <- waitForRelayLogApply conn waitTimeout
+      if caughtUp
+        then logInfo logger $ "[" <> clusterName <> "] Relay log apply completed on " <> nodeHost nid
+        else logError logger $ "[" <> clusterName <> "] WARNING: Relay log apply timed out on " <> nodeHost nid <> ", proceeding with promotion"
+      stopReplica conn
+      resetReplicaAll conn
+      setReadWrite conn
+    pure $ case result of
+      Left err -> Left err
+      Right () -> Right ()
 
-reconnectReplica :: Text -> Text -> Text -> Text -> NodeId -> NodeState -> IO ()
-reconnectReplica user monPassword replUser replPassword newSourceId ns = do
-  let ci = makeConnectInfo (nsNodeId ns) user monPassword
-  _ <- withNodeConn ci $ \conn -> do
-    stopReplica conn
-    changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replUser replPassword
-    setReadOnly conn
-    startReplica conn
-  pure ()
-
-
+reconnectReplica :: NodeId -> NodeState -> App ()
+reconnectReplica newSourceId ns = do
+  user <- getMySQLUser
+  password <- getMonPassword
+  pws <- asks envPasswords
+  let ci = makeConnectInfo (nsNodeId ns) user password
+  liftIO $ do
+    _ <- withNodeConn ci $ \conn -> do
+      stopReplica conn
+      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) (cpReplUser pws) (cpReplPassword pws)
+      setReadOnly conn
+      startReplica conn
+    pure ()

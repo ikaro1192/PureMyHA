@@ -5,6 +5,7 @@ module PureMyHA.Logger
   , logInfo
   , logWarn
   , logError
+  , nullLogger
   ) where
 
 import Data.Text (Text)
@@ -39,3 +40,8 @@ logWarn l = logAt l WarningS
 
 logError :: Logger -> Text -> IO ()
 logError l = logAt l ErrorS
+
+nullLogger :: IO Logger
+nullLogger = do
+  le <- initLogEnv "test" "test"
+  pure (Logger le)

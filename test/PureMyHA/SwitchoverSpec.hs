@@ -5,7 +5,8 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Test.Hspec
 import Fixtures
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..))
+import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..))
+import PureMyHA.Env (runApp)
 import PureMyHA.Failover.Switchover (switchoverReconnectTargets, dryRunSwitchover)
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
@@ -48,28 +49,32 @@ spec = do
       tvar <- newDaemonState
       let topo = buildClusterTopology "main" clusterHealthy
       atomically $ updateClusterTopology tvar topo
-      result <- dryRunSwitchover tvar testCC testFC Nothing
+      env <- mkTestEnv tvar testCC testFC
+      result <- runApp env $ dryRunSwitchover Nothing
       result `shouldSatisfy` isRight
 
     it "result contains 'Dry run: would promote'" $ do
       tvar <- newDaemonState
       let topo = buildClusterTopology "main" clusterHealthy
       atomically $ updateClusterTopology tvar topo
-      result <- dryRunSwitchover tvar testCC testFC Nothing
+      env <- mkTestEnv tvar testCC testFC
+      result <- runApp env $ dryRunSwitchover Nothing
       case result of
         Right msg -> msg `shouldSatisfy` T.isPrefixOf "Dry run: would promote"
         Left err  -> expectationFailure (show err)
 
     it "returns Left when cluster is not found" $ do
       tvar <- newDaemonState
-      result <- dryRunSwitchover tvar testCC testFC Nothing
+      env <- mkTestEnv tvar testCC testFC
+      result <- runApp env $ dryRunSwitchover Nothing
       result `shouldBe` Left "Cluster not found"
 
     it "returns Left when specified host does not exist" $ do
       tvar <- newDaemonState
       let topo = buildClusterTopology "main" clusterHealthy
       atomically $ updateClusterTopology tvar topo
-      result <- dryRunSwitchover tvar testCC testFC (Just "nonexistent.host")
+      env <- mkTestEnv tvar testCC testFC
+      result <- runApp env $ dryRunSwitchover (Just "nonexistent.host")
       result `shouldSatisfy` isLeft
 
 testCC :: ClusterConfig
@@ -95,4 +100,3 @@ isRight _         = False
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True
 isLeft _        = False
-

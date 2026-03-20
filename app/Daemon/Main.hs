@@ -16,6 +16,7 @@ import System.IO (hPutStrLn, stderr)
 import System.Posix.Signals (installHandler, sigTERM, sigINT, sigHUP, Handler(..))
 
 import PureMyHA.Config
+import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction)
 import PureMyHA.Logger (Logger, initLogger, logInfo, logWarn, closeLogger)
 import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker)
@@ -82,32 +83,30 @@ main = do
 
   clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
 
-  clusterEntries <- mapM (initCluster tvar cfg logger) clusterPasswords
+  clusterEnvs <- mapM (initCluster tvar cfg mcVar hooksVar logger) clusterPasswords
   let clusterMap = Map.fromList
-        [ (ccName cc, entry)
-        | ((cc, _), entry) <- zip clusterPasswords clusterEntries
+        [ (ccName (envCluster env), env)
+        | env <- clusterEnvs
         ]
 
   -- Start monitor workers (returns registry per cluster)
   (registries, workerLists) <- fmap unzip $ mapM
-    (\((cc, pws), (lock, _, fc, fdc, _, _)) ->
-        startMonitorWorkers tvar cc mcVar hooksVar lock fc fdc pws logger)
-    (zip clusterPasswords clusterEntries)
+    (\env -> runApp env startMonitorWorkers)
+    clusterEnvs
   let monitorWorkers = concat workerLists
 
   -- Start topology refresh workers
   refreshWorkers <- mapM
-    (\((cc, pws), (lock, _, fc, fdc, _, _), reg) ->
-        startTopologyRefreshWorker tvar cc mcVar hooksVar lock fc fdc pws reg logger)
-    (zip3 clusterPasswords clusterEntries registries)
+    (\(env, reg) -> runApp env (startTopologyRefreshWorker reg))
+    (zip clusterEnvs registries)
 
   -- Build discovery callbacks per cluster
   let discoveryMap = Map.fromList
-        [ (ccName cc, makeDiscoveryAction tvar cc pws mcVar hooksVar lock fc fdc reg logger)
-        | ((cc, pws), (lock, _, fc, fdc, _, _), reg) <- zip3 clusterPasswords clusterEntries registries
+        [ (ccName (envCluster env), makeDiscoveryAction env reg)
+        | (env, reg) <- zip clusterEnvs registries
         ]
 
-  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap (optSocketPath opts) logger
+  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap (optSocketPath opts)
 
   logInfo logger "puremyhad started"
 
@@ -125,10 +124,12 @@ main = do
 initCluster
   :: TVarDaemonState
   -> Config
+  -> TVar MonitoringConfig
+  -> TVar (Maybe HooksConfig)
   -> Logger
   -> (ClusterConfig, ClusterPasswords)
-  -> IO (FailoverLock, ClusterConfig, FailoverConfig, FailureDetectionConfig, ClusterPasswords, Maybe HooksConfig)
-initCluster tvar cfg logger (cc, pws) = do
+  -> IO ClusterEnv
+initCluster tvar cfg mcVar hooksVar logger (cc, pws) = do
   let initTopo = buildInitialTopology cc
   atomically $ updateClusterTopology tvar initTopo
   topo <- discoverTopology cc (cpPassword pws) logger
@@ -136,7 +137,17 @@ initCluster tvar cfg logger (cc, pws) = do
     <> T.pack (show (Map.size (ctNodes topo))) <> " node(s)"
   atomically $ updateClusterTopology tvar topo
   lock <- newFailoverLock
-  pure (lock, cc, cfgFailover cfg, cfgFailureDetection cfg, pws, cfgHooks cfg)
+  pure ClusterEnv
+    { envDaemonState = tvar
+    , envCluster     = cc
+    , envFailover    = cfgFailover cfg
+    , envDetection   = cfgFailureDetection cfg
+    , envPasswords   = pws
+    , envMonitoring  = mcVar
+    , envHooks       = hooksVar
+    , envLock        = lock
+    , envLogger      = logger
+    }
 
 loadClusterPasswords :: ClusterConfig -> IO ClusterPasswords
 loadClusterPasswords cc = do
@@ -152,19 +163,19 @@ loadPassword creds = do
     Left err  -> die $ "Failed to read password file: " <> show err
     Right pwd -> pure pwd
 
-makeDiscoveryAction
-  :: TVarDaemonState -> ClusterConfig -> ClusterPasswords
-  -> TVar MonitoringConfig -> TVar (Maybe HooksConfig)
-  -> FailoverLock -> FailoverConfig -> FailureDetectionConfig
-  -> WorkerRegistry -> Logger -> DiscoveryAction
-makeDiscoveryAction tvar cc pws mcVar hooksVar lock fc fdc reg logger = do
+makeDiscoveryAction :: ClusterEnv -> WorkerRegistry -> DiscoveryAction
+makeDiscoveryAction env reg = do
+  let tvar   = envDaemonState env
+      cc     = envCluster env
+      pws    = envPasswords env
+      logger = envLogger env
   newTopo <- discoverTopology cc (cpPassword pws) logger
   atomically $ updateClusterTopology tvar newTopo
   knownNodes <- Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes newTopo)
       newNodes   = Set.difference discovered knownNodes
   forM_ newNodes $ \nid -> do
-    a <- async (runWorker tvar cc mcVar hooksVar lock fc fdc pws nid logger)
+    a <- async (runApp env (runWorker nid))
     atomically $ modifyTVar' reg (Map.insert nid a)
   pure $ Right $ "Discovery complete: " <> T.pack (show (Map.size (ctNodes newTopo)))
     <> " node(s) found, " <> T.pack (show (Set.size newNodes)) <> " new"
