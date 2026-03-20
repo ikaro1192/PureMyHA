@@ -5,6 +5,8 @@ module PureMyHA.Failover.Auto
 
 import Control.Concurrent.STM
 import Control.Monad (when)
+import Control.Monad.Except (ExceptT (..), runExceptT)
+import Control.Monad.Trans.Class (lift)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -95,54 +97,71 @@ executeFailover
   -> Logger
   -> ClusterTopology
   -> IO (Either Text ())
-executeFailover tvar cc fc fdc pws mHooks logger topo = do
-  case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
+executeFailover tvar cc fc fdc pws mHooks logger topo = runExceptT $ do
+  candidateId <- ExceptT $ case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
+    Left err -> logError logger (prefix <> "Auto-failover failed: " <> err) >> pure (Left err)
+    Right c  -> pure (Right c)
+  let oldSourceHost = fmap nodeHost (ctSourceNodeId topo)
+      user          = credUser (ccCredentials cc)
+      waitTimeout   = truncate (fcWaitRelayLogTimeout fc) :: Int
+  ExceptT $ runPreFailoverHook mHooks cc candidateId oldSourceHost logger
+  lift $ logInfo logger $ prefix <> "Waiting for relay log apply on " <> nodeHost candidateId <> "..."
+  ExceptT $ promoteWithOnFailureHook user pws candidateId waitTimeout logger (ccName cc) mHooks oldSourceHost
+  lift $ reconnectOtherReplicas user pws candidateId topo
+  now <- lift getCurrentTime
+  lift $ commitFailoverState tvar cc fdc topo now
+  ts <- lift getCurrentTimestamp
+  let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts
+  lift $ runHookFireForget mHooks hcPostFailover postEnv
+  lift $ logInfo logger $ prefix <> "Auto-failover completed: new source is " <> nodeHost candidateId
+  where
+    prefix = "[" <> ccName cc <> "] "
+
+runPreFailoverHook
+  :: Maybe HooksConfig -> ClusterConfig -> NodeId -> Maybe Text -> Logger
+  -> IO (Either Text ())
+runPreFailoverHook mHooks cc candidateId oldSourceHost logger = do
+  ts <- getCurrentTimestamp
+  let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts
+  preResult <- runHookOrAbort mHooks hcPreFailover preEnv
+  case preResult of
     Left err -> do
-      logError logger $ "[" <> ccName cc <> "] Auto-failover failed: " <> err
-      pure (Left err)
-    Right candidateId -> do
-      let user          = credUser (ccCredentials cc)
-          oldSourceHost = fmap nodeHost (ctSourceNodeId topo)
+      logError logger $ "[" <> ccName cc <> "] Pre-failover hook aborted failover: " <> err
+      pure (Left $ "Pre-failover hook failed: " <> err)
+    Right () -> pure (Right ())
 
+promoteWithOnFailureHook
+  :: Text -> ClusterPasswords -> NodeId -> Int -> Logger -> Text
+  -> Maybe HooksConfig -> Maybe Text
+  -> IO (Either Text ())
+promoteWithOnFailureHook user pws candidateId waitTimeout logger clusterName mHooks oldSourceHost = do
+  promoteResult <- promoteCandidate user (cpPassword pws) candidateId waitTimeout logger clusterName
+  case promoteResult of
+    Left err -> do
+      logError logger $ "[" <> clusterName <> "] Auto-failover failed: Promote failed: " <> err
       ts <- getCurrentTimestamp
-      let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost
-                     (Just "DeadSource") ts
-      preResult <- runHookOrAbort mHooks hcPreFailover preEnv
-      case preResult of
-        Left err -> do
-          logError logger $ "[" <> ccName cc <> "] Pre-failover hook aborted failover: " <> err
-          pure (Left $ "Pre-failover hook failed: " <> err)
-        Right () -> do
-          let waitTimeout = truncate (fcWaitRelayLogTimeout fc) :: Int
-          logInfo logger $ "[" <> ccName cc <> "] Waiting for relay log apply on " <> nodeHost candidateId <> "..."
-          promoteResult <- promoteCandidate user (cpPassword pws) candidateId waitTimeout logger (ccName cc)
-          case promoteResult of
-            Left err -> do
-              logError logger $ "[" <> ccName cc <> "] Auto-failover failed: Promote failed: " <> err
-              ts2 <- getCurrentTimestamp
-              let failEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost
-                              (Just "PromoteFailed") ts2
-              runHookFireForget mHooks hcPostUnsuccessfulFailover failEnv
-              pure (Left $ "Promote failed: " <> err)
-            Right () -> do
-              let otherReplicas = filter
-                    (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
-                    (Map.elems (ctNodes topo))
-              mapM_ (reconnectReplica user (cpPassword pws) (cpReplUser pws) (cpReplPassword pws) candidateId) otherReplicas
+      let failEnv = HookEnv clusterName (Just (nodeHost candidateId)) oldSourceHost (Just "PromoteFailed") ts
+      runHookFireForget mHooks hcPostUnsuccessfulFailover failEnv
+      pure (Left $ "Promote failed: " <> err)
+    Right () -> pure (Right ())
 
-              now <- getCurrentTime
-              let oldSources = filter nsIsSource (Map.elems (ctNodes topo))
-              atomically $ do
-                recordFailover tvar (ccName cc) now
-                setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
-                mapM_ (\ns -> updateNodeState tvar (ccName cc) (ns { nsIsSource = False })) oldSources
+reconnectOtherReplicas
+  :: Text -> ClusterPasswords -> NodeId -> ClusterTopology -> IO ()
+reconnectOtherReplicas user pws candidateId topo = do
+  let otherReplicas = filter
+        (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
+        (Map.elems (ctNodes topo))
+  mapM_ (reconnectReplica user (cpPassword pws) (cpReplUser pws) (cpReplPassword pws) candidateId) otherReplicas
 
-              ts3 <- getCurrentTimestamp
-              let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost
-                              (Just "DeadSource") ts3
-              runHookFireForget mHooks hcPostFailover postEnv
-              logInfo logger $ "[" <> ccName cc <> "] Auto-failover completed: new source is " <> nodeHost candidateId
-              pure (Right ())
+commitFailoverState
+  :: TVarDaemonState -> ClusterConfig -> FailureDetectionConfig
+  -> ClusterTopology -> UTCTime -> IO ()
+commitFailoverState tvar cc fdc topo now = do
+  let oldSources = filter nsIsSource (Map.elems (ctNodes topo))
+  atomically $ do
+    recordFailover tvar (ccName cc) now
+    setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
+    mapM_ (\ns -> updateNodeState tvar (ccName cc) (ns { nsIsSource = False })) oldSources
 
 promoteCandidate :: Text -> Text -> NodeId -> Int -> Logger -> Text -> IO (Either Text ())
 promoteCandidate user password nid waitTimeout logger clusterName = do
