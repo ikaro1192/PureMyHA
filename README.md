@@ -17,6 +17,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Config Hot-Reload** — Reloads monitoring and hooks config on SIGHUP without restart
 - **Topology Auto-Discovery** — Automatically detects and begins monitoring new nodes at a configurable interval
 - **Dry-run Mode** — Run `switchover --dry-run` to preview the candidate selection without executing any SQL
+- **Maintenance Mode** — Pause automatic failover cluster-wide (`pause-failover` / `resume-failover`) while still allowing manual switchover; pause state is in-memory only so a daemon restart automatically restores normal operation
 
 ## Requirements
 
@@ -259,6 +260,12 @@ puremyha pause-replica --host db2 [--cluster=<name>]
 # Resume replication on a paused replica (START REPLICA + resume monitoring)
 puremyha resume-replica --host db2 [--cluster=<name>]
 
+# Pause automatic failover for the cluster (manual switchover still works)
+puremyha pause-failover [--cluster=<name>]
+
+# Resume automatic failover
+puremyha resume-failover [--cluster=<name>]
+
 # Trigger manual topology discovery
 puremyha discovery [--cluster=<name>]
 
@@ -271,6 +278,9 @@ puremyha -j switchover --to db2
 # Pipe to jq
 puremyha -j status | jq '.[0].health'
 puremyha -j topology | jq '.[0].nodes[].host'
+
+# Check if a cluster has failover paused
+puremyha -j status | jq '.[0].paused'
 ```
 
 ## Logging
@@ -385,6 +395,7 @@ make e2e-clean
 | 07 | Hook Execution | Pre/post failover hooks fire and write marker files |
 | 08 | Pause / Resume Replica | Pause replication via IPC, verify data stops flowing, resume and confirm catch-up |
 | 09 | Demote | Switchover then demote a replica to replicate from the new source; verify replication chain |
+| 10 | Pause / Resume Failover | Pause auto-failover, confirm `DeadSource` does not trigger promotion, resume and confirm immediate failover |
 
 The test environment uses accelerated timings (`interval: 1s`, `recovery_block_period: 30s`) so the full suite completes in a few minutes. Cluster state is automatically reset between tests.
 
