@@ -17,6 +17,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Config Hot-Reload** — Reloads monitoring and hooks config on SIGHUP without restart
 - **Topology Auto-Discovery** — Automatically detects and begins monitoring new nodes at a configurable interval
 - **Dry-run Mode** — Run `switchover --dry-run` to preview the candidate selection without executing any SQL
+- **Pause/Resume Auto-Failover** — Temporarily disable automatic failover for maintenance windows
 
 ## Requirements
 
@@ -262,6 +263,12 @@ puremyha resume-replica --host db2 [--cluster=<name>]
 # Trigger manual topology discovery
 puremyha discovery [--cluster=<name>]
 
+# Pause automatic failover (e.g. during maintenance)
+puremyha pause-failover [--cluster=<name>]
+
+# Resume automatic failover
+puremyha resume-failover [--cluster=<name>]
+
 # JSON output (for scripting / Prometheus exporters)
 puremyha --json status
 puremyha -j topology
@@ -374,17 +381,7 @@ make e2e-clean
 
 #### Test scenarios
 
-| # | Test | What it verifies |
-|---|------|-----------------|
-| 01 | Topology Discovery | All 3 nodes discovered, source/replica roles identified correctly |
-| 02 | Auto-Failover | Source crash (`docker stop`) triggers automatic promotion of preferred candidate |
-| 03 | Network Partition | Source pause (`docker pause`) detected as `UnreachableSource`, no false failover |
-| 04 | Manual Switchover | Dry-run leaves cluster unchanged; real switchover promotes the specified replica |
-| 05 | Errant GTID | Injected errant transaction detected and repaired via `fix-errant-gtid` |
-| 06 | Anti-Flap | Recovery block set after failover, cleared by `ack-recovery` |
-| 07 | Hook Execution | Pre/post failover hooks fire and write marker files |
-| 08 | Pause / Resume Replica | Pause replication via IPC, verify data stops flowing, resume and confirm catch-up |
-| 09 | Demote | Switchover then demote a replica to replicate from the new source; verify replication chain |
+There are test scripts in `e2e/tests/`. Filenames are self-documenting (e.g. `01-topology-discovery.sh`, `10-pause-resume-failover.sh`).
 
 The test environment uses accelerated timings (`interval: 1s`, `recovery_block_period: 30s`) so the full suite completes in a few minutes. Cluster state is automatically reset between tests.
 
