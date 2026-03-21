@@ -5,7 +5,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Test.Hspec
 import Fixtures
-import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..))
+import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..))
 import PureMyHA.Env (runApp)
 import PureMyHA.Failover.Switchover (switchoverReconnectTargets, dryRunSwitchover)
 import PureMyHA.Topology.Discovery (buildClusterTopology)
@@ -83,6 +83,10 @@ testCC = ClusterConfig
   , ccNodes                  = []
   , ccCredentials            = Credentials "user" "/dev/null"
   , ccReplicationCredentials = Nothing
+  , ccMonitoring             = MonitoringConfig 3 5 30 60 300
+  , ccFailureDetection       = FailureDetectionConfig 3600
+  , ccFailover               = FailoverConfig True 1 [] 60
+  , ccHooks                  = Nothing
   }
 
 testFC :: FailoverConfig

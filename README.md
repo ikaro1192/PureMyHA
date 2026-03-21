@@ -14,7 +14,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Hook Support** — Pre/post hooks for failover and switchover events
 - **MySQL 8.4 Native** — Uses only modern syntax (`SHOW REPLICA STATUS`, `CHANGE REPLICATION SOURCE TO`, etc.)
 - **Graceful Shutdown** — Cleans up the socket file and exits on SIGTERM/SIGINT
-- **Config Hot-Reload** — Reloads monitoring and hooks config on SIGHUP without restart
+- **Config Hot-Reload** — Reloads `monitoring` and `hooks` config per cluster on SIGHUP without restart
 - **Topology Auto-Discovery** — Automatically detects and begins monitoring new nodes at a configurable interval
 - **Dry-run Mode** — Run `switchover --dry-run` to preview the candidate selection without executing any SQL
 - **Pause/Resume Auto-Failover** — Temporarily disable automatic failover for maintenance windows
@@ -161,37 +161,37 @@ clusters:
     replication_credentials:           # Optional; falls back to credentials if omitted
       user: repl
       password_file: /etc/puremyha/repl.pass
+    # monitoring / failure_detection / failover / hooks can be specified here
+    # to override the global defaults for this cluster only.
 
-monitoring:
-  interval: 3s
-  connect_timeout: 2s
-  replication_lag_warning: 10s
-  replication_lag_critical: 30s
-  discovery_interval: 300s   # Optional; 0s = disabled. Default: 300s
-
-failure_detection:
-  recovery_block_period: 3600s   # Block auto-failover for this long after a failover
-
-failover:
-  auto_failover: true
-  min_replicas_for_failover: 1
-  wait_for_relay_log_apply_timeout: 60s  # Optional; default: 60s
-  candidate_priority:            # Optional promotion priority (auto-selected by GTID if omitted)
-    - host: db2
-
-hooks:
-  pre_failover: /etc/puremyha/hooks/pre_failover.sh
-  post_failover: /etc/puremyha/hooks/post_failover.sh
-  pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
-  post_switchover: /etc/puremyha/hooks/post_switchover.sh
-  on_failure_detection: /etc/puremyha/hooks/on_failure_detection.sh    # Optional
-  post_unsuccessful_failover: /etc/puremyha/hooks/post_unsuccessful_failover.sh  # Optional
+global:
+  monitoring:
+    interval: 3s
+    connect_timeout: 2s
+    replication_lag_warning: 10s
+    replication_lag_critical: 30s
+    discovery_interval: 300s   # Optional; 0s = disabled. Default: 300s
+  failure_detection:
+    recovery_block_period: 3600s   # Block auto-failover for this long after a failover
+  failover:
+    auto_failover: true
+    min_replicas_for_failover: 1
+    wait_for_relay_log_apply_timeout: 60s  # Optional; default: 60s
+    candidate_priority:            # Optional promotion priority (auto-selected by GTID if omitted)
+      - host: db2
+  hooks:
+    pre_failover: /etc/puremyha/hooks/pre_failover.sh
+    post_failover: /etc/puremyha/hooks/post_failover.sh
+    pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
+    post_switchover: /etc/puremyha/hooks/post_switchover.sh
+    on_failure_detection: /etc/puremyha/hooks/on_failure_detection.sh    # Optional
+    post_unsuccessful_failover: /etc/puremyha/hooks/post_unsuccessful_failover.sh  # Optional
 
 logging:
   log_file: /var/log/puremyha.log  # Optional; defaults to /var/log/puremyha.log
 ```
 
-The `logging` section is optional. Omitting it entirely uses the default log file path.
+`monitoring`, `failure_detection`, `failover`, and `hooks` can be set per-cluster or defined as defaults in the `global` section. Per-cluster settings take precedence over `global` on a section-by-section basis. `monitoring`, `failure_detection`, and `failover` are required in at least one of the two. The `logging` section is optional and global (defaults to `/var/log/puremyha.log` when omitted).
 
 See `config/config.yaml.example` for a full annotated example.
 
@@ -208,7 +208,7 @@ puremyhad --config /etc/puremyha/config.yaml
 | Signal | Effect |
 |--------|--------|
 | `SIGTERM` / `SIGINT` | Graceful shutdown — stops all workers and removes the socket file |
-| `SIGHUP` | Hot-reload `monitoring` and `hooks` config without restart |
+| `SIGHUP` | Hot-reload `monitoring` and `hooks` config per cluster without restart |
 
 ```bash
 # Reload config (e.g. after editing intervals or hooks)

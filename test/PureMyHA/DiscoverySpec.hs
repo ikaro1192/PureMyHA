@@ -5,7 +5,7 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import Test.Hspec
 import Fixtures
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailureDetectionConfig (..), FailoverConfig (..))
 import PureMyHA.Topology.Discovery
   ( buildNodeStateFromProbe
   , buildClusterTopology
@@ -29,6 +29,10 @@ testCC = ClusterConfig
   , ccNodes                  = [NodeConfig "db1" 3306]
   , ccCredentials            = Credentials "root" "/run/pw"
   , ccReplicationCredentials = Nothing
+  , ccMonitoring             = MonitoringConfig 3 5 30 60 300
+  , ccFailureDetection       = FailureDetectionConfig 3600
+  , ccFailover               = FailoverConfig True 1 [] 60
+  , ccHooks                  = Nothing
   }
 
 spec :: Spec
