@@ -1,5 +1,5 @@
--- | Custom MySQL connection that supports both @caching_sha2_password@
--- (MySQL 8.4 default) and @mysql_native_password@.
+-- | Custom MySQL connection with @caching_sha2_password@ support
+-- (MySQL 8.4 default).
 module PureMyHA.MySQL.Auth (connectWithAuth) where
 
 import           Control.Exception               (SomeException, bracketOnError, catch,
@@ -54,17 +54,6 @@ scrambleSHA256 pass nonce
     sha256 = BA.convert . (Crypto.hash :: ByteString -> Crypto.Digest Crypto.SHA256)
     a = sha256 pass                         -- SHA256(password)
     c = sha256 (sha256 a `B.append` nonce)  -- SHA256(SHA256(SHA256(pass)) ++ nonce)
-
--- | SHA-1 scramble for @mysql_native_password@.
-scrambleSHA1 :: ByteString -> ByteString -> ByteString
-scrambleSHA1 nonce pass
-    | B.null pass = B.empty
-    | otherwise   = B.pack (B.zipWith xor sha1pass withNonce)
-  where
-    sha1 :: ByteString -> ByteString
-    sha1 = BA.convert . (Crypto.hash :: ByteString -> Crypto.Digest Crypto.SHA1)
-    sha1pass  = sha1 pass
-    withNonce = sha1 (nonce `B.append` sha1 sha1pass)
 
 -- | Serialise a HandshakeResponse41, appending the plugin name when
 -- @CLIENT_PLUGIN_AUTH@ is set.
@@ -213,15 +202,16 @@ handleAuthResponse is writePacket nonce pass = loop
         let bs           = BL.toStrict (BL.tail (pBody p))
             (pluginName, afterNul) = B.break (== 0x00) bs
             newNonce     = B.drop 1 afterNul
-            response
-                | pluginName == "caching_sha2_password" = scrambleSHA256 pass newNonce
-                | otherwise                             = scrambleSHA1  newNonce pass
-        writePacket (putToPacket (pSeqN p + 1) (Binary.putByteString response))
-        loop
+        if pluginName == "caching_sha2_password"
+            then do
+                let response = scrambleSHA256 pass newNonce
+                writePacket (putToPacket (pSeqN p + 1) (Binary.putByteString response))
+                loop
+            else throwIO (userError ("unsupported auth plugin: "
+                                     ++ show pluginName))
 
--- | Drop-in replacement for 'Database.MySQL.Base.connect' with support for
--- @caching_sha2_password@ (MySQL 8.4 default) in addition to
--- @mysql_native_password@.
+-- | Drop-in replacement for 'Database.MySQL.Base.connect' with
+-- @caching_sha2_password@ (MySQL 8.4 default) support.
 connectWithAuth :: ConnectInfo -> IO MySQLConn
 connectWithAuth (ConnectInfo host port db user pass charset) =
     bracketOnError open TCP.close go
@@ -238,15 +228,11 @@ connectWithAuth (ConnectInfo host port db user pass charset) =
 
         let plugin = greetingAuthPlugin greet
             nonce  = greetingSalt1 greet `B.append` greetingSalt2 greet
-            (authResp, caps)
-                | plugin == "caching_sha2_password" =
-                    (scrambleSHA256 pass nonce, clientCap .|. clientPluginAuth)
-                | otherwise =
-                    (scrambleSHA1 nonce pass, clientCap)
-            mPlugin = if caps .&. clientPluginAuth /= 0 then Just plugin else Nothing
+            authResp = scrambleSHA256 pass nonce
+            caps     = clientCap .|. clientPluginAuth
             authPkt = putToPacket 1
                         (putAuthPacket caps clientMaxPacketSize charset
-                                       user authResp db mPlugin)
+                                       user authResp db (Just plugin))
 
         sendPacket c authPkt
         handleAuthResponse is' (sendPacket c) nonce pass
