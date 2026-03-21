@@ -1,0 +1,205 @@
+#!/bin/sh
+#
+# OCF Resource Agent for puremyhad
+#
+# Manages the PureMyHA daemon (puremyhad) as a Pacemaker resource.
+# This RA directly manages the process without relying on systemd,
+# making it suitable for both bare-metal and container environments.
+#
+# Usage in Pacemaker:
+#   pcs resource create puremyhad ocf:puremyha:puremyhad \
+#       config=/etc/puremyha/config.yaml \
+#       socket=/run/puremyhad.sock \
+#       op monitor interval=15s timeout=15s \
+#       op start  timeout=30s \
+#       op stop   timeout=30s
+#
+# OCF Return Codes:
+#   OCF_SUCCESS          0
+#   OCF_ERR_GENERIC      1
+#   OCF_ERR_ARGS         2
+#   OCF_ERR_UNIMPLEMENTED 3
+#   OCF_ERR_PERM         4
+#   OCF_ERR_INSTALLED    5
+#   OCF_ERR_CONFIGURED   6
+#   OCF_NOT_RUNNING      7
+
+: ${OCF_FUNCTIONS_DIR=${OCF_ROOT}/lib/heartbeat}
+. ${OCF_FUNCTIONS_DIR}/ocf-shellfuncs
+
+# --- Parameters ---
+
+OCF_RESKEY_binary_default="/usr/sbin/puremyhad"
+OCF_RESKEY_config_default="/etc/puremyha/config.yaml"
+OCF_RESKEY_socket_default="/run/puremyhad.sock"
+OCF_RESKEY_pidfile_default="/run/puremyhad.pid"
+
+: ${OCF_RESKEY_binary=${OCF_RESKEY_binary_default}}
+: ${OCF_RESKEY_config=${OCF_RESKEY_config_default}}
+: ${OCF_RESKEY_socket=${OCF_RESKEY_socket_default}}
+: ${OCF_RESKEY_pidfile=${OCF_RESKEY_pidfile_default}}
+
+# --- Metadata ---
+
+puremyha_meta_data() {
+    cat <<EOF
+<?xml version="1.0"?>
+<!DOCTYPE resource-agent SYSTEM "ra-api-1.dtd">
+<resource-agent name="puremyhad" version="1.0">
+  <version>1.0</version>
+  <longdesc lang="en">
+    Manages the PureMyHA daemon (puremyhad), a pure-Haskell MySQL HA tool.
+    Provides start, stop, and monitor operations for use with Pacemaker.
+  </longdesc>
+  <shortdesc lang="en">PureMyHA daemon resource agent</shortdesc>
+  <parameters>
+    <parameter name="binary" unique="0" required="0">
+      <longdesc lang="en">Path to the puremyhad binary.</longdesc>
+      <shortdesc lang="en">puremyhad binary path</shortdesc>
+      <content type="string" default="${OCF_RESKEY_binary_default}"/>
+    </parameter>
+    <parameter name="config" unique="0" required="0">
+      <longdesc lang="en">Path to the puremyhad configuration file.</longdesc>
+      <shortdesc lang="en">Configuration file path</shortdesc>
+      <content type="string" default="${OCF_RESKEY_config_default}"/>
+    </parameter>
+    <parameter name="socket" unique="0" required="0">
+      <longdesc lang="en">Path to the puremyhad Unix domain socket.</longdesc>
+      <shortdesc lang="en">Unix socket path</shortdesc>
+      <content type="string" default="${OCF_RESKEY_socket_default}"/>
+    </parameter>
+    <parameter name="pidfile" unique="0" required="0">
+      <longdesc lang="en">Path to the PID file written by this RA.</longdesc>
+      <shortdesc lang="en">PID file path</shortdesc>
+      <content type="string" default="${OCF_RESKEY_pidfile_default}"/>
+    </parameter>
+  </parameters>
+  <actions>
+    <action name="start"        timeout="30s"/>
+    <action name="stop"         timeout="30s"/>
+    <action name="monitor"      timeout="15s" interval="15s" depth="0"/>
+    <action name="validate-all" timeout="10s"/>
+    <action name="meta-data"    timeout="5s"/>
+  </actions>
+</resource-agent>
+EOF
+}
+
+# --- Helper ---
+
+puremyha_pid() {
+    if [ -f "${OCF_RESKEY_pidfile}" ]; then
+        cat "${OCF_RESKEY_pidfile}"
+    fi
+}
+
+puremyha_running() {
+    local pid
+    pid=$(puremyha_pid)
+    [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null
+}
+
+# --- Actions ---
+
+puremyha_validate() {
+    if [ ! -x "${OCF_RESKEY_binary}" ]; then
+        ocf_log err "puremyhad binary not found or not executable: ${OCF_RESKEY_binary}"
+        return ${OCF_ERR_INSTALLED}
+    fi
+    if [ ! -f "${OCF_RESKEY_config}" ]; then
+        ocf_log err "Config file not found: ${OCF_RESKEY_config}"
+        return ${OCF_ERR_CONFIGURED}
+    fi
+    return ${OCF_SUCCESS}
+}
+
+puremyha_start() {
+    puremyha_monitor
+    if [ $? -eq ${OCF_SUCCESS} ]; then
+        ocf_log info "puremyhad is already running"
+        return ${OCF_SUCCESS}
+    fi
+
+    ocf_log info "Starting puremyhad"
+    ${OCF_RESKEY_binary} \
+        --config "${OCF_RESKEY_config}" \
+        --socket "${OCF_RESKEY_socket}" \
+        &
+    echo $! > "${OCF_RESKEY_pidfile}"
+
+    # Wait up to 10 seconds for the socket to appear
+    local i=0
+    while [ $i -lt 10 ]; do
+        sleep 1
+        if [ -S "${OCF_RESKEY_socket}" ]; then
+            ocf_log info "puremyhad started (pid=$(puremyha_pid))"
+            return ${OCF_SUCCESS}
+        fi
+        i=$((i + 1))
+    done
+
+    ocf_log err "puremyhad did not create socket ${OCF_RESKEY_socket} within 10 seconds"
+    return ${OCF_ERR_GENERIC}
+}
+
+puremyha_stop() {
+    local pid
+    pid=$(puremyha_pid)
+
+    if [ -z "${pid}" ] || ! kill -0 "${pid}" 2>/dev/null; then
+        ocf_log info "puremyhad is not running"
+        rm -f "${OCF_RESKEY_pidfile}" "${OCF_RESKEY_socket}"
+        return ${OCF_SUCCESS}
+    fi
+
+    ocf_log info "Stopping puremyhad (pid=${pid})"
+    kill -TERM "${pid}"
+
+    # Wait up to 30 seconds for graceful shutdown
+    local i=0
+    while [ $i -lt 30 ]; do
+        sleep 1
+        if ! kill -0 "${pid}" 2>/dev/null; then
+            ocf_log info "puremyhad stopped"
+            rm -f "${OCF_RESKEY_pidfile}" "${OCF_RESKEY_socket}"
+            return ${OCF_SUCCESS}
+        fi
+        i=$((i + 1))
+    done
+
+    ocf_log warn "puremyhad did not stop gracefully; sending SIGKILL"
+    kill -KILL "${pid}" 2>/dev/null
+    rm -f "${OCF_RESKEY_pidfile}" "${OCF_RESKEY_socket}"
+    return ${OCF_SUCCESS}
+}
+
+puremyha_monitor() {
+    if ! puremyha_running; then
+        return ${OCF_NOT_RUNNING}
+    fi
+    if [ ! -S "${OCF_RESKEY_socket}" ]; then
+        ocf_log warn "puremyhad process is running but socket ${OCF_RESKEY_socket} does not exist"
+        return ${OCF_ERR_GENERIC}
+    fi
+    return ${OCF_SUCCESS}
+}
+
+# --- Dispatch ---
+
+case "${__OCF_ACTION}" in
+    meta-data)   puremyha_meta_data; exit ${OCF_SUCCESS};;
+    start)       puremyha_start;;
+    stop)        puremyha_stop;;
+    monitor)     puremyha_monitor;;
+    validate-all) puremyha_validate;;
+    usage|help)
+        echo "Usage: $0 {start|stop|monitor|validate-all|meta-data}"
+        exit ${OCF_SUCCESS}
+        ;;
+    *)
+        ocf_log err "Unimplemented action: ${__OCF_ACTION}"
+        exit ${OCF_ERR_UNIMPLEMENTED}
+        ;;
+esac
+
+exit $?
