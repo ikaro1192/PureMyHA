@@ -13,21 +13,23 @@ clusters:
     replication_credentials:
       user: repl
       password_file: /etc/puremyha/repl.pass
-    monitoring:
-      interval: 1s
-      connect_timeout: 2s
-      replication_lag_warning: 5s
-      replication_lag_critical: 10s
-    failure_detection:
-      recovery_block_period: 30s
-    failover:
-      auto_failover: true
-      min_replicas_for_failover: 1
-      wait_for_relay_log_apply_timeout: 10s
-      candidate_priority:
-        - host: mysql-replica1
     hooks:
       pre_failover: /etc/puremyha/hooks/pre_failover.sh
       post_failover: /etc/puremyha/hooks/post_failover.sh
       pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
       post_switchover: /etc/puremyha/hooks/post_switchover.sh
+
+global:
+  monitoring:
+    interval: 1s
+    connect_timeout: 2s
+    replication_lag_warning: 5s
+    replication_lag_critical: 10s
+  failure_detection:
+    recovery_block_period: 30s
+  failover:
+    auto_failover: true
+    min_replicas_for_failover: 1
+    wait_for_relay_log_apply_timeout: 10s
+    candidate_priority:
+      - host: mysql-replica1

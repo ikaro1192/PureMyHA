@@ -111,6 +111,8 @@ test-suite puremyha-test
     puremyha,
     hspec            >= 2.9,
     QuickCheck       >= 2.14,
-    hspec-discover   >= 0.8
+    hspec-discover   >= 0.8,
+    yaml             >= 0.11,
+    bytestring
   build-tool-depends:
     hspec-discover:hspec-discover

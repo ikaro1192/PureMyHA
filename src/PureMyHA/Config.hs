@@ -10,11 +10,13 @@ module PureMyHA.Config
   , HooksConfig (..)
   , LoggingConfig (..)
   , CandidatePriority (..)
+  , GlobalConfig (..)
   , defaultLoggingConfig
   , loadConfig
   , parseDuration
   ) where
 
+import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON (..), withObject, withText, (.:), (.:?), (.!=))
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -35,6 +37,14 @@ data LoggingConfig = LoggingConfig
 defaultLoggingConfig :: LoggingConfig
 defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log"
 
+-- | Global defaults applied to all clusters unless overridden per-cluster.
+data GlobalConfig = GlobalConfig
+  { gcMonitoring       :: Maybe MonitoringConfig
+  , gcFailureDetection :: Maybe FailureDetectionConfig
+  , gcFailover         :: Maybe FailoverConfig
+  , gcHooks            :: Maybe HooksConfig
+  } deriving (Show, Generic)
+
 data ClusterConfig = ClusterConfig
   { ccName                   :: Text
   , ccNodes                  :: [NodeConfig]
@@ -44,6 +54,18 @@ data ClusterConfig = ClusterConfig
   , ccFailureDetection       :: FailureDetectionConfig
   , ccFailover               :: FailoverConfig
   , ccHooks                  :: Maybe HooksConfig
+  } deriving (Show, Generic)
+
+-- | Internal type used only for YAML parsing; all per-cluster settings are optional.
+data RawClusterConfig = RawClusterConfig
+  { rccName                   :: Text
+  , rccNodes                  :: [NodeConfig]
+  , rccCredentials            :: Credentials
+  , rccReplicationCredentials :: Maybe Credentials
+  , rccMonitoring             :: Maybe MonitoringConfig
+  , rccFailureDetection       :: Maybe FailureDetectionConfig
+  , rccFailover               :: Maybe FailoverConfig
+  , rccHooks                  :: Maybe HooksConfig
   } deriving (Show, Generic)
 
 data ClusterPasswords = ClusterPasswords
@@ -111,26 +133,62 @@ instance FromJSON DurationField where
       Right d -> pure (DurationField d)
       Left e  -> fail e
 
+-- | Resolve a raw cluster config against optional global defaults.
+-- Per-cluster settings take precedence; falls back to global; errors if neither present.
+resolveCluster :: Maybe GlobalConfig -> RawClusterConfig -> Either String ClusterConfig
+resolveCluster mglobal raw = do
+  mc  <- require "monitoring"        rccMonitoring       (gcMonitoring       =<< mglobal)
+  fdc <- require "failure_detection" rccFailureDetection (gcFailureDetection =<< mglobal)
+  fc  <- require "failover"          rccFailover         (gcFailover         =<< mglobal)
+  pure ClusterConfig
+    { ccName                   = rccName raw
+    , ccNodes                  = rccNodes raw
+    , ccCredentials            = rccCredentials raw
+    , ccReplicationCredentials = rccReplicationCredentials raw
+    , ccMonitoring             = mc
+    , ccFailureDetection       = fdc
+    , ccFailover               = fc
+    , ccHooks                  = rccHooks raw <|> (gcHooks =<< mglobal)
+    }
+  where
+    require field getter globalVal =
+      case getter raw <|> globalVal of
+        Just v  -> Right v
+        Nothing -> Left $ "Cluster '" <> T.unpack (rccName raw) <> "': '"
+                       <> field <> "' must be set in the cluster config or in global"
+
 instance FromJSON Config where
-  parseJSON = withObject "Config" $ \o ->
-    Config
-      <$> o .: "clusters"
-      <*> o .:? "logging" .!= defaultLoggingConfig
+  parseJSON = withObject "Config" $ \o -> do
+    mglobal     <- o .:? "global"
+    rawClusters <- o .:  "clusters"
+    logging     <- o .:? "logging" .!= defaultLoggingConfig
+    clusters    <- case mapM (resolveCluster mglobal) rawClusters of
+      Left err -> fail err
+      Right cs -> pure cs
+    pure $ Config clusters logging
 
 instance FromJSON LoggingConfig where
   parseJSON = withObject "LoggingConfig" $ \o ->
     LoggingConfig <$> o .:? "log_file" .!= "/var/log/puremyha.log"
 
-instance FromJSON ClusterConfig where
-  parseJSON = withObject "ClusterConfig" $ \o ->
-    ClusterConfig
+instance FromJSON GlobalConfig where
+  parseJSON = withObject "GlobalConfig" $ \o ->
+    GlobalConfig
+      <$> o .:? "monitoring"
+      <*> o .:? "failure_detection"
+      <*> o .:? "failover"
+      <*> o .:? "hooks"
+
+instance FromJSON RawClusterConfig where
+  parseJSON = withObject "RawClusterConfig" $ \o ->
+    RawClusterConfig
       <$> o .:  "name"
       <*> o .:  "nodes"
       <*> o .:  "credentials"
       <*> o .:? "replication_credentials"
-      <*> o .:  "monitoring"
-      <*> o .:  "failure_detection"
-      <*> o .:  "failover"
+      <*> o .:? "monitoring"
+      <*> o .:? "failure_detection"
+      <*> o .:? "failover"
       <*> o .:? "hooks"
 
 instance FromJSON NodeConfig where
