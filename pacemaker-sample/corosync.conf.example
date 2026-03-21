@@ -1,0 +1,74 @@
+# Corosync configuration for a 2-node PureMyHA cluster with QDevice
+#
+# Topology:
+#   ha1     192.168.10.11  — cluster node
+#   ha2     192.168.10.12  — cluster node
+#   qdevice 192.168.10.13  — quorum arbiter (corosync-qnetd, not a cluster node)
+#
+# Replace all IP addresses with your actual addresses before use.
+# Distribute the identical file to /etc/corosync/corosync.conf on BOTH ha1 and ha2.
+# The QDevice host does NOT need this file.
+
+totem {
+    version: 2
+    cluster_name: puremyha-cluster
+
+    # knet is the modern transport (Corosync 3.x default).
+    # It supports multiple redundant links and encryption.
+    # Use udpu only if knet is unavailable.
+    transport: knet
+
+    crypto_cipher: aes256
+    crypto_hash: sha256
+}
+
+nodelist {
+    node {
+        ring0_addr: 192.168.10.11   # ha1 — replace with hostname or IP
+        name: ha1
+        nodeid: 1
+    }
+    node {
+        ring0_addr: 192.168.10.12   # ha2 — replace with hostname or IP
+        name: ha2
+        nodeid: 2
+    }
+    # Note: the QDevice host (192.168.10.13) is NOT listed here.
+    # It is a quorum device, not a cluster member.
+}
+
+quorum {
+    provider: corosync_votequorum
+
+    # IMPORTANT: two_node must be 0 (or absent) when using a QDevice.
+    # two_node: 1 conflicts with QDevice and must not be set simultaneously.
+    two_node: 0
+
+    # Total votes: 2 nodes (1 vote each) + 1 QDevice vote = 3
+    expected_votes: 3
+
+    device {
+        model: net
+        net {
+            host: 192.168.10.13   # QDevice host — replace with actual IP or hostname
+            # ffsplit (fifty-fifty split):
+            #   In a 2-node cluster, the QDevice grants its vote to whichever
+            #   partition can still reach it. The other partition loses quorum
+            #   and stops. If BOTH nodes lose contact with the QDevice, neither
+            #   gets the extra vote and failover is blocked until the QDevice
+            #   becomes reachable again.
+            algorithm: ffsplit
+        }
+    }
+}
+
+logging {
+    to_logfile: yes
+    logfile: /var/log/corosync/corosync.log
+    to_syslog: yes
+    timestamp: on
+    logger_subsys {
+        subsys: QUORUM
+        debug: off
+    }
+}

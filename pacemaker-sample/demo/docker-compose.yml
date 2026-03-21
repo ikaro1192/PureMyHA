@@ -1,0 +1,49 @@
+services:
+  ha1:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile
+    hostname: ha1
+    # Pacemaker and Corosync require elevated privileges to manage
+    # network interfaces (VIP) and process lifecycle.
+    privileged: true
+    networks:
+      cluster-net:
+        ipv4_address: 192.168.100.11
+    volumes:
+      # Mount the puremyhad binary built from the repository root.
+      # Build it first: docker build -t puremyha ../../ && docker cp ...
+      # See the "Getting Started" section in README.md for the full build steps.
+      - ../../dist-bins/puremyhad:/usr/sbin/puremyhad:ro
+      - ./config/puremyha.yaml:/etc/puremyha/config.yaml:ro
+      - ./config/mysql.pass:/etc/puremyha/mysql.pass:ro
+
+  ha2:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile
+    hostname: ha2
+    privileged: true
+    networks:
+      cluster-net:
+        ipv4_address: 192.168.100.12
+    volumes:
+      - ../../dist-bins/puremyhad:/usr/sbin/puremyhad:ro
+      - ./config/puremyha.yaml:/etc/puremyha/config.yaml:ro
+      - ./config/mysql.pass:/etc/puremyha/mysql.pass:ro
+
+  qdevice:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile.qdevice
+    hostname: qdevice
+    networks:
+      cluster-net:
+        ipv4_address: 192.168.100.13
+
+networks:
+  cluster-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.100.0/24
