@@ -1,5 +1,10 @@
 # PureMyHA
 
+[![CI](https://github.com/ikaro1192/PureMyHA/actions/workflows/ci.yml/badge.svg)](https://github.com/ikaro1192/PureMyHA/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ikaro1192/PureMyHA)](https://github.com/ikaro1192/PureMyHA/releases/latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Haskell](https://img.shields.io/badge/language-Haskell-5D4F85)](https://www.haskell.org/)
+
 A simple, pure-Haskell High Availability tool for MySQL 8.4 replication topologies.
 
 Inspired by the design philosophy of Orchestrator, PureMyHA provides topology discovery, failure detection, and automatic failover — with no C library dependencies.
