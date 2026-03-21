@@ -15,7 +15,7 @@ module PureMyHA.Config
   , parseDuration
   ) where
 
-import Data.Aeson (FromJSON (..), Value (..), withObject, withText, (.:), (.:?), (.!=))
+import Data.Aeson (FromJSON (..), withObject, withText, (.:), (.:?), (.!=))
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
@@ -24,12 +24,8 @@ import GHC.Generics (Generic)
 import Text.Read (readMaybe)
 
 data Config = Config
-  { cfgClusters         :: [ClusterConfig]
-  , cfgMonitoring       :: MonitoringConfig
-  , cfgFailureDetection :: FailureDetectionConfig
-  , cfgFailover         :: FailoverConfig
-  , cfgHooks            :: Maybe HooksConfig
-  , cfgLogging          :: LoggingConfig
+  { cfgClusters :: [ClusterConfig]
+  , cfgLogging  :: LoggingConfig
   } deriving (Show, Generic)
 
 data LoggingConfig = LoggingConfig
@@ -44,6 +40,10 @@ data ClusterConfig = ClusterConfig
   , ccNodes                  :: [NodeConfig]
   , ccCredentials            :: Credentials
   , ccReplicationCredentials :: Maybe Credentials
+  , ccMonitoring             :: MonitoringConfig
+  , ccFailureDetection       :: FailureDetectionConfig
+  , ccFailover               :: FailoverConfig
+  , ccHooks                  :: Maybe HooksConfig
   } deriving (Show, Generic)
 
 data ClusterPasswords = ClusterPasswords
@@ -115,10 +115,6 @@ instance FromJSON Config where
   parseJSON = withObject "Config" $ \o ->
     Config
       <$> o .: "clusters"
-      <*> o .: "monitoring"
-      <*> o .: "failure_detection"
-      <*> o .: "failover"
-      <*> o .:? "hooks"
       <*> o .:? "logging" .!= defaultLoggingConfig
 
 instance FromJSON LoggingConfig where
@@ -132,6 +128,10 @@ instance FromJSON ClusterConfig where
       <*> o .:  "nodes"
       <*> o .:  "credentials"
       <*> o .:? "replication_credentials"
+      <*> o .:  "monitoring"
+      <*> o .:  "failure_detection"
+      <*> o .:  "failover"
+      <*> o .:? "hooks"
 
 instance FromJSON NodeConfig where
   parseJSON = withObject "NodeConfig" $ \o ->

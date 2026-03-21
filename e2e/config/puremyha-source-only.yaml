@@ -9,18 +9,15 @@ clusters:
     replication_credentials:
       user: repl
       password_file: /etc/puremyha/repl.pass
-
-monitoring:
-  interval: 1s
-  connect_timeout: 2s
-  replication_lag_warning: 5s
-  replication_lag_critical: 10s
-  discovery_interval: 5s
-
-failure_detection:
-  recovery_block_period: 30s
-
-failover:
-  auto_failover: false
-  min_replicas_for_failover: 1
-  wait_for_relay_log_apply_timeout: 10s
+    monitoring:
+      interval: 1s
+      connect_timeout: 2s
+      replication_lag_warning: 5s
+      replication_lag_critical: 10s
+      discovery_interval: 5s
+    failure_detection:
+      recovery_block_period: 30s
+    failover:
+      auto_failover: false
+      min_replicas_for_failover: 1
+      wait_for_relay_log_apply_timeout: 10s

@@ -1,10 +1,11 @@
 module Main (main) where
 
 import Control.Concurrent.Async (Async, async, waitAnyCancel, race_, cancel)
-import Control.Concurrent.STM   (TVar, TMVar, atomically, newTVarIO, newEmptyTMVarIO,
+import Control.Concurrent.STM   (TMVar, atomically, newTVarIO, newEmptyTMVarIO,
                                   putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
 import Control.Monad (void, forM_)
+import Data.List (find)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -50,14 +51,13 @@ main = do
   cfg    <- loadAndValidateConfig (optConfigPath opts)
   logger <- initLogger (lcLogFile (cfgLogging cfg))
 
-  tvar     <- newDaemonState
-  mcVar    <- newTVarIO (cfgMonitoring cfg)
-  hooksVar <- newTVarIO (cfgHooks cfg)
-
-  shutdownVar <- installSignalHandlers (optConfigPath opts) mcVar hooksVar logger
+  tvar        <- newDaemonState
+  shutdownVar <- installShutdownHandlers
 
   clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
-  clusterEnvs      <- mapM (initCluster tvar cfg mcVar hooksVar logger) clusterPasswords
+  clusterEnvs      <- mapM (initCluster tvar logger) clusterPasswords
+
+  installHUPHandler (optConfigPath opts) clusterEnvs logger
 
   allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar
   logInfo logger "puremyhad started"
@@ -70,24 +70,30 @@ loadAndValidateConfig path = do
     Left err -> die $ "Failed to load config: " <> err
     Right c  -> pure c
 
-installSignalHandlers
-  :: FilePath -> TVar MonitoringConfig -> TVar (Maybe HooksConfig) -> Logger
-  -> IO (TMVar ())
-installSignalHandlers configPath mcVar hooksVar logger = do
+installShutdownHandlers :: IO (TMVar ())
+installShutdownHandlers = do
   shutdownVar <- newEmptyTMVarIO
-  let shutdownHandler = CatchOnce (atomically (putTMVar shutdownVar ()))
-  _ <- installHandler sigTERM shutdownHandler Nothing
-  _ <- installHandler sigINT  shutdownHandler Nothing
+  let h = CatchOnce (atomically (putTMVar shutdownVar ()))
+  _ <- installHandler sigTERM h Nothing
+  _ <- installHandler sigINT  h Nothing
+  pure shutdownVar
+
+installHUPHandler :: FilePath -> [ClusterEnv] -> Logger -> IO ()
+installHUPHandler configPath clusterEnvs logger = do
   _ <- installHandler sigHUP (Catch $ do
     eCfg' <- loadConfig configPath
     case eCfg' of
       Left err   -> logWarn logger $ "SIGHUP: config reload failed: " <> T.pack err
       Right cfg' -> do
-        atomically $ do
-          writeTVar mcVar    (cfgMonitoring cfg')
-          writeTVar hooksVar (cfgHooks cfg')
+        forM_ clusterEnvs $ \env -> do
+          let name = ccName (envCluster env)
+          case find (\cc -> ccName cc == name) (cfgClusters cfg') of
+            Nothing -> logWarn logger $ "SIGHUP: cluster " <> name <> " not found in new config"
+            Just cc -> atomically $ do
+              writeTVar (envMonitoring env) (ccMonitoring cc)
+              writeTVar (envHooks env)      (ccHooks cc)
         logInfo logger "SIGHUP: config reloaded") Nothing
-  pure shutdownVar
+  pure ()
 
 startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> IO [Async ()]
 startAllWorkers clusterEnvs socketPath tvar = do
@@ -125,21 +131,20 @@ awaitShutdownAndCleanup logger shutdownVar allWorkers = do
 
 initCluster
   :: TVarDaemonState
-  -> Config
-  -> TVar MonitoringConfig
-  -> TVar (Maybe HooksConfig)
   -> Logger
   -> (ClusterConfig, ClusterPasswords)
   -> IO ClusterEnv
-initCluster tvar cfg mcVar hooksVar logger (cc, pws) = do
+initCluster tvar logger (cc, pws) = do
   let initTopo = buildInitialTopology cc
   atomically $ updateClusterTopology tvar initTopo
-  lock <- newFailoverLock
+  lock     <- newFailoverLock
+  mcVar    <- newTVarIO (ccMonitoring cc)
+  hooksVar <- newTVarIO (ccHooks cc)
   let env = ClusterEnv
         { envDaemonState = tvar
         , envCluster     = cc
-        , envFailover    = cfgFailover cfg
-        , envDetection   = cfgFailureDetection cfg
+        , envFailover    = ccFailover cc
+        , envDetection   = ccFailureDetection cc
         , envPasswords   = pws
         , envMonitoring  = mcVar
         , envHooks       = hooksVar
@@ -169,7 +174,6 @@ loadPassword creds = do
 makeDiscoveryAction :: ClusterEnv -> WorkerRegistry -> DiscoveryAction
 makeDiscoveryAction env reg = do
   let tvar = envDaemonState env
-      cc   = envCluster env
   newTopo <- runApp env discoverTopology
   atomically $ updateClusterTopology tvar newTopo
   knownNodes <- Map.keysSet <$> readTVarIO reg
