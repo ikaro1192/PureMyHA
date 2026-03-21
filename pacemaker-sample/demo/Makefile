@@ -21,11 +21,23 @@ start:
 
 ## Initialize the Pacemaker cluster (run once after 'make start')
 setup:
+	@echo "==> Phase 1: Auth and cluster setup..."
 	$(COMPOSE) exec ha1 /setup/setup-cluster.sh
+	@echo "==> Starting corosync on both nodes..."
+	$(COMPOSE) exec ha1 corosync
+	$(COMPOSE) exec ha2 corosync
+	@sleep 3
+	@echo "==> Starting pacemaker on both nodes..."
+	$(COMPOSE) exec -d ha1 pacemakerd
+	$(COMPOSE) exec -d ha2 pacemakerd
+	@echo "    Waiting for daemons to initialize..."
+	@sleep 15
+	@echo "==> Phase 2: Configure resources..."
+	$(COMPOSE) exec ha1 /setup/configure-resources.sh
 
-## Show cluster status
+## Show cluster status (uses crm_mon — pcs status requires systemd)
 status:
-	$(COMPOSE) exec ha1 pcs status
+	$(COMPOSE) exec ha1 crm_mon -1
 
 ## Show quorum status
 quorum:
@@ -36,13 +48,13 @@ failover:
 	@echo "==> Putting ha1 in standby (puremyhad will move to ha2)..."
 	$(COMPOSE) exec ha1 pcs node standby ha1
 	@sleep 3
-	$(COMPOSE) exec ha1 pcs status
+	$(COMPOSE) exec ha1 crm_mon -1
 
 ## Restore ha1 to active state
 unstandby:
 	$(COMPOSE) exec ha1 pcs node unstandby ha1
 	@sleep 3
-	$(COMPOSE) exec ha1 pcs status
+	$(COMPOSE) exec ha1 crm_mon -1
 
 ## Follow logs from all containers
 logs:

@@ -12,7 +12,7 @@
 #       socket=/run/puremyhad.sock \
 #       op monitor interval=15s timeout=15s \
 #       op start  timeout=30s \
-#       op stop   timeout=30s
+#       op stop   timeout=60s
 #
 # OCF Return Codes:
 #   OCF_SUCCESS          0
@@ -76,7 +76,7 @@ puremyha_meta_data() {
   </parameters>
   <actions>
     <action name="start"        timeout="30s"/>
-    <action name="stop"         timeout="30s"/>
+    <action name="stop"         timeout="60s"/>
     <action name="monitor"      timeout="15s" interval="15s" depth="0"/>
     <action name="validate-all" timeout="10s"/>
     <action name="meta-data"    timeout="5s"/>
@@ -155,9 +155,10 @@ puremyha_stop() {
     ocf_log info "Stopping puremyhad (pid=${pid})"
     kill -TERM "${pid}"
 
-    # Wait up to 30 seconds for graceful shutdown
+    # Wait up to 20 seconds for graceful shutdown
+    # (must be shorter than Pacemaker's stop timeout to allow SIGKILL fallback)
     local i=0
-    while [ $i -lt 30 ]; do
+    while [ $i -lt 20 ]; do
         sleep 1
         if ! kill -0 "${pid}" 2>/dev/null; then
             ocf_log info "puremyhad stopped"

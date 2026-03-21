@@ -85,12 +85,12 @@ graph LR
 
 PureMyHA does **not** implement leader election itself — it delegates entirely to Pacemaker. Daemon state is held in memory only and rebuilt from MySQL on restart.
 
-Sample configuration files and a Docker Compose demo are in [`pacemaker/`](pacemaker/).
+Sample configuration files and a Docker Compose demo are in [`pacemaker-sample/`](pacemaker-sample/).
 
 #### Quick start (Docker Compose demo)
 
 ```bash
-cd pacemaker/demo
+cd pacemaker-sample/demo
 
 # 1. Build the puremyhad binary and cluster images
 make build
@@ -139,7 +139,7 @@ systemctl enable --now corosync-qnetd
 
 **Step 2 — Configure Corosync**
 
-Copy [`pacemaker/corosync.conf.example`](pacemaker/corosync.conf.example) to `/etc/corosync/corosync.conf` on **both** ha1 and ha2. Replace the example IPs with your actual addresses.
+Copy [`pacemaker-sample/corosync.conf.example`](pacemaker-sample/corosync.conf.example) to `/etc/corosync/corosync.conf` on **both** ha1 and ha2. Replace the example IPs with your actual addresses.
 
 **Step 3 — Disable systemd auto-restart for puremyhad**
 
@@ -161,7 +161,7 @@ systemctl disable puremyhad   # Pacemaker starts it, not systemd
 
 ```bash
 # On ha1 and ha2:
-install -m 755 pacemaker/ocf/puremyha \
+install -m 755 pacemaker-sample/ocf/puremyha \
     /usr/lib/ocf/resource.d/puremyha/puremyhad
 ```
 
@@ -213,7 +213,7 @@ pcs resource create puremyha-vip IPaddr2 \
 pcs resource create puremyhad ocf:puremyha:puremyhad \
     config=/etc/puremyha/config.yaml \
     socket=/run/puremyhad.sock \
-    op start timeout=30s op stop timeout=30s \
+    op start timeout=30s op stop timeout=60s \
     op monitor interval=15s timeout=15s
 
 # VIP always colocated with puremyhad; puremyhad starts first
@@ -221,7 +221,7 @@ pcs constraint colocation add puremyha-vip with puremyhad INFINITY
 pcs constraint order puremyhad then puremyha-vip
 ```
 
-See [`pacemaker/setup.sh`](pacemaker/setup.sh) for a fully annotated reference script.
+See [`pacemaker-sample/setup.sh`](pacemaker-sample/setup.sh) for a fully annotated reference script.
 
 #### Verification
 

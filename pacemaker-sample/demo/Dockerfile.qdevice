@@ -1,0 +1,16 @@
+FROM debian:bookworm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    corosync-qnetd \
+    pcs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create hacluster user/group (normally provided by pacemaker-common,
+# but not installed here with --no-install-recommends).
+RUN groupadd -r haclient && useradd -r -g haclient hacluster
+RUN echo "hacluster:hacluster" | chpasswd
+
+COPY demo/scripts/qdevice-entrypoint.sh /entrypoint.sh
+RUN chmod 755 /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]

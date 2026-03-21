@@ -72,8 +72,8 @@ systemctl disable puremyhad
 
 # --- SECTION 5: Install the OCF Resource Agent ---
 # Run on ha1 AND ha2.
-# The OCF RA is in pacemaker/ocf/puremyha in this repository.
-install -m 755 /path/to/pacemaker/ocf/puremyha \
+# The OCF RA is in pacemaker-sample/ocf/puremyha in this repository.
+install -m 755 /path/to/pacemaker-sample/ocf/puremyha \
     /usr/lib/ocf/resource.d/puremyha/puremyhad
 
 
