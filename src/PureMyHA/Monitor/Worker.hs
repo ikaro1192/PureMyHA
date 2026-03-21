@@ -154,7 +154,7 @@ monitorNode nid = do
 logHealthChange :: NodeId -> Maybe NodeState -> NodeState -> App ()
 logHealthChange nid mOld new = do
   clusterName <- getClusterName
-  logger <- asks envLogger
+  logger <- asks envLogger >>= liftIO . readTVarIO
   liftIO $
     if nsPaused new
       then pure ()
@@ -229,8 +229,9 @@ recomputeClusterHealth = do
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           _ -> pure ()
       -- Log all health transitions for observability
-      liftIO $ when transitioned $
-        logInfo (envLogger env) $ "[" <> ccName cc <> "] Cluster health: "
+      liftIO $ when transitioned $ do
+        logger <- readTVarIO (envLogger env)
+        logInfo logger $ "[" <> ccName cc <> "] Cluster health: "
           <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
       liftIO $ atomically $ updateClusterTopology tvar topo'
       -- Trigger auto-failover when DeadSource (not just on transition, so resume-failover works)

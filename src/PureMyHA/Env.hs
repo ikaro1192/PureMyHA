@@ -30,7 +30,7 @@ data ClusterEnv = ClusterEnv
   , envMonitoring  :: TVar MonitoringConfig
   , envHooks       :: TVar (Maybe HooksConfig)
   , envLock        :: FailoverLock
-  , envLogger      :: Logger
+  , envLogger      :: TVar Logger
   }
 
 type App a = ReaderT ClusterEnv IO a
@@ -55,6 +55,6 @@ getMonPassword :: MonadReader ClusterEnv m => m Text
 getMonPassword = asks (cpPassword . envPasswords)
 
 appLogInfo, appLogWarn, appLogError :: (MonadReader ClusterEnv m, MonadIO m) => Text -> m ()
-appLogInfo  msg = asks envLogger >>= \l -> liftIO (logInfo l msg)
-appLogWarn  msg = asks envLogger >>= \l -> liftIO (logWarn l msg)
-appLogError msg = asks envLogger >>= \l -> liftIO (logError l msg)
+appLogInfo  msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logInfo l msg)
+appLogWarn  msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logWarn l msg)
+appLogError msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logError l msg)

@@ -151,7 +151,7 @@ promoteCandidate nid waitTimeout = do
   user <- getMySQLUser
   password <- getMonPassword
   clusterName <- getClusterName
-  logger <- asks envLogger
+  logger <- asks envLogger >>= liftIO . readTVarIO
   let ci = makeConnectInfo nid user password
   liftIO $ do
     result <- withNodeConn ci $ \conn -> do

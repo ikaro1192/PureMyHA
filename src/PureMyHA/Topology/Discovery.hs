@@ -6,6 +6,7 @@ module PureMyHA.Topology.Discovery
   , nextDiscoveryTargets
   ) where
 
+import Control.Concurrent.STM (readTVarIO)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -30,7 +31,7 @@ discoverTopology = do
   cc       <- asks envCluster
   user     <- getMySQLUser
   password <- getMonPassword
-  logger   <- asks envLogger
+  logger   <- asks envLogger >>= liftIO . readTVarIO
   let seedNodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
   nodeStates <- liftIO $ discoverAll user password (Set.fromList seedNodes) Set.empty Map.empty logger
   pure (buildClusterTopology (ccName cc) nodeStates)
