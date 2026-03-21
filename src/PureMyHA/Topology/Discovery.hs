@@ -17,7 +17,7 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..))
 import PureMyHA.Env (App, envCluster, envLogger, getMySQLUser, getMonPassword)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
