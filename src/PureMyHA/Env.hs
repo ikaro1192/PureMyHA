@@ -13,8 +13,8 @@ module PureMyHA.Env
   ) where
 
 import Control.Concurrent.STM (TVar, readTVarIO)
-import Control.Monad.Reader (ReaderT, asks, runReaderT)
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Reader (MonadReader, ReaderT, asks, runReaderT)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Text (Text)
 import PureMyHA.Config
 import PureMyHA.Logger (Logger, logInfo, logWarn, logError)
@@ -39,22 +39,22 @@ runApp :: ClusterEnv -> App a -> IO a
 runApp = flip runReaderT
 
 -- Helpers
-getMonitoringConfig :: App MonitoringConfig
+getMonitoringConfig :: (MonadReader ClusterEnv m, MonadIO m) => m MonitoringConfig
 getMonitoringConfig = asks envMonitoring >>= liftIO . readTVarIO
 
-getHooksConfig :: App (Maybe HooksConfig)
+getHooksConfig :: (MonadReader ClusterEnv m, MonadIO m) => m (Maybe HooksConfig)
 getHooksConfig = asks envHooks >>= liftIO . readTVarIO
 
-getClusterName :: App ClusterName
+getClusterName :: MonadReader ClusterEnv m => m ClusterName
 getClusterName = asks (ccName . envCluster)
 
-getMySQLUser :: App Text
+getMySQLUser :: MonadReader ClusterEnv m => m Text
 getMySQLUser = asks (credUser . ccCredentials . envCluster)
 
-getMonPassword :: App Text
+getMonPassword :: MonadReader ClusterEnv m => m Text
 getMonPassword = asks (cpPassword . envPasswords)
 
-appLogInfo, appLogWarn, appLogError :: Text -> App ()
+appLogInfo, appLogWarn, appLogError :: (MonadReader ClusterEnv m, MonadIO m) => Text -> m ()
 appLogInfo  msg = asks envLogger >>= \l -> liftIO (logInfo l msg)
 appLogWarn  msg = asks envLogger >>= \l -> liftIO (logWarn l msg)
 appLogError msg = asks envLogger >>= \l -> liftIO (logError l msg)
