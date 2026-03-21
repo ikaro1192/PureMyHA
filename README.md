@@ -21,7 +21,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 
 ## Requirements
 
-- **MySQL**: 8.4+ with GTID enabled (`gtid_mode=ON`, `enforce_gtid_consistency=ON`)
+- **MySQL**: 8.4+ with GTID enabled (`gtid_mode=ON`, `enforce_gtid_consistency=ON`) and `caching_sha2_password` authentication (default in MySQL 8.4). `mysql_native_password` is not supported.
 - **OS**: Linux
 - **HA for PureMyHA itself**: Pacemaker + QDevice (recommended)
 
@@ -335,7 +335,7 @@ When `DeadSource` is detected, the daemon automatically:
 
 | Purpose | Library |
 |---------|---------|
-| MySQL connectivity | `mysql-haskell` (pure Haskell, no C library dependency) |
+| MySQL connectivity | `mysql-haskell` (pure Haskell, no C library dependency) + custom `caching_sha2_password` auth |
 | Configuration | `yaml` + `optparse-applicative` |
 | Concurrency | `async` + `STM` (each node monitored in an independent thread) |
 | Logging | `katip` (structured logging with JSON output) |
