@@ -4,6 +4,22 @@ A simple, pure-Haskell High Availability tool for MySQL 8.4 replication topologi
 
 Inspired by the design philosophy of Orchestrator, PureMyHA provides topology discovery, failure detection, and automatic failover — with no C library dependencies.
 
+## Philosophy
+
+- **Pure Haskell, no C dependencies** — PureMyHA is built entirely on `mysql-haskell`, a pure-Haskell MySQL client. No libmysqlclient, no CGo, no FFI — just a single statically-linked binary that runs anywhere.
+
+- **Correctness before convenience** — Every failover decision is GTID-aware: errant GTIDs are detected and repaired, relay log apply is awaited before promotion, and split-brain scenarios are identified before acting. A failover that corrupts data is worse than no failover.
+
+- **Simple by deliberate omission** — PureMyHA targets MySQL 8.4+ exclusively and does not support legacy syntax, older authentication plugins, or non-GTID topologies. Saying no to compatibility layers keeps the code small, auditable, and correct.
+
+- **Do one thing well** — PureMyHA is a focused HA tool, not a topology manager, query router, or schema migration framework. It detects failure, promotes a replica, and gets out of the way.
+
+- **Delegate what you do not own** — PureMyHA does not implement leader election for itself. Its own high availability is delegated entirely to Pacemaker, which is already purpose-built for that problem.
+
+- **Stateless by design** — The daemon holds no durable state. All topology knowledge is derived from MySQL on startup and continuously refreshed at runtime, making recovery from a daemon crash trivially safe.
+
+- **Transparent operation** — Dry-run mode, config hot-reload, and pause/resume controls give operators full visibility and control without requiring a daemon restart.
+
 ## Features
 
 - **Topology Discovery** — Recursively maps replication trees from seed hosts via `SHOW REPLICA STATUS`
