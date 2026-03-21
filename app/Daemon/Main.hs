@@ -1,7 +1,7 @@
 module Main (main) where
 
 import Control.Concurrent.Async (Async, async, waitAnyCancel, race_, cancel)
-import Control.Concurrent.STM   (TMVar, atomically, newTVarIO, newEmptyTMVarIO,
+import Control.Concurrent.STM   (TMVar, TVar, atomically, newTVarIO, newEmptyTMVarIO,
                                   putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
 import Control.Monad (void, forM_)
@@ -14,12 +14,12 @@ import qualified Data.Text as T
 import Options.Applicative
 import System.Exit (exitFailure)
 import System.IO (hPutStrLn, stderr)
-import System.Posix.Signals (installHandler, sigTERM, sigINT, sigHUP, Handler(..))
+import System.Posix.Signals (installHandler, sigTERM, sigINT, sigHUP, sigUSR1, Handler(..))
 
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction)
-import PureMyHA.Logger (Logger, initLogger, logInfo, logWarn, closeLogger)
+import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, logInfo, logWarn)
 import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
@@ -48,20 +48,22 @@ main :: IO ()
 main = do
   opts <- execParser (info (daemonOptions <**> helper)
     (fullDesc <> progDesc "PureMyHA daemon" <> header "puremyhad"))
-  cfg    <- loadAndValidateConfig (optConfigPath opts)
-  logger <- initLogger (lcLogFile (cfgLogging cfg))
+  cfg       <- loadAndValidateConfig (optConfigPath opts)
+  loggerVar <- newTVarIO =<< initLogger (lcLogFile (cfgLogging cfg))
 
   tvar        <- newDaemonState
   shutdownVar <- installShutdownHandlers
 
   clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
-  clusterEnvs      <- mapM (initCluster tvar logger) clusterPasswords
+  clusterEnvs      <- mapM (initCluster tvar loggerVar) clusterPasswords
 
-  installHUPHandler (optConfigPath opts) clusterEnvs logger
+  installHUPHandler (optConfigPath opts) clusterEnvs loggerVar
+  installUSR1Handler (lcLogFile (cfgLogging cfg)) loggerVar
 
   allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar
+  logger <- readTVarIO loggerVar
   logInfo logger "puremyhad started"
-  awaitShutdownAndCleanup logger shutdownVar allWorkers
+  awaitShutdownAndCleanup loggerVar shutdownVar allWorkers
 
 loadAndValidateConfig :: FilePath -> IO Config
 loadAndValidateConfig path = do
@@ -78,9 +80,10 @@ installShutdownHandlers = do
   _ <- installHandler sigINT  h Nothing
   pure shutdownVar
 
-installHUPHandler :: FilePath -> [ClusterEnv] -> Logger -> IO ()
-installHUPHandler configPath clusterEnvs logger = do
+installHUPHandler :: FilePath -> [ClusterEnv] -> TVar Logger -> IO ()
+installHUPHandler configPath clusterEnvs loggerVar = do
   _ <- installHandler sigHUP (Catch $ do
+    logger <- readTVarIO loggerVar
     eCfg' <- loadConfig configPath
     case eCfg' of
       Left err   -> logWarn logger $ "SIGHUP: config reload failed: " <> T.pack err
@@ -93,6 +96,15 @@ installHUPHandler configPath clusterEnvs logger = do
               writeTVar (envMonitoring env) (ccMonitoring cc)
               writeTVar (envHooks env)      (ccHooks cc)
         logInfo logger "SIGHUP: config reloaded") Nothing
+  pure ()
+
+installUSR1Handler :: FilePath -> TVar Logger -> IO ()
+installUSR1Handler logFile loggerVar = do
+  _ <- installHandler sigUSR1 (Catch $ do
+    old <- readTVarIO loggerVar
+    new <- reopenLogger logFile old
+    atomically $ writeTVar loggerVar new
+    logInfo new "SIGUSR1: log file reopened") Nothing
   pure ()
 
 startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> IO [Async ()]
@@ -120,21 +132,22 @@ startAllWorkers clusterEnvs socketPath tvar = do
 
   pure $ ipcAsync : monitorWorkers <> refreshWorkers
 
-awaitShutdownAndCleanup :: Logger -> TMVar () -> [Async ()] -> IO ()
-awaitShutdownAndCleanup logger shutdownVar allWorkers = do
+awaitShutdownAndCleanup :: TVar Logger -> TMVar () -> [Async ()] -> IO ()
+awaitShutdownAndCleanup loggerVar shutdownVar allWorkers = do
   race_
     (atomically (takeTMVar shutdownVar))
     (void (waitAnyCancel allWorkers))
+  logger <- readTVarIO loggerVar
   logInfo logger "puremyhad shutting down"
   mapM_ cancel allWorkers
   closeLogger logger
 
 initCluster
   :: TVarDaemonState
-  -> Logger
+  -> TVar Logger
   -> (ClusterConfig, ClusterPasswords)
   -> IO ClusterEnv
-initCluster tvar logger (cc, pws) = do
+initCluster tvar loggerVar (cc, pws) = do
   let initTopo = buildInitialTopology cc
   atomically $ updateClusterTopology tvar initTopo
   lock     <- newFailoverLock
@@ -149,9 +162,10 @@ initCluster tvar logger (cc, pws) = do
         , envMonitoring  = mcVar
         , envHooks       = hooksVar
         , envLock        = lock
-        , envLogger      = logger
+        , envLogger      = loggerVar
         }
   topo <- runApp env discoverTopology
+  logger <- readTVarIO loggerVar
   logInfo logger $ "[" <> ccName cc <> "] Initial discovery found "
     <> T.pack (show (Map.size (ctNodes topo))) <> " node(s)"
   atomically $ updateClusterTopology tvar topo

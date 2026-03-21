@@ -77,7 +77,6 @@ doSwitchover
   -> App (Either Text ())
 doSwitchover candidateId oldSourceId oldSourceHost topo = do
   cc   <- asks envCluster
-  pws  <- asks envPasswords
   user <- getMySQLUser
   password <- getMonPassword
   -- Step 1: Set old source to read_only (abort on failure to prevent split-brain)

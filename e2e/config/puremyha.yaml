@@ -19,6 +19,9 @@ clusters:
       pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
       post_switchover: /etc/puremyha/hooks/post_switchover.sh
 
+logging:
+  log_file: /var/log/puremyha.log
+
 global:
   monitoring:
     interval: 1s

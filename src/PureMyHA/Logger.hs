@@ -2,6 +2,7 @@ module PureMyHA.Logger
   ( Logger
   , initLogger
   , closeLogger
+  , reopenLogger
   , logInfo
   , logWarn
   , logError
@@ -27,6 +28,11 @@ closeLogger :: Logger -> IO ()
 closeLogger (Logger le) = do
   _ <- closeScribes le
   pure ()
+
+reopenLogger :: FilePath -> Logger -> IO Logger
+reopenLogger logFile old = do
+  closeLogger old
+  initLogger logFile
 
 logAt :: Logger -> Severity -> Text -> IO ()
 logAt (Logger le) sev msg =

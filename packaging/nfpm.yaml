@@ -21,6 +21,10 @@ contents:
     type: config|noreplace
   - src: packaging/puremyhad.service
     dst: /lib/systemd/system/puremyhad.service
+  - src: packaging/puremyhad.logrotate
+    dst: /etc/logrotate.d/puremyhad
+    file_info:
+      mode: 0644
 
 scripts:
   postinstall: packaging/postinstall.sh

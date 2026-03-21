@@ -64,7 +64,8 @@ mkTestEnv tvar cc fc = do
   mcVar    <- newTVarIO (MonitoringConfig 3 5 30 60 300)
   hooksVar <- newTVarIO Nothing
   lock     <- newFailoverLock
-  logger   <- nullLogger
+  logger    <- nullLogger
+  loggerVar <- newTVarIO logger
   pure ClusterEnv
     { envDaemonState = tvar
     , envCluster     = cc
@@ -74,7 +75,7 @@ mkTestEnv tvar cc fc = do
     , envMonitoring  = mcVar
     , envHooks       = hooksVar
     , envLock        = lock
-    , envLogger      = logger
+    , envLogger      = loggerVar
     }
 
 healthySource :: NodeState

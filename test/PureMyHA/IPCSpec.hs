@@ -1,7 +1,6 @@
 module PureMyHA.IPCSpec (spec) where
 
-import Data.Aeson (encode, decode, eitherDecode)
-import Data.Maybe (isJust)
+import Data.Aeson (encode, decode)
 import Test.Hspec
 import PureMyHA.IPC.Protocol
 import PureMyHA.Types

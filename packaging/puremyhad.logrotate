@@ -1,0 +1,12 @@
+/var/log/puremyha.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    create 0640 root root
+    postrotate
+        /bin/kill -USR1 $(pidof puremyhad 2>/dev/null) 2>/dev/null || true
+    endscript
+}
