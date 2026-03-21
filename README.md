@@ -39,7 +39,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 
 - **MySQL**: 8.4+ with GTID enabled (`gtid_mode=ON`, `enforce_gtid_consistency=ON`) and `caching_sha2_password` authentication (default in MySQL 8.4). `mysql_native_password` is not supported.
 - **OS**: Linux
-- **HA for PureMyHA itself**: Pacemaker + QDevice (recommended)
+- **HA for PureMyHA itself**: Pacemaker + QDevice (recommended) or VIP-watching cron / systemd.timer (simple)
 
 ### MySQL Users
 
@@ -90,7 +90,11 @@ graph LR
 
 Daemon and CLI communicate over a Unix domain socket (`/run/puremyhad.sock`) using newline-delimited JSON.
 
-### Daemon HA with Pacemaker
+### Daemon HA
+
+PureMyHA does **not** implement leader election itself. Two approaches are available:
+
+#### Pacemaker (recommended)
 
 ```mermaid
 graph LR
@@ -99,7 +103,45 @@ graph LR
     Pacemaker --- QDevice["QDevice\n(quorum arbiter)"]
 ```
 
-PureMyHA does **not** implement leader election itself — it delegates entirely to Pacemaker. Daemon state is held in memory only and rebuilt from MySQL on restart.
+Delegates leader election entirely to Pacemaker + QDevice. Daemon state is held in memory only and rebuilt from MySQL on restart.
+
+#### VIP-watching cron / systemd.timer (simple)
+
+A simpler alternative that requires only a shared VIP (e.g. managed by keepalived).
+Each node periodically checks whether the VIP is assigned to a local interface, and starts or stops `puremyhad` accordingly.
+
+**cron:**
+
+```cron
+* * * * * ip addr show | grep -q <VIP> && systemctl start puremyhad || systemctl stop puremyhad
+```
+
+**systemd.timer** (modern alternative to cron):
+
+```ini
+# /etc/systemd/system/puremyhad-vip-watch.timer
+[Unit]
+Description=PureMyHA VIP watch timer
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+```
+
+```ini
+# /etc/systemd/system/puremyhad-vip-watch.service
+[Unit]
+Description=PureMyHA VIP watch
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'ip addr show | grep -q <VIP> && systemctl start puremyhad || systemctl stop puremyhad'
+```
+
+This avoids the complexity of Corosync/Pacemaker/QDevice — suitable when a VIP is already managed by another mechanism such as keepalived. Daemon state is held in memory only and rebuilt from MySQL on restart.
 
 Sample configuration files and a Docker Compose demo are in [`pacemaker-sample/`](pacemaker-sample/).
 
