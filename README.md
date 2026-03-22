@@ -37,6 +37,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **HTTP Health Check Endpoint** — Optional read-only HTTP listener for load balancer probes and Kubernetes liveness/readiness checks (`GET /health`, `/cluster/:name/status`, `/cluster/:name/topology`)
 - **Prometheus Metrics Endpoint** — `GET /metrics` exposes cluster health, replication lag, consecutive failures, and node role in Prometheus text exposition format for Grafana and other monitoring stacks
 - **In-Memory Event History** — Maintains a bounded ring buffer of recent events (health changes, failovers, switchovers, config reloads); queryable instantly via `puremyha events` without log parsing
+- **Runtime Log Level Control** — Change log verbosity without restarting the daemon via `puremyha set-log-level debug|info|warn|error` (IPC override takes precedence until the next SIGHUP, which resets to the configured `log_level`)
 
 ## Requirements
 
@@ -220,9 +221,10 @@ http:                                  # Optional HTTP server (disabled by defau
 logging:
   log_file: /var/log/puremyha.log  # Optional; defaults to /var/log/puremyha.log
   max_events: 1000                  # Optional; in-memory event buffer size (default: 1000)
+  log_level: info                   # Optional; debug | info | warn | error (default: info)
 ```
 
-`monitoring`, `failure_detection`, `failover`, and `hooks` can be set per-cluster or defined as defaults in the `global` section. Per-cluster settings take precedence over `global` on a section-by-section basis. `monitoring`, `failure_detection`, and `failover` are required in at least one of the two. The `logging` section is optional and global (defaults to `/var/log/puremyha.log` and `max_events: 1000` when omitted).
+`monitoring`, `failure_detection`, `failover`, and `hooks` can be set per-cluster or defined as defaults in the `global` section. Per-cluster settings take precedence over `global` on a section-by-section basis. `monitoring`, `failure_detection`, and `failover` are required in at least one of the two. The `logging` section is optional and global (defaults to `/var/log/puremyha.log`, `max_events: 1000`, and `log_level: info` when omitted).
 
 See `config/config.yaml.example` for a full annotated example.
 
@@ -239,10 +241,11 @@ puremyhad --config /etc/puremyha/config.yaml
 | Signal | Effect |
 |--------|--------|
 | `SIGTERM` / `SIGINT` | Graceful shutdown — stops all workers and removes the socket file |
-| `SIGHUP` | Hot-reload `monitoring`, `hooks`, and `http` config without restart |
+| `SIGHUP` | Hot-reload `monitoring`, `hooks`, `http`, and `log_level` config without restart |
+| `SIGUSR1` | Reopen the log file (for log rotation tools such as logrotate) |
 
 ```bash
-# Reload config (e.g. after editing intervals or hooks)
+# Reload config (e.g. after editing intervals, hooks, or log_level)
 systemctl reload puremyhad        # via systemd (preferred)
 kill -HUP $(pidof puremyhad)      # direct signal (non-systemd)
 
@@ -303,6 +306,10 @@ puremyha resume-failover [--cluster=<name>]
 # Show recent event history (health changes, failovers, switchovers, config reloads)
 # Events are newest-first; buffer is cleared on daemon restart
 puremyha events [--limit=N] [--cluster=<name>]
+
+# Change daemon log level at runtime (no restart required)
+# IPC override takes precedence until the next SIGHUP
+puremyha set-log-level debug|info|warn|error
 
 # JSON output (for scripting / Prometheus exporters)
 puremyha --json status
@@ -373,6 +380,27 @@ backend mysql_source
 ## Logging
 
 PureMyHA writes structured, timestamped logs via [katip](https://hackage.haskell.org/package/katip). The log file path is configured with `logging.log_file` (default: `/var/log/puremyha.log`).
+
+### Log level
+
+The minimum log level is set via `logging.log_level` in the config (default: `info`). Valid values: `debug`, `info`, `warn`, `error`.
+
+```yaml
+logging:
+  log_level: info   # debug | info | warn | error
+```
+
+The level can also be changed at runtime without restarting the daemon:
+
+```bash
+# Increase verbosity for incident investigation
+puremyha set-log-level debug
+
+# Restore to normal
+puremyha set-log-level info
+```
+
+The IPC override takes precedence until the next SIGHUP, which resets the level to whatever is in the config file.
 
 ### Logged events
 
