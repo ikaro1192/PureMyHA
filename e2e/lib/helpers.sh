@@ -114,6 +114,20 @@ ipc_fix_errant_gtid() {
   ipc_request '{"type":"fix-errant-gtid"}'
 }
 
+# ---------------------------------------------------------------------------
+# HTTP helpers (communicate with puremyhad via HTTP)
+# ---------------------------------------------------------------------------
+
+http_get() {
+  local path="$1"
+  $COMPOSE exec -T puremyhad curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8080${path}"
+}
+
+http_get_body() {
+  local path="$1"
+  $COMPOSE exec -T puremyhad curl -s "http://127.0.0.1:8080${path}"
+}
+
 # Extract fields from IPC status response
 get_health() {
   ipc_status | jq -r '.data[0].health // empty' 2>/dev/null || echo ""

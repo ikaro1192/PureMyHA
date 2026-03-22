@@ -34,6 +34,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Topology Auto-Discovery** — Automatically detects and begins monitoring new nodes at a configurable interval
 - **Dry-run Mode** — Run `switchover --dry-run` to preview the candidate selection without executing any SQL
 - **Pause/Resume Auto-Failover** — Temporarily disable automatic failover for maintenance windows
+- **HTTP Health Check Endpoint** — Optional read-only HTTP listener for load balancer probes and Kubernetes liveness/readiness checks (`GET /health`, `/cluster/:name/status`, `/cluster/:name/topology`)
 
 ## Requirements
 
@@ -79,6 +80,7 @@ GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
 ```mermaid
 graph LR
     CLI["puremyha (CLI)"] <-->|"Unix socket\n/run/puremyhad.sock"| Daemon["puremyhad (daemon)"]
+    LB["Load balancer / K8s probe"] -->|"HTTP :8080\n(read-only)"| Daemon
     Daemon -->|"per-node threads (STM)"| db1["db1 (source)"]
     db1 -->|replication| db2["db2 (replica)"]
 ```
@@ -89,6 +91,7 @@ graph LR
 | `puremyha`  | CLI tool. Status display and manual operations |
 
 Daemon and CLI communicate over a Unix domain socket (`/run/puremyhad.sock`) using newline-delimited JSON.
+An optional HTTP listener (disabled by default) exposes read-only health check endpoints for external probes.
 
 ### Daemon HA
 
@@ -202,6 +205,11 @@ global:
     on_failure_detection: /etc/puremyha/hooks/on_failure_detection.sh    # Optional
     post_unsuccessful_failover: /etc/puremyha/hooks/post_unsuccessful_failover.sh  # Optional
 
+http:                                  # Optional HTTP health check server (disabled by default)
+  enabled: false
+  listen_address: "127.0.0.1"        # Use "0.0.0.0" to listen on all interfaces
+  port: 8080
+
 logging:
   log_file: /var/log/puremyha.log  # Optional; defaults to /var/log/puremyha.log
 ```
@@ -223,7 +231,7 @@ puremyhad --config /etc/puremyha/config.yaml
 | Signal | Effect |
 |--------|--------|
 | `SIGTERM` / `SIGINT` | Graceful shutdown — stops all workers and removes the socket file |
-| `SIGHUP` | Hot-reload `monitoring` and `hooks` config per cluster without restart |
+| `SIGHUP` | Hot-reload `monitoring`, `hooks`, and `http` config without restart |
 
 ```bash
 # Reload config (e.g. after editing intervals or hooks)
@@ -295,6 +303,60 @@ puremyha -j status | jq '.[0].health'
 puremyha -j topology | jq '.[0].nodes[].host'
 ```
 
+## HTTP Health Check Endpoints
+
+When `http.enabled: true` is set in the config, `puremyhad` exposes a lightweight read-only HTTP server for external health checks. All endpoints are `GET`-only; write operations remain Unix-socket-only.
+
+| Endpoint | Success | Failure | Use case |
+|----------|---------|---------|----------|
+| `GET /health` | `200 {"status":"ok"}` | `503 {"status":"degraded"}` | Kubernetes liveness probe |
+| `GET /cluster/:name/status` | `200 ClusterStatus JSON` | `404` if cluster not found | Readiness probe / LB routing |
+| `GET /cluster/:name/topology` | `200 ClusterTopologyView JSON` | `404` if cluster not found | Monitoring dashboards |
+
+`/health` returns `200` if at least one cluster is in `Healthy` state, `503` otherwise (e.g. dead source, split-brain, all replicas unreachable).
+
+### Examples
+
+```bash
+# Liveness probe
+curl http://127.0.0.1:8080/health
+# → {"status":"ok"}  (200) or {"status":"degraded"}  (503)
+
+# Cluster status — same JSON shape as `puremyha -j status`
+curl http://127.0.0.1:8080/cluster/main/status | jq .
+# → {"clusterName":"main","health":"Healthy","sourceHost":"db1","nodeCount":2,...}
+
+# Topology — same JSON shape as `puremyha -j topology`
+curl http://127.0.0.1:8080/cluster/main/topology | jq '.nodes[].host'
+```
+
+### Kubernetes probe example
+
+```yaml
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 5
+
+readinessProbe:
+  httpGet:
+    path: /cluster/main/status
+    port: 8080
+  initialDelaySeconds: 5
+  periodSeconds: 3
+```
+
+### HAProxy backend check example
+
+```
+backend mysql_source
+    option httpchk GET /cluster/main/status
+    server db1 db1:3306 check port 8080
+    server db2 db2:3306 check port 8080
+```
+
 ## Logging
 
 PureMyHA writes structured, timestamped logs via [katip](https://hackage.haskell.org/package/katip). The log file path is configured with `logging.log_file` (default: `/var/log/puremyha.log`).
@@ -356,6 +418,7 @@ When `DeadSource` is detected, the daemon automatically:
 | Concurrency | `async` + `STM` (each node monitored in an independent thread) |
 | Logging | `katip` (structured logging with JSON output) |
 | IPC | Unix domain socket, newline-delimited JSON |
+| HTTP health checks | `warp` + `wai` (pure Haskell, optional read-only listener) |
 
 ## Development
 

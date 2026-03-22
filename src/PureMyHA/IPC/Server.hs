@@ -2,6 +2,8 @@ module PureMyHA.IPC.Server
   ( startIPCServer
   , defaultSocketPath
   , DiscoveryAction
+  , toClusterStatus
+  , toClusterTopologyView
   ) where
 
 import Control.Concurrent.Async (async)

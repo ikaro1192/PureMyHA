@@ -57,6 +57,7 @@ library
     PureMyHA.IPC.Protocol
     PureMyHA.IPC.Server
     PureMyHA.IPC.Client
+    PureMyHA.HTTP.Server
   build-depends:
     mysql-haskell    >= 0.8.4,
     io-streams       >= 1.5,
@@ -70,12 +71,16 @@ library
     memory           >= 0.14,
     pem              >= 0.2,
     asn1-encoding    >= 0.9,
-    asn1-types       >= 0.3
+    asn1-types       >= 0.3,
+    warp             >= 3.3,
+    wai              >= 3.2,
+    http-types       >= 0.12
 
 executable puremyhad
   import:          common-options
   hs-source-dirs:  app/Daemon
   main-is:         Main.hs
+  ghc-options:     -threaded -rtsopts -with-rtsopts=-N
   build-depends:
     puremyha,
     optparse-applicative >= 0.16,
