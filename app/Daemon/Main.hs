@@ -22,7 +22,7 @@ import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Event (EventBuffer, newEventBuffer, recordEvent)
 import PureMyHA.HTTP.Server (startHTTPServer)
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction)
-import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, logInfo, logWarn)
+import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, setLogLevel, logInfo, logWarn)
 import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
@@ -52,10 +52,8 @@ main = do
   opts <- execParser (info (daemonOptions <**> helper)
     (fullDesc <> progDesc "PureMyHA daemon" <> header "puremyhad"))
   cfg       <- loadAndValidateConfig (optConfigPath opts)
-  let logCfg  = cfgLogging cfg
-      initLvl = lcLogLevel logCfg
-  levelVar  <- newTVarIO initLvl
-  loggerVar <- newTVarIO =<< initLogger (lcLogFile logCfg) initLvl
+  let logCfg = cfgLogging cfg
+  loggerVar <- newTVarIO =<< initLogger (lcLogFile logCfg) (lcLogLevel logCfg)
   eventBuf  <- newEventBuffer (lcMaxEvents logCfg)
 
   tvar        <- newDaemonState
@@ -65,10 +63,10 @@ main = do
   clusterEnvs      <- mapM (initCluster tvar loggerVar eventBuf) clusterPasswords
 
   httpAsyncVar <- newTVarIO Nothing
-  installHUPHandler (optConfigPath opts) clusterEnvs loggerVar httpAsyncVar tvar eventBuf levelVar
-  installUSR1Handler (lcLogFile (cfgLogging cfg)) loggerVar levelVar
+  installHUPHandler (optConfigPath opts) clusterEnvs loggerVar httpAsyncVar tvar eventBuf
+  installUSR1Handler (lcLogFile (cfgLogging cfg)) loggerVar
 
-  allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar eventBuf loggerVar (lcLogFile (cfgLogging cfg)) levelVar
+  allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar eventBuf loggerVar
   when (hcEnabled (cfgHttp cfg)) $ do
     a <- async (startHTTPServer (cfgHttp cfg) tvar)
     atomically $ writeTVar httpAsyncVar (Just a)
@@ -92,8 +90,8 @@ installShutdownHandlers = do
   _ <- installHandler sigINT  h Nothing
   pure shutdownVar
 
-installHUPHandler :: FilePath -> [ClusterEnv] -> TVar Logger -> TVar (Maybe (Async ())) -> TVarDaemonState -> EventBuffer -> TVar LogLevel -> IO ()
-installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar eventBuf levelVar = do
+installHUPHandler :: FilePath -> [ClusterEnv] -> TVar Logger -> TVar (Maybe (Async ())) -> TVarDaemonState -> EventBuffer -> IO ()
+installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar eventBuf = do
   _ <- installHandler sigHUP (Catch $ do
     logger <- readTVarIO loggerVar
     eCfg' <- loadConfig configPath
@@ -114,30 +112,25 @@ installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar eventBuf le
             a <- async (startHTTPServer (cfgHttp cfg') tvar)
             atomically $ writeTVar httpAsyncVar (Just a)
           else atomically $ writeTVar httpAsyncVar Nothing
-        let newLevel = lcLogLevel (cfgLogging cfg')
-        new <- reopenLogger (lcLogFile (cfgLogging cfg')) newLevel logger
-        atomically $ do
-          writeTVar loggerVar new
-          writeTVar levelVar newLevel
-        logInfo new "SIGHUP: config reloaded"
+        setLogLevel logger (lcLogLevel (cfgLogging cfg'))
+        logInfo logger "SIGHUP: config reloaded"
         now <- getCurrentTime
         forM_ clusterEnvs $ \env ->
           recordEvent eventBuf (Event now (ccName (envCluster env)) EvConfigReloaded Nothing "Config reloaded via SIGHUP")
         ) Nothing
   pure ()
 
-installUSR1Handler :: FilePath -> TVar Logger -> TVar LogLevel -> IO ()
-installUSR1Handler logFile loggerVar levelVar = do
+installUSR1Handler :: FilePath -> TVar Logger -> IO ()
+installUSR1Handler logFile loggerVar = do
   _ <- installHandler sigUSR1 (Catch $ do
     old <- readTVarIO loggerVar
-    lvl <- readTVarIO levelVar
-    new <- reopenLogger logFile lvl old
+    new <- reopenLogger logFile old
     atomically $ writeTVar loggerVar new
     logInfo new "SIGUSR1: log file reopened") Nothing
   pure ()
 
-startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> EventBuffer -> TVar Logger -> FilePath -> TVar LogLevel -> IO [Async ()]
-startAllWorkers clusterEnvs socketPath tvar eventBuf loggerVar logFile levelVar = do
+startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> EventBuffer -> TVar Logger -> IO [Async ()]
+startAllWorkers clusterEnvs socketPath tvar eventBuf loggerVar = do
   let clusterMap = Map.fromList
         [ (ccName (envCluster env), env)
         | env <- clusterEnvs
@@ -157,7 +150,7 @@ startAllWorkers clusterEnvs socketPath tvar eventBuf loggerVar logFile levelVar 
         | (env, reg) <- zip clusterEnvs registries
         ]
 
-  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap eventBuf socketPath loggerVar logFile levelVar
+  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap eventBuf socketPath loggerVar
 
   pure $ ipcAsync : monitorWorkers <> refreshWorkers
 
