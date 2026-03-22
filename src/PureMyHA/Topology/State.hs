@@ -8,6 +8,7 @@ module PureMyHA.Topology.State
   , setRecoveryBlock
   , clearRecoveryBlock
   , recordFailover
+  , updateClusterHealthFields
   , setClusterPause
   , clearClusterPause
   , TVarDaemonState
@@ -103,6 +104,17 @@ clearRecoveryBlock :: TVarDaemonState -> ClusterName -> STM ()
 clearRecoveryBlock tvar clusterName =
   withClusterTVar tvar clusterName $ \ctVar ->
     modifyTVar' ctVar $ \ct -> ct { ctRecoveryBlockedUntil = Nothing }
+
+-- | Update only cluster-level health fields without touching ctNodes.
+-- This prevents stale snapshots from overwriting concurrent worker node updates.
+updateClusterHealthFields :: TVarDaemonState -> ClusterName -> NodeHealth -> Maybe NodeId -> Bool -> STM ()
+updateClusterHealthFields tvar clusterName health sourceNodeId observedHealthy =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct ->
+      ct { ctHealth          = health
+         , ctSourceNodeId    = sourceNodeId
+         , ctObservedHealthy = ctObservedHealthy ct || observedHealthy
+         }
 
 recordFailover :: TVarDaemonState -> ClusterName -> UTCTime -> STM ()
 recordFailover tvar clusterName now =

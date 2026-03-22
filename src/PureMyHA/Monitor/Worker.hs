@@ -246,11 +246,6 @@ recomputeClusterHealth = do
           newSrcId  = identifySource (Map.elems (ctNodes topo))
       let transitioned     = ctHealth topo /= newHealth
           observedHealthy  = ctObservedHealthy topo || newHealth == Healthy
-          topo' = topo
-            { ctHealth          = newHealth
-            , ctSourceNodeId    = newSrcId
-            , ctObservedHealthy = observedHealthy
-            }
       -- Fire on_failure_detection hook on transition to a dead state
       liftIO $ when transitioned $
         case newHealth of
@@ -273,7 +268,7 @@ recomputeClusterHealth = do
             <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
         recordAppEvent EvClusterHealth Nothing $
           T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
-      liftIO $ atomically $ updateClusterTopology tvar topo'
+      liftIO $ atomically $ updateClusterHealthFields tvar (ccName cc) newHealth newSrcId observedHealthy
       -- Trigger auto-failover when DeadSource (not just on transition, so resume-failover works)
       -- The failover lock prevents concurrent execution; anti-flap block prevents repeated failovers
       liftIO $ when (newHealth == DeadSource && fcAutoFailover fc && observedHealthy) $ do
