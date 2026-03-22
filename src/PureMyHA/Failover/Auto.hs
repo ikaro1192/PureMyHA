@@ -51,7 +51,7 @@ checkAutoFailoverPreconditions now topo minReplicas = do
   case ctHealth topo of
     DeadSource -> Right ()
     h          -> Left $ "Cluster not in DeadSource state: " <> T.pack (show h)
-  let replicas = filter (not . nsIsSource) (Map.elems (ctNodes topo))
+  let replicas = filter (not . isSource) (Map.elems (ctNodes topo))
   if length replicas < minReplicas
     then Left $ "Not enough replicas for failover (need " <> T.pack (show minReplicas) <> ")"
     else Right ()
@@ -135,7 +135,7 @@ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
 reconnectOtherReplicas :: NodeId -> ClusterTopology -> App ()
 reconnectOtherReplicas candidateId topo = do
   let otherReplicas = filter
-        (\ns -> nsNodeId ns /= candidateId && not (nsIsSource ns))
+        (\ns -> nsNodeId ns /= candidateId && not (isSource ns))
         (Map.elems (ctNodes topo))
   mapM_ (reconnectReplica candidateId) otherReplicas
 
@@ -144,11 +144,11 @@ commitFailoverState topo now = do
   tvar <- asks envDaemonState
   cc   <- asks envCluster
   fdc  <- asks envDetection
-  let oldSources = filter nsIsSource (Map.elems (ctNodes topo))
+  let oldSources = filter isSource (Map.elems (ctNodes topo))
   liftIO $ atomically $ do
     recordFailover tvar (ccName cc) now
     setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
-    mapM_ (\ns -> updateNodeState tvar (ccName cc) (ns { nsIsSource = False })) oldSources
+    mapM_ (\ns -> updateNodeState tvar (ccName cc) (ns { nsRole = Replica })) oldSources
 
 promoteCandidate :: NodeId -> Int -> App (Either Text ())
 promoteCandidate nid waitTimeout = do

@@ -52,7 +52,7 @@ parseReplicaStatus kvs =
     { rsSourceHost          = look "Source_Host"
     , rsSourcePort          = intVal (raw "Source_Port")
     , rsReplicaIORunning    = parseIORunning (look "Replica_IO_Running")
-    , rsReplicaSQLRunning   = look "Replica_SQL_Running" == "Yes"
+    , rsReplicaSQLRunning   = if look "Replica_SQL_Running" == "Yes" then SQLRunning else SQLStopped
     , rsSecondsBehindSource = maybeIntVal (raw "Seconds_Behind_Source")
     , rsExecutedGtidSet     = look "Executed_Gtid_Set"
     , rsRetrievedGtidSet    = look "Retrieved_Gtid_Set"

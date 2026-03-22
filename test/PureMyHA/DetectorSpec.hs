@@ -17,7 +17,7 @@ spec = do
 
     it "returns DeadSourceAndAllReplicas when all nodes are unreachable" $ do
       let allDead = Map.fromList
-            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })
+            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
             , (NodeId "db2" 3306, unreachableNode (NodeId "db2" 3306))
             ]
       detectClusterHealth allDead `shouldBe` DeadSourceAndAllReplicas
@@ -34,12 +34,12 @@ spec = do
 
     it "returns DeadSource when source is unreachable and replica IO is Connecting" $ do
       let cluster = Map.fromList
-            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })
+            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
             , (NodeId "db2" 3306, NodeState
                 { nsNodeId               = NodeId "db2" 3306
                 , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IOConnecting "")
                 , nsGtidExecuted         = ""
-                , nsIsSource             = False
+                , nsRole                 = Replica
                 , nsHealth               = Healthy
                 , nsLastSeen             = Just fixedTime
                 , nsConnectError         = Nothing
@@ -52,12 +52,12 @@ spec = do
 
     it "returns UnreachableSource when source is unreachable but replica IO is still Yes" $ do
       let cluster = Map.fromList
-            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })
+            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
             , (NodeId "db2" 3306, NodeState
                 { nsNodeId               = NodeId "db2" 3306
                 , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IOYes "")
                 , nsGtidExecuted         = ""
-                , nsIsSource             = False
+                , nsRole                 = Replica
                 , nsHealth               = Healthy
                 , nsLastSeen             = Just fixedTime
                 , nsConnectError         = Nothing
@@ -70,7 +70,7 @@ spec = do
 
     it "returns NeedsAttention 'No source node detected' when no node is marked as source" $ do
       let cluster = Map.fromList
-            [ (NodeId "db1" 3306, healthySource { nsIsSource = False })
+            [ (NodeId "db1" 3306, healthySource { nsRole = Replica })
             ]
       detectClusterHealth cluster `shouldBe` NeedsAttention "No source node detected"
 
@@ -88,17 +88,17 @@ spec = do
 
     it "returns NeedsAttention IO error when replica IO=No with error message" $ do
       let rs = (mkReplicaStatus "db1" 3306 IONo "") { rsLastIOError = "Access denied" }
-          ns = mkNodeState (NodeId "db2" 3306) False (Just rs) Healthy
+          ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
       detectNodeHealth ns `shouldBe` NeedsAttention "IO error: Access denied"
 
     it "returns NeedsAttention 'Replica IO not running' when IO=No with no error" $ do
       let rs = mkReplicaStatus "db1" 3306 IONo ""
-          ns = mkNodeState (NodeId "db2" 3306) False (Just rs) Healthy
+          ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
       detectNodeHealth ns `shouldBe` NeedsAttention "Replica IO not running"
 
     it "returns NeedsAttention SQL error when SQL thread is stopped" $ do
-      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsReplicaSQLRunning = False, rsLastSQLError = "err" }
-          ns = mkNodeState (NodeId "db2" 3306) False (Just rs) Healthy
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsReplicaSQLRunning = SQLStopped, rsLastSQLError = "err" }
+          ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
       detectNodeHealth ns `shouldBe` NeedsAttention "SQL error: err"
 
     it "returns Healthy for a normal replica" $
@@ -114,7 +114,7 @@ spec = do
       detectReplicaHealth rs `shouldBe` NeedsAttention "Replica IO not running"
 
     it "returns NeedsAttention SQL error when SQL thread is stopped" $ do
-      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsReplicaSQLRunning = False, rsLastSQLError = "sql-err" }
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsReplicaSQLRunning = SQLStopped, rsLastSQLError = "sql-err" }
       detectReplicaHealth rs `shouldBe` NeedsAttention "SQL error: sql-err"
 
     it "returns Healthy for a healthy replica status" $ do
@@ -132,14 +132,14 @@ spec = do
       identifySource [healthySource] `shouldBe` Just (NodeId "db1" 3306)
 
     it "prefers the explicitly marked source node" $ do
-      let explicit = mkNodeState (NodeId "db2" 3306) True Nothing Healthy
-          other    = mkNodeState (NodeId "db1" 3306) False Nothing Healthy
+      let explicit = mkNodeState (NodeId "db2" 3306) Source Nothing Healthy
+          other    = mkNodeState (NodeId "db1" 3306) Replica Nothing Healthy
       identifySource [other, explicit] `shouldBe` Just (NodeId "db2" 3306)
 
     it "returns Nothing when both nodes are replicas pointing to a third (ambiguous)" $ do
-      let r1 = mkNodeState (NodeId "db1" 3306) False
+      let r1 = mkNodeState (NodeId "db1" 3306) Replica
                  (Just (mkReplicaStatus "db3" 3306 IOYes "")) Healthy
-          r2 = mkNodeState (NodeId "db2" 3306) False
+          r2 = mkNodeState (NodeId "db2" 3306) Replica
                  (Just (mkReplicaStatus "db3" 3306 IOYes "")) Healthy
       identifySource [r1, r2] `shouldBe` Nothing
 

@@ -3,8 +3,8 @@ module PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica) where
 import Control.Concurrent.STM (atomically)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
-import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+import Database.MySQL.Base (MySQLConn)
 import PureMyHA.Config (ClusterConfig (..))
 import PureMyHA.Env (App, ClusterEnv (..), getMySQLUser, getMonPassword, appLogInfo, appLogError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
@@ -16,38 +16,24 @@ import PureMyHA.Types
 runPauseReplica
   :: Text       -- ^ host to pause
   -> App (Either Text ())
-runPauseReplica targetHost = do
-  tvar <- asks envDaemonState
-  cc   <- asks envCluster
-  user <- getMySQLUser
-  password <- getMonPassword
-  mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
-  case mTopo of
-    Nothing -> pure (Left "Cluster not found")
-    Just topo -> do
-      let nodes = Map.elems (ctNodes topo)
-          findByHost h = filter (\ns -> nodeHost (nsNodeId ns) == h) nodes
-      case findByHost targetHost of
-        [] -> pure (Left $ "Node not found: " <> targetHost)
-        (targetNs : _) -> do
-          let ci = makeConnectInfo (nsNodeId targetNs) user password
-          appLogInfo $ "[" <> ccName cc <> "] Pausing replication on " <> targetHost
-          result <- liftIO $ withNodeConn ci $ \conn -> stopReplica conn
-          case result of
-            Left err -> do
-              appLogError $ "[" <> ccName cc <> "] Pause failed: " <> err
-              pure (Left err)
-            Right () -> do
-              liftIO $ atomically $ updateNodeState tvar (ccName cc)
-                (targetNs { nsPaused = True })
-              appLogInfo $ "[" <> ccName cc <> "] Replication paused on " <> targetHost
-              pure (Right ())
+runPauseReplica targetHost =
+  withTargetNode "Pausing" targetHost stopReplica (\ns -> ns { nsPaused = True })
 
 -- | Resume replication on a paused replica node
 runResumeReplica
   :: Text       -- ^ host to resume
   -> App (Either Text ())
-runResumeReplica targetHost = do
+runResumeReplica targetHost =
+  withTargetNode "Resuming" targetHost startReplica (\ns -> ns { nsPaused = False })
+
+-- | Common logic for pause/resume: find node, connect, run action, update state.
+withTargetNode
+  :: Text                            -- ^ action name for logging (e.g. "Pausing")
+  -> Text                            -- ^ target host
+  -> (MySQLConn -> IO ())            -- ^ MySQL action to execute
+  -> (NodeState -> NodeState)        -- ^ state update on success
+  -> App (Either Text ())
+withTargetNode actionName targetHost mysqlAction stateUpdate = do
   tvar <- asks envDaemonState
   cc   <- asks envCluster
   user <- getMySQLUser
@@ -55,21 +41,23 @@ runResumeReplica targetHost = do
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure (Left "Cluster not found")
-    Just topo -> do
-      let nodes = Map.elems (ctNodes topo)
-          findByHost h = filter (\ns -> nodeHost (nsNodeId ns) == h) nodes
-      case findByHost targetHost of
-        [] -> pure (Left $ "Node not found: " <> targetHost)
-        (targetNs : _) -> do
+    Just topo ->
+      case findNodeByHost targetHost (ctNodes topo) of
+        Nothing -> pure (Left $ "Node not found: " <> targetHost)
+        Just targetNs -> do
           let ci = makeConnectInfo (nsNodeId targetNs) user password
-          appLogInfo $ "[" <> ccName cc <> "] Resuming replication on " <> targetHost
-          result <- liftIO $ withNodeConn ci $ \conn -> startReplica conn
+          appLogInfo $ "[" <> ccName cc <> "] " <> actionName <> " replication on " <> targetHost
+          result <- liftIO $ withNodeConn ci $ \conn -> mysqlAction conn
           case result of
             Left err -> do
-              appLogError $ "[" <> ccName cc <> "] Resume failed: " <> err
+              appLogError $ "[" <> ccName cc <> "] " <> actionName <> " failed: " <> err
               pure (Left err)
             Right () -> do
-              liftIO $ atomically $ updateNodeState tvar (ccName cc)
-                (targetNs { nsPaused = False })
-              appLogInfo $ "[" <> ccName cc <> "] Replication resumed on " <> targetHost
+              liftIO $ atomically $ updateNodeState tvar (ccName cc) (stateUpdate targetNs)
+              appLogInfo $ "[" <> ccName cc <> "] Replication " <> actionResult <> " on " <> targetHost
               pure (Right ())
+  where
+    actionResult = case actionName of
+      "Pausing"  -> "paused"
+      "Resuming" -> "resumed"
+      other      -> other

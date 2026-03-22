@@ -114,27 +114,23 @@ handleRequest tvar clusterMap discoveryMap eventBuf loggerVar req = case req of
     pure $ RespTopology (map toClusterTopologyView topos)
 
   ReqSwitchover mCluster mToHost dryRun ->
-    case lookupCluster mCluster clusterMap of
-      Nothing -> pure (RespError "Cluster not found")
-      Just env ->
-        if dryRun
-          then do
-            result <- runApp env $ dryRunSwitchover mToHost
-            pure $ RespOperation $ case result of
-              Left err  -> OperationFailure err
-              Right msg -> OperationSuccess msg
-          else do
-            result <- runApp env $ runSwitchover mToHost
-            pure $ RespOperation $ case result of
-              Left err -> OperationFailure err
-              Right () -> OperationSuccess "Switchover completed"
+    withClusterEnv mCluster clusterMap $ \env ->
+      if dryRun
+        then do
+          result <- runApp env $ dryRunSwitchover mToHost
+          pure $ RespOperation $ case result of
+            Left err  -> OperationFailure err
+            Right msg -> OperationSuccess msg
+        else do
+          result <- runApp env $ runSwitchover mToHost
+          pure $ RespOperation $ case result of
+            Left err -> OperationFailure err
+            Right () -> OperationSuccess "Switchover completed"
 
   ReqAckRecovery mCluster ->
-    case lookupCluster mCluster clusterMap of
-      Nothing -> pure (RespError "Cluster not found")
-      Just env -> do
-        atomically $ clearRecoveryBlock (envDaemonState env) (ccName (envCluster env))
-        pure $ RespOperation (OperationSuccess "Recovery block cleared")
+    withClusterEnv mCluster clusterMap $ \env -> do
+      atomically $ clearRecoveryBlock (envDaemonState env) (ccName (envCluster env))
+      pure $ RespOperation (OperationSuccess "Recovery block cleared")
 
   ReqErrantGtid mCluster -> do
     ds <- readDaemonState tvar
@@ -143,25 +139,15 @@ handleRequest tvar clusterMap discoveryMap eventBuf loggerVar req = case req of
     pure (RespErrantGtids errants)
 
   ReqFixErrantGtid mCluster ->
-    case lookupCluster mCluster clusterMap of
-      Nothing -> pure (RespError "Cluster not found")
-      Just env -> do
-        result <- runApp env runFixErrantGtid
-        pure $ RespOperation $ case result of
-          Left err -> OperationFailure err
-          Right () -> OperationSuccess "Errant GTIDs fixed on source"
+    runClusterOp mCluster clusterMap
+      (\env -> runApp env runFixErrantGtid) "Errant GTIDs fixed on source"
 
   ReqDemote mCluster host srcHost ->
-    case lookupCluster mCluster clusterMap of
-      Nothing -> pure (RespError "Cluster not found")
-      Just env -> do
-        result <- runApp env $ runDemote host srcHost
-        pure $ RespOperation $ case result of
-          Left err -> OperationFailure err
-          Right () -> OperationSuccess ("Demote completed: " <> host <> " is now a replica")
+    runClusterOp mCluster clusterMap
+      (\env -> runApp env $ runDemote host srcHost) ("Demote completed: " <> host <> " is now a replica")
 
   ReqDiscovery mCluster ->
-    case lookupDiscovery mCluster discoveryMap of
+    case lookupByCluster mCluster discoveryMap of
       Nothing -> pure (RespError "Cluster not found")
       Just action -> do
         result <- action
@@ -170,36 +156,22 @@ handleRequest tvar clusterMap discoveryMap eventBuf loggerVar req = case req of
           Right msg -> OperationSuccess msg
 
   ReqPauseReplica mCluster host ->
-    case lookupCluster mCluster clusterMap of
-      Nothing -> pure (RespError "Cluster not found")
-      Just env -> do
-        result <- runApp env $ runPauseReplica host
-        pure $ RespOperation $ case result of
-          Left err -> OperationFailure err
-          Right () -> OperationSuccess ("Replication paused on " <> host)
+    runClusterOp mCluster clusterMap
+      (\env -> runApp env $ runPauseReplica host) ("Replication paused on " <> host)
 
   ReqResumeReplica mCluster host ->
-    case lookupCluster mCluster clusterMap of
-      Nothing -> pure (RespError "Cluster not found")
-      Just env -> do
-        result <- runApp env $ runResumeReplica host
-        pure $ RespOperation $ case result of
-          Left err -> OperationFailure err
-          Right () -> OperationSuccess ("Replication resumed on " <> host)
+    runClusterOp mCluster clusterMap
+      (\env -> runApp env $ runResumeReplica host) ("Replication resumed on " <> host)
 
   ReqPauseFailover mCluster ->
-    case lookupCluster mCluster clusterMap of
-      Nothing -> pure (RespError "Cluster not found")
-      Just env -> do
-        atomically $ setClusterPause (envDaemonState env) (ccName (envCluster env))
-        pure $ RespOperation (OperationSuccess "Failover paused")
+    withClusterEnv mCluster clusterMap $ \env -> do
+      atomically $ setClusterPause (envDaemonState env) (ccName (envCluster env))
+      pure $ RespOperation (OperationSuccess "Failover paused")
 
   ReqResumeFailover mCluster ->
-    case lookupCluster mCluster clusterMap of
-      Nothing -> pure (RespError "Cluster not found")
-      Just env -> do
-        atomically $ clearClusterPause (envDaemonState env) (ccName (envCluster env))
-        pure $ RespOperation (OperationSuccess "Failover resumed")
+    withClusterEnv mCluster clusterMap $ \env -> do
+      atomically $ clearClusterPause (envDaemonState env) (ccName (envCluster env))
+      pure $ RespOperation (OperationSuccess "Failover resumed")
 
   ReqEventHistory mCluster mLimit -> do
     evs <- getRecentEvents eventBuf mCluster mLimit
@@ -211,19 +183,29 @@ handleRequest tvar clusterMap discoveryMap eventBuf loggerVar req = case req of
       Just lvl -> do
         logger <- readTVarIO loggerVar
         setLogLevel logger lvl
-        pure $ RespOperation (OperationSuccess ("Log level set to " <> lvlText))
+        pure $ RespOperation (OperationSuccess ("Log level set to " <> logLevelToText lvl))
 
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m
 filterClusters (Just n) m = maybe [] pure (Map.lookup n m)
 
-lookupCluster :: Maybe ClusterName -> ClusterMap -> Maybe ClusterEnv
-lookupCluster Nothing  m = case Map.elems m of { [x] -> Just x; _ -> Nothing }
-lookupCluster (Just n) m = Map.lookup n m
+lookupByCluster :: Maybe ClusterName -> Map ClusterName a -> Maybe a
+lookupByCluster Nothing  m = case Map.elems m of { [x] -> Just x; _ -> Nothing }
+lookupByCluster (Just n) m = Map.lookup n m
 
-lookupDiscovery :: Maybe ClusterName -> DiscoveryMap -> Maybe DiscoveryAction
-lookupDiscovery Nothing  m = case Map.elems m of { [x] -> Just x; _ -> Nothing }
-lookupDiscovery (Just n) m = Map.lookup n m
+withClusterEnv :: Maybe ClusterName -> ClusterMap -> (ClusterEnv -> IO Response) -> IO Response
+withClusterEnv mc cm action =
+  case lookupByCluster mc cm of
+    Nothing  -> pure (RespError "Cluster not found")
+    Just env -> action env
+
+runClusterOp :: Maybe ClusterName -> ClusterMap -> (ClusterEnv -> IO (Either Text ())) -> Text -> IO Response
+runClusterOp mc cm action successMsg =
+  withClusterEnv mc cm $ \env -> do
+    result <- action env
+    pure $ RespOperation $ case result of
+      Left err -> OperationFailure err
+      Right () -> OperationSuccess successMsg
 
 toClusterStatus :: ClusterTopology -> ClusterStatus
 toClusterStatus ct = ClusterStatus
@@ -245,7 +227,7 @@ toNodeStateView :: NodeState -> NodeStateView
 toNodeStateView ns = NodeStateView
   { nsvHost        = nodeHost (nsNodeId ns)
   , nsvPort        = nodePort (nsNodeId ns)
-  , nsvIsSource    = nsIsSource ns
+  , nsvIsSource    = isSource ns
   , nsvHealth      = nsHealth ns
   , nsvLagSeconds  = nsReplicaStatus ns >>= rsSecondsBehindSource
   , nsvErrantGtids = nsErrantGtids ns

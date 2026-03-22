@@ -36,7 +36,7 @@ mkReplicaStatus srcHost srcPort ioRunning execGtid = ReplicaStatus
   { rsSourceHost          = srcHost
   , rsSourcePort          = srcPort
   , rsReplicaIORunning    = ioRunning
-  , rsReplicaSQLRunning   = True
+  , rsReplicaSQLRunning   = SQLRunning
   , rsSecondsBehindSource = Just 0
   , rsExecutedGtidSet     = execGtid
   , rsRetrievedGtidSet    = execGtid
@@ -44,12 +44,12 @@ mkReplicaStatus srcHost srcPort ioRunning execGtid = ReplicaStatus
   , rsLastSQLError        = ""
   }
 
-mkNodeState :: NodeId -> Bool -> Maybe ReplicaStatus -> NodeHealth -> NodeState
-mkNodeState nid isSource mRs health = NodeState
+mkNodeState :: NodeId -> NodeRole -> Maybe ReplicaStatus -> NodeHealth -> NodeState
+mkNodeState nid role mRs health = NodeState
   { nsNodeId               = nid
   , nsReplicaStatus        = mRs
   , nsGtidExecuted         = ""
-  , nsIsSource             = isSource
+  , nsRole                 = role
   , nsHealth               = health
   , nsLastSeen             = Just fixedTime
   , nsConnectError         = Nothing
@@ -83,20 +83,20 @@ mkTestEnv tvar cc fc = do
     }
 
 healthySource :: NodeState
-healthySource = mkNodeState (mkNodeId "db1" 3306) True Nothing Healthy
+healthySource = mkNodeState (mkNodeId "db1" 3306) Source Nothing Healthy
 
 healthyReplica :: NodeState
-healthyReplica = mkNodeState (mkNodeId "db2" 3306) False
+healthyReplica = mkNodeState (mkNodeId "db2" 3306) Replica
   (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) Healthy
 
 replicaWithErrantGtid :: NodeState
-replicaWithErrantGtid = (mkNodeState (mkNodeId "db3" 3306) False
+replicaWithErrantGtid = (mkNodeState (mkNodeId "db3" 3306) Replica
   (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100"))
   (NeedsAttention "Errant GTIDs: uuid3:1"))
   { nsErrantGtids = "uuid3:1" }
 
 replicaWithIOError :: NodeState
-replicaWithIOError = mkNodeState (mkNodeId "db4" 3306) False
+replicaWithIOError = mkNodeState (mkNodeId "db4" 3306) Replica
   (Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-50")
     { rsLastIOError = "Access denied" })
   (NeedsAttention "IO error: Access denied")
@@ -106,7 +106,7 @@ unreachableNode nid = NodeState
   { nsNodeId               = nid
   , nsReplicaStatus        = Nothing
   , nsGtidExecuted         = ""
-  , nsIsSource             = False
+  , nsRole                 = Replica
   , nsHealth               = NeedsAttention "Connection refused"
   , nsLastSeen             = Nothing
   , nsConnectError         = Just "Connection refused"
@@ -121,12 +121,12 @@ unreachableReplica = unreachableNode (NodeId "db5" 3306)
 -- | Cluster where source is unreachable, replicas show IO=No
 clusterWithDeadSource :: Map NodeId NodeState
 clusterWithDeadSource = Map.fromList
-  [ (mkNodeId "db1" 3306, (unreachableNode (mkNodeId "db1" 3306)) { nsIsSource = True })
+  [ (mkNodeId "db1" 3306, (unreachableNode (mkNodeId "db1" 3306)) { nsRole = Source })
   , (mkNodeId "db2" 3306, NodeState
       { nsNodeId               = mkNodeId "db2" 3306
       , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")
       , nsGtidExecuted         = ""
-      , nsIsSource             = False
+      , nsRole                 = Replica
       , nsHealth               = Healthy
       , nsLastSeen             = Just fixedTime
       , nsConnectError         = Nothing

@@ -89,7 +89,7 @@ renderMetrics ds = BSL.fromStrict $ TE.encodeUtf8 $ T.unlines $
     , ns <- Map.elems (ctNodes ct) ]
   ++
   metricBlock "puremyha_node_is_source" "gauge" "1 if the node is the source (primary), 0 if replica"
-    [ (nodeLabels name ns, boolVal (nsIsSource ns))
+    [ (nodeLabels name ns, boolVal (isSource ns))
     | (name, ct) <- Map.toAscList (dsClusters ds)
     , ns <- Map.elems (ctNodes ct) ]
   ++

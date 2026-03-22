@@ -2,8 +2,12 @@ module PureMyHA.Types
   ( NodeId (..)
   , ClusterName
   , IORunning (..)
+  , SQLThreadState (..)
   , ReplicaStatus (..)
   , NodeHealth (..)
+  , NodeRole (..)
+  , isSource
+  , findNodeByHost
   , NodeState (..)
   , ClusterTopology (..)
   , DaemonState (..)
@@ -17,6 +21,7 @@ module PureMyHA.Types
   ) where
 
 import Data.Map.Strict (Map)
+import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import Data.Time (UTCTime)
 import GHC.Generics (Generic)
@@ -31,11 +36,14 @@ data NodeId = NodeId
 data IORunning = IOYes | IOConnecting | IONo
   deriving (Eq, Show, Generic)
 
+data SQLThreadState = SQLRunning | SQLStopped
+  deriving (Eq, Show, Generic)
+
 data ReplicaStatus = ReplicaStatus
   { rsSourceHost          :: Text
   , rsSourcePort          :: Int
   , rsReplicaIORunning    :: IORunning
-  , rsReplicaSQLRunning   :: Bool
+  , rsReplicaSQLRunning   :: SQLThreadState
   , rsSecondsBehindSource :: Maybe Int
   , rsExecutedGtidSet     :: Text
   , rsRetrievedGtidSet    :: Text
@@ -52,11 +60,23 @@ data NodeHealth
   | NeedsAttention Text
   deriving (Eq, Show, Generic)
 
+data NodeRole = Source | Replica
+  deriving (Eq, Show, Generic)
+
+isSource :: NodeState -> Bool
+isSource ns = nsRole ns == Source
+
+findNodeByHost :: Text -> Map NodeId NodeState -> Maybe NodeState
+findNodeByHost h nodes =
+  case filter (\ns -> nodeHost (nsNodeId ns) == h) (Map.elems nodes) of
+    (x:_) -> Just x
+    []    -> Nothing
+
 data NodeState = NodeState
   { nsNodeId               :: NodeId
   , nsReplicaStatus        :: Maybe ReplicaStatus
   , nsGtidExecuted         :: Text
-  , nsIsSource             :: Bool
+  , nsRole                 :: NodeRole
   , nsHealth               :: NodeHealth
   , nsLastSeen             :: Maybe UTCTime
   , nsConnectError         :: Maybe Text

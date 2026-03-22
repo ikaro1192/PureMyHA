@@ -14,6 +14,7 @@ module PureMyHA.Config
   , GlobalConfig (..)
   , LogLevel (..)
   , parseLogLevel
+  , logLevelToText
   , defaultLoggingConfig
   , defaultHttpConfig
   , loadConfig
@@ -47,14 +48,16 @@ defaultHttpConfig :: HttpConfig
 defaultHttpConfig = HttpConfig False "127.0.0.1" 8080
 
 data LogLevel = LogLevelDebug | LogLevelInfo | LogLevelWarn | LogLevelError
-  deriving (Show, Eq)
+  deriving (Show, Eq, Bounded, Enum)
+
+logLevelToText :: LogLevel -> Text
+logLevelToText LogLevelDebug = "debug"
+logLevelToText LogLevelInfo  = "info"
+logLevelToText LogLevelWarn  = "warn"
+logLevelToText LogLevelError = "error"
 
 parseLogLevel :: Text -> Maybe LogLevel
-parseLogLevel "debug" = Just LogLevelDebug
-parseLogLevel "info"  = Just LogLevelInfo
-parseLogLevel "warn"  = Just LogLevelWarn
-parseLogLevel "error" = Just LogLevelError
-parseLogLevel _       = Nothing
+parseLogLevel t = lookup t [(logLevelToText l, l) | l <- [minBound .. maxBound]]
 
 data LoggingConfig = LoggingConfig
   { lcLogFile   :: FilePath

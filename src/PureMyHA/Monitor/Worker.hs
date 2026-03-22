@@ -128,7 +128,7 @@ monitorNode nid = do
       cap       = mcConnectTimeout mc
       logRetry msg = readTVarIO (envLogger env) >>= \l ->
         logDebug l ("[" <> ccName cc <> "] Node " <> nodeHost nid <> ": " <> msg)
-  -- Read old state before connecting, so we can preserve nsIsSource on error
+  -- Read old state before connecting, so we can preserve nsRole on error
   mOldNs <- liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
@@ -144,7 +144,7 @@ monitorNode nid = do
             { nsNodeId               = nid
             , nsReplicaStatus        = Nothing
             , nsGtidExecuted         = ""
-            , nsIsSource             = maybe False nsIsSource mOldNs
+            , nsRole                 = maybe Replica nsRole mOldNs
             , nsHealth               = NeedsAttention err
             , nsLastSeen             = Nothing
             , nsConnectError         = Just err
@@ -157,7 +157,7 @@ monitorNode nid = do
             { nsNodeId               = nid
             , nsReplicaStatus        = mRs
             , nsGtidExecuted         = gtidExec
-            , nsIsSource             = mRs == Nothing
+            , nsRole                 = if mRs == Nothing then Source else Replica
             , nsHealth               = Healthy
             , nsLastSeen             = Just now
             , nsConnectError         = Nothing
@@ -301,7 +301,7 @@ emergencyReplicaCheck = do
 
 isIOYesReplica :: NodeState -> Bool
 isIOYesReplica ns =
-  not (nsIsSource ns) &&
+  not (isSource ns) &&
   case nsReplicaStatus ns of
     Just rs -> rsReplicaIORunning rs == IOYes
     Nothing -> False
