@@ -1,4 +1,4 @@
-# Stage 1: build (reuse production build)
+# Stage 1: Full Haskell build (default for local development)
 FROM haskell:9.6 AS build
 
 WORKDIR /build
@@ -13,6 +13,15 @@ RUN mkdir -p /staging && \
     cp "$(cabal list-bin puremyhad)" /staging/puremyhad && \
     cp "$(cabal list-bin puremyha)"  /staging/puremyha
 
+# Stage 1b: Pre-built binaries (CI fast path)
+FROM debian:bookworm-slim AS prebuilt
+COPY dist-bins/puremyhad /staging/puremyhad
+COPY dist-bins/puremyha  /staging/puremyha
+
+# Select which stage to use (build | prebuilt)
+ARG STAGING=build
+FROM ${STAGING} AS selected
+
 # Stage 2: runtime with test utilities
 FROM debian:bookworm-slim
 
@@ -21,7 +30,7 @@ RUN apt-get update && \
       libgmp10 zlib1g socat jq curl default-mysql-client procps && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=build /staging/puremyhad /usr/sbin/puremyhad
-COPY --from=build /staging/puremyha  /usr/bin/puremyha
+COPY --from=selected /staging/puremyhad /usr/sbin/puremyhad
+COPY --from=selected /staging/puremyha  /usr/bin/puremyha
 
 CMD ["puremyhad"]
