@@ -47,3 +47,4 @@ http:                                  # optional HTTP health check server
   #   GET /health                 → 200 {"status":"ok"} / 503 {"status":"degraded"}
   #   GET /cluster/:name/status   → ClusterStatus JSON   (readiness probe / LB check)
   #   GET /cluster/:name/topology → ClusterTopologyView JSON
+  #   GET /metrics                → Prometheus text format metrics (all clusters)
