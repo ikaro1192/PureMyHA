@@ -35,6 +35,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Dry-run Mode** — Run `switchover --dry-run` to preview the candidate selection without executing any SQL
 - **Pause/Resume Auto-Failover** — Temporarily disable automatic failover for maintenance windows
 - **HTTP Health Check Endpoint** — Optional read-only HTTP listener for load balancer probes and Kubernetes liveness/readiness checks (`GET /health`, `/cluster/:name/status`, `/cluster/:name/topology`)
+- **Prometheus Metrics Endpoint** — `GET /metrics` exposes cluster health, replication lag, consecutive failures, and node role in Prometheus text exposition format for Grafana and other monitoring stacks
 
 ## Requirements
 
@@ -205,10 +206,15 @@ global:
     on_failure_detection: /etc/puremyha/hooks/on_failure_detection.sh    # Optional
     post_unsuccessful_failover: /etc/puremyha/hooks/post_unsuccessful_failover.sh  # Optional
 
-http:                                  # Optional HTTP health check server (disabled by default)
+http:                                  # Optional HTTP server (disabled by default)
   enabled: false
   listen_address: "127.0.0.1"        # Use "0.0.0.0" to listen on all interfaces
   port: 8080
+  # Endpoints (read-only, GET only):
+  #   GET /health                 → 200 {"status":"ok"} / 503 {"status":"degraded"}
+  #   GET /cluster/:name/status   → ClusterStatus JSON
+  #   GET /cluster/:name/topology → ClusterTopologyView JSON
+  #   GET /metrics                → Prometheus text format metrics (all clusters)
 
 logging:
   log_file: /var/log/puremyha.log  # Optional; defaults to /var/log/puremyha.log

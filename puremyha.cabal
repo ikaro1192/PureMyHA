@@ -114,6 +114,7 @@ test-suite puremyha-test
     PureMyHA.ErrantGtidSpec
     PureMyHA.ConnectionSpec
     PureMyHA.WorkerSpec
+    PureMyHA.HTTPSpec
   build-depends:
     puremyha,
     hspec            >= 2.9,

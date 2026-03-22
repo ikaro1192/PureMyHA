@@ -45,6 +45,17 @@ assert_not_empty() {
   fi
 }
 
+assert_contains() {
+  local desc="$1" needle="$2" haystack="$3"
+  if echo "$haystack" | grep -qF "$needle"; then
+    echo "  PASS: $desc"
+    ((PASS_COUNT++)) || true
+  else
+    echo "  FAIL: $desc (expected to contain '$needle')"
+    ((FAIL_COUNT++)) || true
+  fi
+}
+
 test_summary() {
   echo ""
   echo "Results: $PASS_COUNT passed, $FAIL_COUNT failed"
