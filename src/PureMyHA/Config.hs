@@ -18,10 +18,12 @@ module PureMyHA.Config
   , defaultHttpConfig
   , loadConfig
   , parseDuration
+  , validateConfig
   ) where
 
 import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON (..), withObject, withText, (.:), (.:?), (.!=))
+import Data.List (group, sort)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
@@ -292,3 +294,68 @@ loadConfig path = do
   pure $ case result of
     Left err  -> Left (show err)
     Right cfg -> Right cfg
+
+-- | Validate a parsed 'Config' for semantic correctness.
+-- Returns a list of error messages; an empty list means the config is valid.
+validateConfig :: Config -> [String]
+validateConfig cfg = clusterErrors ++ httpErrors
+  where
+    clusters = cfgClusters cfg
+
+    clusterErrors
+      | null clusters = ["no clusters defined"]
+      | otherwise     = duplicateClusterErrors ++ concatMap validateCluster clusters
+
+    clusterNames = map ccName clusters
+    duplicateClusterErrors =
+      [ "duplicate cluster name: '" <> T.unpack n <> "'"
+      | n <- duplicates clusterNames ]
+
+    validateCluster :: ClusterConfig -> [String]
+    validateCluster cc = nodeErrors ++ monErrors ++ fdErrors
+      where
+        cname  = T.unpack (ccName cc)
+        prefix = "cluster '" <> cname <> "': "
+        nodes  = ccNodes cc
+
+        nodeErrors
+          | null nodes = [prefix <> "no nodes defined"]
+          | otherwise  = duplicateHostErrors ++ concatMap (validateNode prefix) nodes
+
+        hosts = map ncHost nodes
+        duplicateHostErrors =
+          [ prefix <> "duplicate node host: '" <> T.unpack h <> "'"
+          | h <- duplicates hosts ]
+
+        validateNode :: String -> NodeConfig -> [String]
+        validateNode p nc =
+          [ p <> "node port " <> show (ncPort nc) <> " is out of range (1-65535)"
+          | ncPort nc < 1 || ncPort nc > 65535 ]
+
+        mc = ccMonitoring cc
+        monErrors = concat
+          [ [ prefix <> "monitoring.interval must be > 0"
+            | mcInterval mc <= 0 ]
+          , [ prefix <> "monitoring.connect_timeout must be > 0"
+            | mcConnectTimeout mc <= 0 ]
+          , [ prefix <> "monitoring.replication_lag_warning must be less than replication_lag_critical"
+            | mcReplicationLagWarning mc >= mcReplicationLagCritical mc ]
+          , [ prefix <> "monitoring.connect_retries must be >= 1"
+            | mcConnectRetries mc < 1 ]
+          ]
+
+        fdc = ccFailureDetection cc
+        fdErrors =
+          [ prefix <> "failure_detection.consecutive_failures_for_dead must be >= 1"
+          | fdcConsecutiveFailuresForDead fdc < 1 ]
+
+    httpErrors
+      | not (hcEnabled (cfgHttp cfg)) = []
+      | p < 1 || p > 65535 =
+          ["http.port " <> show p <> " is out of range (1-65535)"]
+      | otherwise = []
+      where p = hcPort (cfgHttp cfg)
+
+-- | Return elements that appear more than once in the list.
+duplicates :: Ord a => [a] -> [a]
+duplicates = map head . filter ((> 1) . length) . group . sort

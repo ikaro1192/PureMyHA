@@ -38,6 +38,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Prometheus Metrics Endpoint** — `GET /metrics` exposes cluster health, replication lag, consecutive failures, and node role in Prometheus text exposition format for Grafana and other monitoring stacks
 - **In-Memory Event History** — Maintains a bounded ring buffer of recent events (health changes, failovers, switchovers, config reloads); queryable instantly via `puremyha events` without log parsing
 - **Runtime Log Level Control** — Change log verbosity without restarting the daemon via `puremyha set-log-level debug|info|warn|error` (IPC override takes precedence until the next SIGHUP, which resets to the configured `log_level`)
+- **Config Validation** — `puremyha validate-config` validates the config file offline (no daemon required), reporting YAML parse errors, missing required fields, and semantic constraint violations (port ranges, threshold ordering, etc.)
 
 ## Requirements
 
@@ -311,6 +312,10 @@ puremyha events [--limit=N] [--cluster=<name>]
 # IPC override takes precedence until the next SIGHUP
 puremyha set-log-level debug|info|warn|error
 
+# Validate config file without connecting to the daemon
+# Checks YAML syntax, required fields, and semantic constraints (port ranges, threshold ordering, etc.)
+puremyha validate-config [--config /etc/puremyha/config.yaml]
+
 # JSON output (for scripting / Prometheus exporters)
 puremyha --json status
 puremyha -j topology
@@ -321,6 +326,10 @@ puremyha -j switchover --to db2
 puremyha -j status | jq '.[0].health'
 puremyha -j topology | jq '.[0].nodes[].host'
 puremyha -j events | jq '.[].type'
+
+# validate-config JSON output
+puremyha --json validate-config --config /etc/puremyha/config.yaml
+# → {"valid":true} or {"valid":false,"errors":["cluster 'main': node port 99999 is out of range (1-65535)",...]}
 ```
 
 ## HTTP Health Check Endpoints

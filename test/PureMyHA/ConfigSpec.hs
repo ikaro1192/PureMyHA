@@ -11,6 +11,7 @@ import PureMyHA.Config
   , HooksConfig (..)
   , LoggingConfig (..), LogLevel (..), parseLogLevel
   , parseDuration
+  , validateConfig
   )
 
 spec :: Spec
@@ -310,6 +311,103 @@ spec = do
             ]
       decodeConfig yaml `shouldSatisfy` isLeft
 
+  describe "validateConfig" $ do
+    it "returns no errors for a valid config" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "        port: 3306"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg -> validateConfig cfg `shouldBe` []
+
+    it "reports error for duplicate cluster names" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db2"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg -> validateConfig cfg `shouldSatisfy` any (isInfixOf "duplicate cluster name")
+
+    it "reports error for port out of range" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "        port: 99999"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg -> validateConfig cfg `shouldSatisfy` any (isInfixOf "port")
+
+    it "reports error when replication_lag_warning >= replication_lag_critical" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    monitoring:"
+            , "      interval: 3s"
+            , "      connect_timeout: 2s"
+            , "      replication_lag_warning: 30s"
+            , "      replication_lag_critical: 10s"
+            , "global:"
+            , "  failure_detection:"
+            , "    recovery_block_period: 3600s"
+            , "  failover:"
+            , "    auto_failover: true"
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg -> validateConfig cfg `shouldSatisfy`
+          any (isInfixOf "replication_lag_warning")
+
+    it "reports error for duplicate node hosts within a cluster" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "        port: 3306"
+            , "      - host: db1"
+            , "        port: 3307"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg -> validateConfig cfg `shouldSatisfy` any (isInfixOf "duplicate node host")
+
 -- | Shared global block (without hooks) used across test cases.
 -- Note: appended lines after this block extend the global section.
 globalBlock :: String
@@ -337,3 +435,12 @@ isLeft _        = False
 isNothing :: Maybe a -> Bool
 isNothing Nothing = True
 isNothing _       = False
+
+isInfixOf :: String -> String -> Bool
+isInfixOf needle haystack = any (needle `isPrefixOf`) (tails haystack)
+  where
+    isPrefixOf [] _          = True
+    isPrefixOf _ []          = False
+    isPrefixOf (x:xs) (y:ys) = x == y && isPrefixOf xs ys
+    tails []         = [[]]
+    tails xs@(_:rest) = xs : tails rest

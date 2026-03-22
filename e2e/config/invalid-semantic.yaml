@@ -1,0 +1,19 @@
+clusters:
+  - name: test-cluster
+    nodes:
+      - host: mysql-source
+        port: 99999
+    credentials:
+      user: puremyha
+      password_file: /etc/puremyha/mysql.pass
+
+global:
+  monitoring:
+    interval: 1s
+    connect_timeout: 2s
+    replication_lag_warning: 5s
+    replication_lag_critical: 10s
+  failure_detection:
+    recovery_block_period: 30s
+  failover:
+    auto_failover: true

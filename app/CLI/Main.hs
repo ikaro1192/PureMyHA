@@ -1,11 +1,14 @@
 module Main (main) where
 
+import Data.Aeson (encode, object, (.=))
+import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Text (Text)
 import qualified Data.Text as T
 import Options.Applicative
-import System.Exit (exitFailure)
+import System.Exit (exitFailure, exitSuccess)
 import System.IO (hPutStrLn, stderr)
 
+import PureMyHA.Config (loadConfig, validateConfig)
 import PureMyHA.IPC.Client
 import PureMyHA.IPC.Protocol
 import PureMyHA.IPC.Server (defaultSocketPath)
@@ -32,6 +35,7 @@ data Command
   | CmdResumeFailover
   | CmdEvents (Maybe Int)
   | CmdSetLogLevel Text
+  | CmdValidateConfig FilePath
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -78,6 +82,8 @@ cliOptions = CLIOptions
             (info eventsCmd (progDesc "Show recent event history"))
         <> command "set-log-level"
             (info setLogLevelCmd (progDesc "Set daemon log level (debug|info|warn|error)"))
+        <> command "validate-config"
+            (info validateConfigCmd (progDesc "Validate configuration file without connecting to daemon"))
         )
 
 demoteCmd :: Parser Command
@@ -103,6 +109,15 @@ setLogLevelCmd :: Parser Command
 setLogLevelCmd = CmdSetLogLevel
   <$> argument str (metavar "LEVEL" <> help "Log level: debug, info, warn, error")
 
+validateConfigCmd :: Parser Command
+validateConfigCmd = CmdValidateConfig
+  <$> strOption
+        ( long "config"
+        <> short 'c'
+        <> metavar "FILE"
+        <> value "/etc/puremyha/config.yaml"
+        <> help "Path to configuration file" )
+
 switchoverCmd :: Parser Command
 switchoverCmd = CmdSwitchover
   <$> optional (strOption
@@ -121,33 +136,61 @@ main = do
   let socketPath = optSocketPath opts
       mCluster   = optCluster opts
       json       = optJsonOutput opts
-      req = case optCommand opts of
-        CmdStatus           -> ReqStatus mCluster
-        CmdTopology         -> ReqTopology mCluster
-        CmdSwitchover mTo dr  -> ReqSwitchover mCluster mTo dr
-        CmdAckRecovery      -> ReqAckRecovery mCluster
-        CmdErrantGtid       -> ReqErrantGtid mCluster
-        CmdFixErrantGtid    -> ReqFixErrantGtid mCluster
-        CmdDemote host src  -> ReqDemote mCluster host src
-        CmdDiscovery        -> ReqDiscovery mCluster
-        CmdPauseReplica  host -> ReqPauseReplica  mCluster host
-        CmdResumeReplica host -> ReqResumeReplica mCluster host
-        CmdPauseFailover     -> ReqPauseFailover  mCluster
-        CmdResumeFailover    -> ReqResumeFailover mCluster
-        CmdEvents mLimit     -> ReqEventHistory   mCluster mLimit
-        CmdSetLogLevel lvl   -> ReqSetLogLevel lvl
 
-  eResp <- sendRequest socketPath req
-  case eResp of
-    Left err -> do
-      hPutStrLn stderr $ "Error: " <> T.unpack err
-      exitFailure
-    Right resp -> case resp of
-      RespStatus statuses        -> printStatus json statuses
-      RespTopology views         -> printTopology json views
-      RespOperation result       -> printOperationResult json result
-      RespErrantGtids gtids      -> printErrantGtids json gtids
-      RespEventHistory evs       -> printEventHistory json evs
-      RespError msg              -> do
-        hPutStrLn stderr $ "Daemon error: " <> T.unpack msg
-        exitFailure
+  case optCommand opts of
+    CmdValidateConfig configPath -> runValidateConfig configPath json
+    _ -> do
+      let req = case optCommand opts of
+            CmdStatus             -> ReqStatus mCluster
+            CmdTopology           -> ReqTopology mCluster
+            CmdSwitchover mTo dr  -> ReqSwitchover mCluster mTo dr
+            CmdAckRecovery        -> ReqAckRecovery mCluster
+            CmdErrantGtid         -> ReqErrantGtid mCluster
+            CmdFixErrantGtid      -> ReqFixErrantGtid mCluster
+            CmdDemote host src    -> ReqDemote mCluster host src
+            CmdDiscovery          -> ReqDiscovery mCluster
+            CmdPauseReplica  host -> ReqPauseReplica  mCluster host
+            CmdResumeReplica host -> ReqResumeReplica mCluster host
+            CmdPauseFailover      -> ReqPauseFailover  mCluster
+            CmdResumeFailover     -> ReqResumeFailover mCluster
+            CmdEvents mLimit      -> ReqEventHistory   mCluster mLimit
+            CmdSetLogLevel lvl    -> ReqSetLogLevel lvl
+
+      eResp <- sendRequest socketPath req
+      case eResp of
+        Left err -> do
+          hPutStrLn stderr $ "Error: " <> T.unpack err
+          exitFailure
+        Right resp -> case resp of
+          RespStatus statuses        -> printStatus json statuses
+          RespTopology views         -> printTopology json views
+          RespOperation result       -> printOperationResult json result
+          RespErrantGtids gtids      -> printErrantGtids json gtids
+          RespEventHistory evs       -> printEventHistory json evs
+          RespError msg              -> do
+            hPutStrLn stderr $ "Daemon error: " <> T.unpack msg
+            exitFailure
+
+runValidateConfig :: FilePath -> Bool -> IO ()
+runValidateConfig configPath json = do
+  eCfg <- loadConfig configPath
+  case eCfg of
+    Left err -> printResult [err] >> exitFailure
+    Right cfg ->
+      let errs = validateConfig cfg
+      in if null errs
+           then printResult [] >> exitSuccess
+           else printResult errs >> exitFailure
+  where
+    printResult :: [String] -> IO ()
+    printResult [] =
+      if json
+        then putStrLn $ BLC.unpack $ encode $ object ["valid" .= True]
+        else putStrLn "Config is valid."
+    printResult errs =
+      if json
+        then putStrLn $ BLC.unpack $ encode $
+               object ["valid" .= False, "errors" .= errs]
+        else do
+          putStrLn "Config validation failed:"
+          mapM_ (\e -> putStrLn $ "  - " <> e) errs
