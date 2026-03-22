@@ -141,29 +141,23 @@ monitorNode nid = do
   let ns = case result of
         Left err ->
           NodeState
-            { nsNodeId               = nid
-            , nsReplicaStatus        = Nothing
-            , nsGtidExecuted         = ""
-            , nsRole                 = maybe Replica nsRole mOldNs  -- preserve existing role on error
-            , nsHealth               = NeedsAttention err
-            , nsLastSeen             = Nothing
-            , nsConnectError         = Just err
-            , nsErrantGtids          = ""
-            , nsPaused               = False    -- actual value read atomically at write time
-            , nsConsecutiveFailures  = newFailures
+            { nsNodeId              = nid
+            , nsRole                = maybe Replica nsRole mOldNs  -- preserve existing role on error
+            , nsHealth              = NeedsAttention err
+            , nsProbeResult         = ProbeFailure err
+            , nsErrantGtids         = ""
+            , nsPaused              = False    -- actual value read atomically at write time
+            , nsConsecutiveFailures = newFailures
             }
         Right (mRs, gtidExec) ->
           NodeState
-            { nsNodeId               = nid
-            , nsReplicaStatus        = mRs
-            , nsGtidExecuted         = gtidExec
-            , nsRole                 = if mRs == Nothing then Source else Replica
-            , nsHealth               = Healthy
-            , nsLastSeen             = Just now
-            , nsConnectError         = Nothing
-            , nsErrantGtids          = ""
-            , nsPaused               = False    -- actual value read atomically at write time
-            , nsConsecutiveFailures  = 0
+            { nsNodeId              = nid
+            , nsRole                = if mRs == Nothing then Source else Replica
+            , nsHealth              = Healthy
+            , nsProbeResult         = ProbeSuccess now mRs gtidExec
+            , nsErrantGtids         = ""
+            , nsPaused              = False    -- actual value read atomically at write time
+            , nsConsecutiveFailures = 0
             }
   -- Update errant GTIDs by querying MySQL
   ns' <- enrichErrantGtids ns

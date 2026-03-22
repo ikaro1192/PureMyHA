@@ -36,16 +36,13 @@ spec = do
       let cluster = Map.fromList
             [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
             , (NodeId "db2" 3306, NodeState
-                { nsNodeId               = NodeId "db2" 3306
-                , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IOConnecting "")
-                , nsGtidExecuted         = ""
-                , nsRole                 = Replica
-                , nsHealth               = Healthy
-                , nsLastSeen             = Just fixedTime
-                , nsConnectError         = Nothing
-                , nsErrantGtids          = ""
-                , nsPaused               = False
-                , nsConsecutiveFailures  = 0
+                { nsNodeId              = NodeId "db2" 3306
+                , nsRole                = Replica
+                , nsHealth              = Healthy
+                , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOConnecting "")) ""
+                , nsErrantGtids         = ""
+                , nsPaused              = False
+                , nsConsecutiveFailures = 0
                 })
             ]
       detectClusterHealth cluster `shouldBe` DeadSource
@@ -54,16 +51,13 @@ spec = do
       let cluster = Map.fromList
             [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
             , (NodeId "db2" 3306, NodeState
-                { nsNodeId               = NodeId "db2" 3306
-                , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IOYes "")
-                , nsGtidExecuted         = ""
-                , nsRole                 = Replica
-                , nsHealth               = Healthy
-                , nsLastSeen             = Just fixedTime
-                , nsConnectError         = Nothing
-                , nsErrantGtids          = ""
-                , nsPaused               = False
-                , nsConsecutiveFailures  = 0
+                { nsNodeId              = NodeId "db2" 3306
+                , nsRole                = Replica
+                , nsHealth              = Healthy
+                , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "")) ""
+                , nsErrantGtids         = ""
+                , nsPaused              = False
+                , nsConsecutiveFailures = 0
                 })
             ]
       detectClusterHealth cluster `shouldBe` UnreachableSource
@@ -76,7 +70,7 @@ spec = do
 
   describe "detectNodeHealth" $ do
     it "returns NeedsAttention when connect error is present" $ do
-      let ns = healthySource { nsConnectError = Just "refused" }
+      let ns = healthySource { nsProbeResult = ProbeFailure "refused" }
       detectNodeHealth ns `shouldBe` NeedsAttention "refused"
 
     it "returns NeedsAttention when errant GTIDs are present" $ do
