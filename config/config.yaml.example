@@ -24,6 +24,7 @@ global:
     discovery_interval: 300s   # optional; 0s = disabled. Default: 300s
   failure_detection:
     recovery_block_period: 3600s   # block auto-failover for this long after a failover
+    consecutive_failures_for_dead: 3  # require N consecutive probe failures before marking a node dead (default: 3)
   failover:
     auto_failover: true
     min_replicas_for_failover: 1

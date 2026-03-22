@@ -30,7 +30,7 @@ testCC = ClusterConfig
   , ccCredentials            = Credentials "root" "/run/pw"
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig 3 5 30 60 300
-  , ccFailureDetection       = FailureDetectionConfig 3600
+  , ccFailureDetection       = FailureDetectionConfig 3600 3
   , ccFailover               = FailoverConfig True 1 [] 60
   , ccHooks                  = Nothing
   }

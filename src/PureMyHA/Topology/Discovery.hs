@@ -129,26 +129,28 @@ buildNodeStateFromProbe
   -> Either Text (Maybe ReplicaStatus, Text)
   -> NodeState
 buildNodeStateFromProbe nid _ (Left err) = NodeState
-  { nsNodeId        = nid
-  , nsReplicaStatus = Nothing
-  , nsGtidExecuted  = ""
-  , nsIsSource      = False
-  , nsHealth        = NeedsAttention err
-  , nsLastSeen      = Nothing
-  , nsConnectError  = Just err
-  , nsErrantGtids   = ""
-  , nsPaused        = False
+  { nsNodeId               = nid
+  , nsReplicaStatus        = Nothing
+  , nsGtidExecuted         = ""
+  , nsIsSource             = False
+  , nsHealth               = NeedsAttention err
+  , nsLastSeen             = Nothing
+  , nsConnectError         = Just err
+  , nsErrantGtids          = ""
+  , nsPaused               = False
+  , nsConsecutiveFailures  = 0
   }
 buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
-  { nsNodeId        = nid
-  , nsReplicaStatus = mRs
-  , nsGtidExecuted  = gtidExec
-  , nsIsSource      = mRs == Nothing  -- no replica status = potential source
-  , nsHealth        = Healthy
-  , nsLastSeen      = Just now
-  , nsConnectError  = Nothing
-  , nsErrantGtids   = ""
-  , nsPaused        = False
+  { nsNodeId               = nid
+  , nsReplicaStatus        = mRs
+  , nsGtidExecuted         = gtidExec
+  , nsIsSource             = mRs == Nothing  -- no replica status = potential source
+  , nsHealth               = Healthy
+  , nsLastSeen             = Just now
+  , nsConnectError         = Nothing
+  , nsErrantGtids          = ""
+  , nsPaused               = False
+  , nsConsecutiveFailures  = 0
   }
 
 -- | Calculate next nodes to probe from a discovered node's replica status (pure)
