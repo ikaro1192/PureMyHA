@@ -154,13 +154,13 @@ nextDiscoveryTargets
   -> Set NodeId  -- ^ current remaining queue
   -> Set NodeId
 nextDiscoveryTargets ns visited rest =
-  case nsReplicaStatus ns of
-    Just rs ->
+  case nsProbeResult ns of
+    ProbeSuccess{prReplicaStatus = Just rs} ->
       let srcId = NodeId (rsSourceHost rs) (rsSourcePort rs)
       in if Set.notMember srcId visited && rsSourceHost rs /= ""
            then Set.insert srcId rest
            else rest
-    Nothing -> rest
+    _ -> rest
 
 -- | Build an initial (empty) topology from config
 buildInitialTopology :: ClusterConfig -> ClusterTopology

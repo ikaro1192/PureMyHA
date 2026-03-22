@@ -229,9 +229,13 @@ toNodeStateView ns = NodeStateView
   , nsvPort        = nodePort (nsNodeId ns)
   , nsvIsSource    = isSource ns
   , nsvHealth      = nsHealth ns
-  , nsvLagSeconds  = nsReplicaStatus ns >>= rsSecondsBehindSource
+  , nsvLagSeconds  = case nsProbeResult ns of
+      ProbeSuccess{prReplicaStatus = Just rs} -> rsSecondsBehindSource rs
+      _ -> Nothing
   , nsvErrantGtids = nsErrantGtids ns
-  , nsvConnectError = nsConnectError ns
+  , nsvConnectError = case nsProbeResult ns of
+      ProbeFailure{prConnectError = e} -> Just e
+      ProbeSuccess{}                   -> Nothing
   , nsvPaused      = nsPaused ns
   }
 

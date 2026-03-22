@@ -217,8 +217,12 @@ enrichErrantGtids ns = do
           case srcNodes of
             Nothing -> pure ns
             Just srcNs -> do
-              let replicaGtid = maybe "" rsExecutedGtidSet (nsReplicaStatus ns)
-                  sourceGtid  = nsGtidExecuted srcNs
+              let replicaGtid = case nsProbeResult ns of
+                    ProbeSuccess{prReplicaStatus = Just rs} -> rsExecutedGtidSet rs
+                    _ -> ""
+                  sourceGtid = case nsProbeResult srcNs of
+                    ProbeSuccess{prGtidExecuted = g} -> g
+                    ProbeFailure{} -> ""
                   ci = makeConnectInfo srcId user (cpPassword pws)
               result <- withNodeConn ci $ \conn ->
                 gtidSubtract conn replicaGtid sourceGtid
@@ -294,6 +298,6 @@ emergencyReplicaCheck = do
 isIOYesReplica :: NodeState -> Bool
 isIOYesReplica ns =
   not (isSource ns) &&
-  case nsReplicaStatus ns of
-    Just rs -> rsReplicaIORunning rs == IOYes
-    Nothing -> False
+  case nsProbeResult ns of
+    ProbeSuccess{prReplicaStatus = Just rs} -> rsReplicaIORunning rs == IOYes
+    _ -> False

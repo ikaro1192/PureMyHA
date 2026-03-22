@@ -10,10 +10,6 @@ module PureMyHA.Types
   , findNodeByHost
   , ProbeResult (..)
   , NodeState (..)
-  , nsReplicaStatus
-  , nsGtidExecuted
-  , nsLastSeen
-  , nsConnectError
   , nsIsReachable
   , ClusterTopology (..)
   , DaemonState (..)
@@ -101,30 +97,6 @@ data NodeState = NodeState
   , nsPaused              :: Bool
   , nsConsecutiveFailures :: Int    -- ^ Number of consecutive probe failures; resets to 0 on success
   } deriving (Eq, Show, Generic)
-
--- | Backward-compatible accessor: replica status (Nothing if probe failed)
-nsReplicaStatus :: NodeState -> Maybe ReplicaStatus
-nsReplicaStatus ns = case nsProbeResult ns of
-  ProbeSuccess{prReplicaStatus = mrs} -> mrs
-  ProbeFailure{}                      -> Nothing
-
--- | Backward-compatible accessor: executed GTID set ("" if probe failed)
-nsGtidExecuted :: NodeState -> Text
-nsGtidExecuted ns = case nsProbeResult ns of
-  ProbeSuccess{prGtidExecuted = g} -> g
-  ProbeFailure{}                   -> ""
-
--- | Backward-compatible accessor: last seen time (Nothing if probe failed)
-nsLastSeen :: NodeState -> Maybe UTCTime
-nsLastSeen ns = case nsProbeResult ns of
-  ProbeSuccess{prLastSeen = t} -> Just t
-  ProbeFailure{}               -> Nothing
-
--- | Backward-compatible accessor: connect error (Nothing if probe succeeded)
-nsConnectError :: NodeState -> Maybe Text
-nsConnectError ns = case nsProbeResult ns of
-  ProbeSuccess{} -> Nothing
-  ProbeFailure{prConnectError = e} -> Just e
 
 -- | True if the last probe succeeded
 nsIsReachable :: NodeState -> Bool
