@@ -1,3 +1,6 @@
+# Select which stage to use (build | prebuilt)
+ARG STAGING=build
+
 # Stage 1: Full Haskell build (default for local development)
 FROM haskell:9.6 AS build
 
@@ -18,8 +21,6 @@ FROM debian:bookworm-slim AS prebuilt
 COPY dist-bins/puremyhad /staging/puremyhad
 COPY dist-bins/puremyha  /staging/puremyha
 
-# Select which stage to use (build | prebuilt)
-ARG STAGING=build
 FROM ${STAGING} AS selected
 
 # Stage 2: runtime with test utilities
