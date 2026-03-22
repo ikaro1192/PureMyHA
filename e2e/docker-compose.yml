@@ -58,6 +58,8 @@ services:
     build:
       context: ..
       dockerfile: e2e/Dockerfile.e2e
+      args:
+        STAGING: ${STAGING:-build}
     container_name: e2e-puremyhad
     hostname: puremyhad
     volumes:
