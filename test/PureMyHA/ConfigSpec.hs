@@ -6,9 +6,57 @@ import qualified Data.ByteString.Lazy.Char8 as BLC
 import qualified Data.Yaml as Yaml
 import Test.Hspec
 import PureMyHA.Config
+  ( Config (..), ClusterConfig (..), MonitoringConfig (..)
+  , FailureDetectionConfig (..), FailoverConfig (..)
+  , HooksConfig (..)
+  , LoggingConfig (..), LogLevel (..), parseLogLevel
+  , parseDuration
+  )
 
 spec :: Spec
 spec = do
+  describe "parseLogLevel" $ do
+    it "parses 'debug'" $
+      parseLogLevel "debug" `shouldBe` Just LogLevelDebug
+    it "parses 'info'" $
+      parseLogLevel "info"  `shouldBe` Just LogLevelInfo
+    it "parses 'warn'" $
+      parseLogLevel "warn"  `shouldBe` Just LogLevelWarn
+    it "parses 'error'" $
+      parseLogLevel "error" `shouldBe` Just LogLevelError
+    it "returns Nothing for invalid level" $
+      parseLogLevel "trace" `shouldSatisfy` isNothing
+    it "is case-sensitive" $
+      parseLogLevel "Info"  `shouldSatisfy` isNothing
+
+  describe "LoggingConfig log_level" $ do
+    it "defaults to LogLevelInfo when field is absent" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters: []"
+            , "logging:"
+            , "  log_file: /tmp/test.log"
+            ]
+      case Yaml.decodeEither' yaml :: Either Yaml.ParseException LoggingConfig of
+        Right lc -> lcLogLevel lc `shouldBe` LogLevelInfo
+        Left err -> expectationFailure (Yaml.prettyPrintParseException err)
+
+    it "parses explicit log_level: debug" $ do
+      let yaml = BC.pack $ unlines
+            [ "log_file: /tmp/test.log"
+            , "log_level: debug"
+            ]
+      case Yaml.decodeEither' yaml :: Either Yaml.ParseException LoggingConfig of
+        Right lc -> lcLogLevel lc `shouldBe` LogLevelDebug
+        Left err -> expectationFailure (Yaml.prettyPrintParseException err)
+
+    it "rejects invalid log_level" $ do
+      let yaml = BC.pack $ unlines
+            [ "log_file: /tmp/test.log"
+            , "log_level: verbose"
+            ]
+      (Yaml.decodeEither' yaml :: Either Yaml.ParseException LoggingConfig)
+        `shouldSatisfy` isLeft
+
   describe "parseDuration" $ do
     it "parses integer seconds" $
       parseDuration "3s" `shouldBe` Right 3

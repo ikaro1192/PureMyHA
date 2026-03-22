@@ -31,6 +31,7 @@ data Command
   | CmdPauseFailover
   | CmdResumeFailover
   | CmdEvents (Maybe Int)
+  | CmdSetLogLevel Text
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -75,6 +76,8 @@ cliOptions = CLIOptions
             (info (pure CmdResumeFailover) (progDesc "Resume automatic failover"))
         <> command "events"
             (info eventsCmd (progDesc "Show recent event history"))
+        <> command "set-log-level"
+            (info setLogLevelCmd (progDesc "Set daemon log level (debug|info|warn|error)"))
         )
 
 demoteCmd :: Parser Command
@@ -95,6 +98,10 @@ eventsCmd = CmdEvents
         <> short 'n'
         <> metavar "N"
         <> help "Maximum number of events to show" ))
+
+setLogLevelCmd :: Parser Command
+setLogLevelCmd = CmdSetLogLevel
+  <$> argument str (metavar "LEVEL" <> help "Log level: debug, info, warn, error")
 
 switchoverCmd :: Parser Command
 switchoverCmd = CmdSwitchover
@@ -128,6 +135,7 @@ main = do
         CmdPauseFailover     -> ReqPauseFailover  mCluster
         CmdResumeFailover    -> ReqResumeFailover mCluster
         CmdEvents mLimit     -> ReqEventHistory   mCluster mLimit
+        CmdSetLogLevel lvl   -> ReqSetLogLevel lvl
 
   eResp <- sendRequest socketPath req
   case eResp of

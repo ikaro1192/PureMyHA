@@ -12,15 +12,22 @@ module PureMyHA.Logger
 
 import Data.Text (Text)
 import Katip
+import PureMyHA.Config (LogLevel (..))
 import System.IO (BufferMode (..), IOMode (..), hSetBuffering, openFile)
 
 newtype Logger = Logger LogEnv
 
-initLogger :: FilePath -> IO Logger
-initLogger logFile = do
+logLevelToSeverity :: LogLevel -> Severity
+logLevelToSeverity LogLevelDebug = DebugS
+logLevelToSeverity LogLevelInfo  = InfoS
+logLevelToSeverity LogLevelWarn  = WarningS
+logLevelToSeverity LogLevelError = ErrorS
+
+initLogger :: FilePath -> LogLevel -> IO Logger
+initLogger logFile level = do
   h <- openFile logFile AppendMode
   hSetBuffering h LineBuffering
-  scribe <- mkHandleScribe ColorIfTerminal h (permitItem InfoS) V2
+  scribe <- mkHandleScribe ColorIfTerminal h (permitItem (logLevelToSeverity level)) V2
   le <- initLogEnv "puremyha" "production"
   le' <- registerScribe "file" scribe defaultScribeSettings le
   pure (Logger le')
@@ -30,10 +37,10 @@ closeLogger (Logger le) = do
   _ <- closeScribes le
   pure ()
 
-reopenLogger :: FilePath -> Logger -> IO Logger
-reopenLogger logFile old = do
+reopenLogger :: FilePath -> LogLevel -> Logger -> IO Logger
+reopenLogger logFile level old = do
   closeLogger old
-  initLogger logFile
+  initLogger logFile level
 
 logAt :: Logger -> Severity -> Text -> IO ()
 logAt (Logger le) sev msg =

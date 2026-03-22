@@ -12,6 +12,8 @@ module PureMyHA.Config
   , HttpConfig (..)
   , CandidatePriority (..)
   , GlobalConfig (..)
+  , LogLevel (..)
+  , parseLogLevel
   , defaultLoggingConfig
   , defaultHttpConfig
   , loadConfig
@@ -42,13 +44,24 @@ data HttpConfig = HttpConfig
 defaultHttpConfig :: HttpConfig
 defaultHttpConfig = HttpConfig False "127.0.0.1" 8080
 
+data LogLevel = LogLevelDebug | LogLevelInfo | LogLevelWarn | LogLevelError
+  deriving (Show, Eq)
+
+parseLogLevel :: Text -> Maybe LogLevel
+parseLogLevel "debug" = Just LogLevelDebug
+parseLogLevel "info"  = Just LogLevelInfo
+parseLogLevel "warn"  = Just LogLevelWarn
+parseLogLevel "error" = Just LogLevelError
+parseLogLevel _       = Nothing
+
 data LoggingConfig = LoggingConfig
   { lcLogFile   :: FilePath
   , lcMaxEvents :: Int      -- ^ In-memory event history buffer size (default 1000)
-  } deriving (Show, Generic)
+  , lcLogLevel  :: LogLevel -- ^ Minimum log level (default: info)
+  } deriving (Show)
 
 defaultLoggingConfig :: LoggingConfig
-defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log" 1000
+defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log" 1000 LogLevelInfo
 
 -- | Global defaults applied to all clusters unless overridden per-cluster.
 data GlobalConfig = GlobalConfig
@@ -185,10 +198,15 @@ instance FromJSON Config where
     pure $ Config clusters logging http
 
 instance FromJSON LoggingConfig where
-  parseJSON = withObject "LoggingConfig" $ \o ->
-    LoggingConfig
-      <$> o .:? "log_file"   .!= "/var/log/puremyha.log"
-      <*> o .:? "max_events" .!= 1000
+  parseJSON = withObject "LoggingConfig" $ \o -> do
+    logFile   <- o .:? "log_file"   .!= "/var/log/puremyha.log"
+    maxEvents <- o .:? "max_events" .!= 1000
+    lvlText   <- o .:? "log_level"  .!= ("info" :: Text)
+    logLevel  <- case parseLogLevel lvlText of
+      Just l  -> pure l
+      Nothing -> fail $ "Invalid log_level: " <> T.unpack lvlText
+                      <> " (expected: debug, info, warn, error)"
+    pure $ LoggingConfig logFile maxEvents logLevel
 
 instance FromJSON GlobalConfig where
   parseJSON = withObject "GlobalConfig" $ \o ->

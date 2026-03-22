@@ -185,6 +185,7 @@ data Request
   | ReqPauseFailover  { reqCluster :: Maybe ClusterName }
   | ReqResumeFailover { reqCluster :: Maybe ClusterName }
   | ReqEventHistory   { reqCluster :: Maybe ClusterName, reqLimit :: Maybe Int }
+  | ReqSetLogLevel    { reqLogLevel :: Text }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Request where
@@ -201,6 +202,7 @@ instance ToJSON Request where
   toJSON (ReqPauseFailover  mc)  = object ["type" .= ("pause-failover"   :: Text), "cluster" .= mc]
   toJSON (ReqResumeFailover mc)  = object ["type" .= ("resume-failover"  :: Text), "cluster" .= mc]
   toJSON (ReqEventHistory mc ml) = object ["type" .= ("event-history"   :: Text), "cluster" .= mc, "limit" .= ml]
+  toJSON (ReqSetLogLevel lvl)    = object ["type" .= ("set-log-level"   :: Text), "level" .= lvl]
 
 instance FromJSON Request where
   parseJSON = withObject "Request" $ \o -> do
@@ -219,6 +221,7 @@ instance FromJSON Request where
       "pause-failover"  -> ReqPauseFailover  <$> o .:? "cluster"
       "resume-failover" -> ReqResumeFailover <$> o .:? "cluster"
       "event-history"   -> ReqEventHistory   <$> o .:? "cluster" <*> o .:? "limit"
+      "set-log-level"   -> ReqSetLogLevel    <$> o .:  "level"
       _                 -> fail $ "Unknown request type: " <> show t
 
 -- | IPC Response types
