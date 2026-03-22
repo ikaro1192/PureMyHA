@@ -45,7 +45,7 @@ buildClusterTopology name nodeStates =
   let sourceId    = identifySource (Map.elems nodeStates)
       nodeStates' = case sourceId of
         Nothing  -> nodeStates
-        Just sid -> Map.adjust (\ns -> ns { nsIsSource = True }) sid nodeStates
+        Just sid -> Map.adjust (\ns -> ns { nsRole = Source }) sid nodeStates
       health      = detectClusterHealth nodeStates'
   in ClusterTopology
        { ctClusterName          = name
@@ -132,7 +132,7 @@ buildNodeStateFromProbe nid _ (Left err) = NodeState
   { nsNodeId               = nid
   , nsReplicaStatus        = Nothing
   , nsGtidExecuted         = ""
-  , nsIsSource             = False
+  , nsRole                 = Replica
   , nsHealth               = NeedsAttention err
   , nsLastSeen             = Nothing
   , nsConnectError         = Just err
@@ -144,7 +144,7 @@ buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
   { nsNodeId               = nid
   , nsReplicaStatus        = mRs
   , nsGtidExecuted         = gtidExec
-  , nsIsSource             = mRs == Nothing  -- no replica status = potential source
+  , nsRole                 = if mRs == Nothing then Source else Replica  -- no replica status = potential source
   , nsHealth               = Healthy
   , nsLastSeen             = Just now
   , nsConnectError         = Nothing

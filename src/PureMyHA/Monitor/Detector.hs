@@ -18,7 +18,7 @@ detectClusterHealth nodes
   | Map.null nodes = NeedsAttention "No nodes in cluster"
   | otherwise =
       let nodeList = Map.elems nodes
-          sourceCandidates = filter nsIsSource nodeList
+          sourceCandidates = filter isSource nodeList
           reachableNodes = filter (isJust . nsLastSeen) nodeList
       in case sourceCandidates of
            [] -> detectNoSource nodeList reachableNodes
@@ -41,7 +41,7 @@ detectSingleSource nodeList reachableNodes src
 
 detectDeadSource :: [NodeState] -> NodeHealth
 detectDeadSource nodeList =
-  let replicas = filter (not . nsIsSource) nodeList
+  let replicas = filter (not . isSource) nodeList
       reachableReplicas = filter nsIsReachable replicas
       replicasWithIONo = filter replicaIOStopped reachableReplicas
   in if null reachableReplicas
@@ -89,7 +89,7 @@ detectReplicaHealth rs
       NeedsAttention "Replica IO not running"
   | rsReplicaIORunning rs == IOConnecting =
       NeedsAttention "Replica IO thread not connected (Connecting)"
-  | not (rsReplicaSQLRunning rs) =
+  | rsReplicaSQLRunning rs == SQLStopped =
       NeedsAttention ("SQL error: " <> rsLastSQLError rs)
   | otherwise = Healthy
 
@@ -99,7 +99,7 @@ identifySource nodes =
   let replicaSourceIds = nub $ mapMaybe getSourceId nodes
       -- A source is a node that is NOT referenced as a replica's source
       -- OR is explicitly marked as source
-      explicitSources = filter nsIsSource nodes
+      explicitSources = filter isSource nodes
   in case explicitSources of
        [s] -> Just (nsNodeId s)
        _   ->

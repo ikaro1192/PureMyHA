@@ -55,7 +55,7 @@ spec = describe "checkAutoFailoverPreconditions" $ do
     let noReplicaTopo = deadSourceTopo
           { ctNodes = Map.fromList
               [ (NodeId "db1" 3306
-                , (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })
+                , (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
               ]
           }
     checkAutoFailoverPreconditions now noReplicaTopo 1

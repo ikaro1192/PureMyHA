@@ -128,7 +128,7 @@ monitorNode nid = do
       cap       = mcConnectTimeout mc
       logRetry msg = readTVarIO (envLogger env) >>= \l ->
         logDebug l ("[" <> ccName cc <> "] Node " <> nodeHost nid <> ": " <> msg)
-  -- Read old state before connecting, so we can preserve nsIsSource on error
+  -- Read old state before connecting for prevFailures count
   mOldNs <- liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
@@ -144,12 +144,12 @@ monitorNode nid = do
             { nsNodeId               = nid
             , nsReplicaStatus        = Nothing
             , nsGtidExecuted         = ""
-            , nsIsSource             = maybe False nsIsSource mOldNs
+            , nsRole                 = maybe Replica nsRole mOldNs  -- preserve existing role on error
             , nsHealth               = NeedsAttention err
             , nsLastSeen             = Nothing
             , nsConnectError         = Just err
             , nsErrantGtids          = ""
-            , nsPaused               = maybe False nsPaused mOldNs
+            , nsPaused               = False    -- actual value read atomically at write time
             , nsConsecutiveFailures  = newFailures
             }
         Right (mRs, gtidExec) ->
@@ -157,12 +157,12 @@ monitorNode nid = do
             { nsNodeId               = nid
             , nsReplicaStatus        = mRs
             , nsGtidExecuted         = gtidExec
-            , nsIsSource             = mRs == Nothing
+            , nsRole                 = if mRs == Nothing then Source else Replica
             , nsHealth               = Healthy
             , nsLastSeen             = Just now
             , nsConnectError         = Nothing
             , nsErrantGtids          = ""
-            , nsPaused               = maybe False nsPaused mOldNs
+            , nsPaused               = False    -- actual value read atomically at write time
             , nsConsecutiveFailures  = 0
             }
   -- Update errant GTIDs by querying MySQL
@@ -179,7 +179,10 @@ monitorNode nid = do
                     <> T.pack (show threshold) <> "): " <> err
       Right _  -> pure ()
   logHealthChange nid mOldNs ns'''
-  liftIO $ atomically $ updateNodeState tvar (ccName cc) ns'''
+  -- Use atomic read-modify-write to preserve nsRole/nsPaused from the current
+  -- topology. This prevents race conditions where failover or pause/resume
+  -- commands change these fields between the worker's read and write.
+  liftIO $ atomically $ updateNodeStatePreserveRole tvar (ccName cc) ns'''
   -- Recompute cluster-level health
   recomputeClusterHealth
 
@@ -243,11 +246,6 @@ recomputeClusterHealth = do
           newSrcId  = identifySource (Map.elems (ctNodes topo))
       let transitioned     = ctHealth topo /= newHealth
           observedHealthy  = ctObservedHealthy topo || newHealth == Healthy
-          topo' = topo
-            { ctHealth          = newHealth
-            , ctSourceNodeId    = newSrcId
-            , ctObservedHealthy = observedHealthy
-            }
       -- Fire on_failure_detection hook on transition to a dead state
       liftIO $ when transitioned $
         case newHealth of
@@ -270,7 +268,7 @@ recomputeClusterHealth = do
             <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
         recordAppEvent EvClusterHealth Nothing $
           T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
-      liftIO $ atomically $ updateClusterTopology tvar topo'
+      liftIO $ atomically $ updateClusterHealthFields tvar (ccName cc) newHealth newSrcId observedHealthy
       -- Trigger auto-failover when DeadSource (not just on transition, so resume-failover works)
       -- The failover lock prevents concurrent execution; anti-flap block prevents repeated failovers
       liftIO $ when (newHealth == DeadSource && fcAutoFailover fc && observedHealthy) $ do
@@ -301,7 +299,7 @@ emergencyReplicaCheck = do
 
 isIOYesReplica :: NodeState -> Bool
 isIOYesReplica ns =
-  not (nsIsSource ns) &&
+  not (isSource ns) &&
   case nsReplicaStatus ns of
     Just rs -> rsReplicaIORunning rs == IOYes
     Nothing -> False

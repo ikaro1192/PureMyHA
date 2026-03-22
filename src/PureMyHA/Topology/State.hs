@@ -2,11 +2,13 @@ module PureMyHA.Topology.State
   ( newDaemonState
   , readDaemonState
   , updateNodeState
+  , updateNodeStatePreserveRole
   , updateClusterTopology
   , getClusterTopology
   , setRecoveryBlock
   , clearRecoveryBlock
   , recordFailover
+  , updateClusterHealthFields
   , setClusterPause
   , clearClusterPause
   , TVarDaemonState
@@ -16,6 +18,7 @@ module PureMyHA.Topology.State
   ) where
 
 import Control.Concurrent.STM
+import Data.Maybe (isJust)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime, addUTCTime, NominalDiffTime)
 import PureMyHA.Types
@@ -25,6 +28,13 @@ type FailoverLock = TMVar ()
 
 lookupClusterTVar :: TVarDaemonState -> ClusterName -> STM (Maybe (TVar ClusterTopology))
 lookupClusterTVar tvar name = Map.lookup name <$> readTVar tvar
+
+withClusterTVar :: TVarDaemonState -> ClusterName -> (TVar ClusterTopology -> STM ()) -> STM ()
+withClusterTVar tvar name action = do
+  mctVar <- lookupClusterTVar tvar name
+  case mctVar of
+    Nothing    -> pure ()
+    Just ctVar -> action ctVar
 
 newDaemonState :: IO TVarDaemonState
 newDaemonState = newTVarIO Map.empty
@@ -38,12 +48,29 @@ readDaemonState tvar = do
 
 -- Only touches inner TVar; outer TVar stays in STM read-set, never written
 updateNodeState :: TVarDaemonState -> ClusterName -> NodeState -> STM ()
-updateNodeState tvar clusterName ns = do
-  mctVar <- lookupClusterTVar tvar clusterName
-  case mctVar of
-    Nothing    -> pure ()
-    Just ctVar -> modifyTVar' ctVar $ \ct ->
+updateNodeState tvar clusterName ns =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct ->
       ct { ctNodes = Map.insert (nsNodeId ns) ns (ctNodes ct) }
+
+-- | Like updateNodeState, but atomically reads nsPaused from the current
+-- topology state (so pause/resume commands are never overwritten by probes).
+-- During a recovery block (recent auto-failover), also preserves nsRole from
+-- the topology to prevent a stale worker probe from re-introducing the old
+-- source as Source. Outside the recovery block window, the worker's probe
+-- result is trusted so that external topology changes are detected.
+updateNodeStatePreserveRole :: TVarDaemonState -> ClusterName -> NodeState -> STM ()
+updateNodeStatePreserveRole tvar clusterName ns =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct ->
+      let current = Map.lookup (nsNodeId ns) (ctNodes ct)
+          preserveRole = isJust (ctRecoveryBlockedUntil ct)
+          ns' = ns { nsRole   = if preserveRole
+                                  then maybe (nsRole ns) nsRole current
+                                  else nsRole ns
+                   , nsPaused = maybe (nsPaused ns) nsPaused current
+                   }
+      in ct { ctNodes = Map.insert (nsNodeId ns) ns' (ctNodes ct) }
 
 -- On first call: creates inner TVar and writes outer Map (startup only)
 -- On subsequent calls: modifyTVar' on inner TVar only
@@ -68,26 +95,31 @@ getClusterTopology tvar name = do
     Just ctVar -> Just <$> readTVarIO ctVar
 
 setRecoveryBlock :: TVarDaemonState -> ClusterName -> UTCTime -> NominalDiffTime -> STM ()
-setRecoveryBlock tvar clusterName now period = do
-  mctVar <- lookupClusterTVar tvar clusterName
-  case mctVar of
-    Nothing    -> pure ()
-    Just ctVar -> modifyTVar' ctVar $ \ct ->
+setRecoveryBlock tvar clusterName now period =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct ->
       ct { ctRecoveryBlockedUntil = Just (addUTCTime period now) }
 
 clearRecoveryBlock :: TVarDaemonState -> ClusterName -> STM ()
-clearRecoveryBlock tvar clusterName = do
-  mctVar <- lookupClusterTVar tvar clusterName
-  case mctVar of
-    Nothing    -> pure ()
-    Just ctVar -> modifyTVar' ctVar $ \ct -> ct { ctRecoveryBlockedUntil = Nothing }
+clearRecoveryBlock tvar clusterName =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct -> ct { ctRecoveryBlockedUntil = Nothing }
+
+-- | Update only cluster-level health fields without touching ctNodes.
+-- This prevents stale snapshots from overwriting concurrent worker node updates.
+updateClusterHealthFields :: TVarDaemonState -> ClusterName -> NodeHealth -> Maybe NodeId -> Bool -> STM ()
+updateClusterHealthFields tvar clusterName health sourceNodeId observedHealthy =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct ->
+      ct { ctHealth          = health
+         , ctSourceNodeId    = sourceNodeId
+         , ctObservedHealthy = ctObservedHealthy ct || observedHealthy
+         }
 
 recordFailover :: TVarDaemonState -> ClusterName -> UTCTime -> STM ()
-recordFailover tvar clusterName now = do
-  mctVar <- lookupClusterTVar tvar clusterName
-  case mctVar of
-    Nothing    -> pure ()
-    Just ctVar -> modifyTVar' ctVar $ \ct -> ct { ctLastFailoverAt = Just now }
+recordFailover tvar clusterName now =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct -> ct { ctLastFailoverAt = Just now }
 
 newFailoverLock :: IO FailoverLock
 newFailoverLock = newTMVarIO ()
@@ -99,15 +131,11 @@ acquireFailoverLock lock = do
   pure (mt /= Nothing)
 
 setClusterPause :: TVarDaemonState -> ClusterName -> STM ()
-setClusterPause tvar clusterName = do
-  mctVar <- lookupClusterTVar tvar clusterName
-  case mctVar of
-    Nothing    -> pure ()
-    Just ctVar -> modifyTVar' ctVar $ \ct -> ct { ctPaused = True }
+setClusterPause tvar clusterName =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct -> ct { ctPaused = True }
 
 clearClusterPause :: TVarDaemonState -> ClusterName -> STM ()
-clearClusterPause tvar clusterName = do
-  mctVar <- lookupClusterTVar tvar clusterName
-  case mctVar of
-    Nothing    -> pure ()
-    Just ctVar -> modifyTVar' ctVar $ \ct -> ct { ctPaused = False }
+clearClusterPause tvar clusterName =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct -> ct { ctPaused = False }

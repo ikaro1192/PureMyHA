@@ -3,7 +3,6 @@ module PureMyHA.Failover.Demote (runDemote) where
 import Control.Concurrent.STM (atomically)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
-import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import PureMyHA.Config (ClusterConfig (..), ClusterPasswords (..))
 import PureMyHA.Env (App, ClusterEnv (..), getMySQLUser, getMonPassword, appLogInfo, appLogError)
@@ -27,13 +26,11 @@ runDemote demoteHost srcHost = do
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure (Left "Cluster not found")
-    Just topo -> do
-      let nodes = Map.elems (ctNodes topo)
-          findByHost h = filter (\ns -> nodeHost (nsNodeId ns) == h) nodes
-      case (findByHost demoteHost, findByHost srcHost) of
-        ([], _) -> pure (Left $ "Node not found: " <> demoteHost)
-        (_, []) -> pure (Left $ "Node not found: " <> srcHost)
-        (demoteNs : _, srcNs : _) -> do
+    Just topo ->
+      case (findNodeByHost demoteHost (ctNodes topo), findNodeByHost srcHost (ctNodes topo)) of
+        (Nothing, _) -> pure (Left $ "Node not found: " <> demoteHost)
+        (_, Nothing) -> pure (Left $ "Node not found: " <> srcHost)
+        (Just demoteNs, Just srcNs) -> do
           let demoteId = nsNodeId demoteNs
               srcId    = nsNodeId srcNs
               ci       = makeConnectInfo demoteId user password
@@ -50,7 +47,7 @@ runDemote demoteHost srcHost = do
               pure (Left err)
             Right () -> do
               liftIO $ atomically $ updateNodeState tvar (ccName cc)
-                (demoteNs { nsIsSource = False })
+                (demoteNs { nsRole = Replica })
               appLogInfo $ "[" <> ccName cc <> "] Demote completed: "
                         <> demoteHost <> " is now a replica"
               pure (Right ())

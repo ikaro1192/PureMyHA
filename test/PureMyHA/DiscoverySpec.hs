@@ -46,15 +46,15 @@ spec = do
       nsConnectError ns `shouldBe` Just "Connection refused"
       nsLastSeen    ns `shouldBe` Nothing
 
-    it "success with replica status sets isSource=False" $ do
+    it "success with replica status sets role=Replica" $ do
       let ns = buildNodeStateFromProbe testNid now (Right (Just testRs, "uuid1:1-100"))
-      nsIsSource      ns `shouldBe` False
+      nsRole          ns `shouldBe` Replica
       nsReplicaStatus ns `shouldBe` Just testRs
       nsLastSeen      ns `shouldBe` Just now
 
-    it "success without replica status sets isSource=True" $ do
+    it "success without replica status sets role=Source" $ do
       let ns = buildNodeStateFromProbe testNid now (Right (Nothing, "uuid1:1-100"))
-      nsIsSource      ns `shouldBe` True
+      nsRole          ns `shouldBe` Source
       nsReplicaStatus ns `shouldBe` Nothing
 
     it "success records the provided timestamp in nsLastSeen" $ do
@@ -86,25 +86,25 @@ spec = do
 
     it "adds upstream source when not yet visited" $ do
       let rs  = mkReplicaStatus "db0" 3306 IOYes "uuid1:1-100"
-          ns  = mkNodeState (NodeId "db2" 3306) False (Just rs) Healthy
+          ns  = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
           res = nextDiscoveryTargets ns Set.empty Set.empty
       res `shouldBe` Set.singleton (NodeId "db0" 3306)
 
     it "does not add upstream source when already visited" $ do
       let rs      = mkReplicaStatus "db0" 3306 IOYes "uuid1:1-100"
-          ns      = mkNodeState (NodeId "db2" 3306) False (Just rs) Healthy
+          ns      = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
           visited = Set.singleton (NodeId "db0" 3306)
           res     = nextDiscoveryTargets ns visited Set.empty
       res `shouldBe` Set.empty
 
     it "does not add anything when rsSourceHost is empty" $ do
       let rs  = mkReplicaStatus "" 3306 IOYes "uuid1:1-100"
-          ns  = mkNodeState (NodeId "db2" 3306) False (Just rs) Healthy
+          ns  = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
           res = nextDiscoveryTargets ns Set.empty Set.empty
       res `shouldBe` Set.empty
 
     it "does not add anything when nsReplicaStatus is Nothing" $ do
-      let ns  = mkNodeState (NodeId "db1" 3306) True Nothing Healthy
+      let ns  = mkNodeState (NodeId "db1" 3306) Source Nothing Healthy
           res = nextDiscoveryTargets ns Set.empty Set.empty
       res `shouldBe` Set.empty
 

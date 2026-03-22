@@ -26,8 +26,8 @@ spec = do
       identifySource [src, rep] `shouldBe` Just (NodeId "db1" 3306)
 
     it "identifies source from replica's rsSourceHost" $ do
-      -- Both nodes have no explicit isSource flag; should infer from replica status
-      let src = healthySource { nsIsSource = False }
+      -- Both nodes have no explicit Source role; should infer from replica status
+      let src = healthySource { nsRole = Replica }
           rep = healthyReplica
       -- db2's replica status points to db1, so db1 should still be identified
       identifySource [src, rep] `shouldNotBe` Nothing
@@ -35,16 +35,16 @@ spec = do
   describe "topology merge (runTopologyRefresh merge logic)" $ do
     it "retains nodes from oldTopo not present in newTopo" $ do
       -- newTopo has only the dead source (config node), oldTopo had replica too
-      let extraReplica = mkNodeState (NodeId "db3" 3306) False
+      let extraReplica = mkNodeState (NodeId "db3" 3306) Replica
                            (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) Healthy
-          newNodes = Map.fromList [(NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })]
+          newNodes = Map.fromList [(NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })]
           oldNodes = Map.union clusterWithDeadSource (Map.singleton (NodeId "db3" 3306) extraReplica)
           merged   = Map.union newNodes oldNodes
       Map.member (NodeId "db3" 3306) merged `shouldBe` True
 
     it "uses new state for nodes present in both topos" $ do
       -- newTopo has updated state for db1; oldTopo has stale state
-      let newSource = (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True }
+      let newSource = (unreachableNode (NodeId "db1" 3306)) { nsRole = Source }
           newNodes  = Map.singleton (NodeId "db1" 3306) newSource
           oldNodes  = clusterHealthy
           merged    = Map.union newNodes oldNodes

@@ -59,9 +59,12 @@ getMonPassword :: MonadReader ClusterEnv m => m Text
 getMonPassword = asks (cpPassword . envPasswords)
 
 appLogInfo, appLogWarn, appLogError :: (MonadReader ClusterEnv m, MonadIO m) => Text -> m ()
-appLogInfo  msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logInfo l msg)
-appLogWarn  msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logWarn l msg)
-appLogError msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logError l msg)
+appLogInfo  = withLogger logInfo
+appLogWarn  = withLogger logWarn
+appLogError = withLogger logError
+
+withLogger :: (MonadReader ClusterEnv m, MonadIO m) => (Logger -> Text -> IO ()) -> Text -> m ()
+withLogger logFn msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logFn l msg)
 
 recordAppEvent :: (MonadReader ClusterEnv m, MonadIO m) => EventType -> Maybe Text -> Text -> m ()
 recordAppEvent evType mNode details = do

@@ -43,7 +43,7 @@ selectCandidate nodes priorities mToHost =
     Just toHost ->
       -- Explicit target: validate it exists and has no errant GTIDs
       let matching = Map.elems $ Map.filter
-            (\ns -> nodeHost (nsNodeId ns) == toHost && not (nsIsSource ns))
+            (\ns -> nodeHost (nsNodeId ns) == toHost && not (isSource ns))
             nodes
       in case matching of
            []  -> Left $ "Host not found as replica: " <> toHost
@@ -67,7 +67,7 @@ rankCandidates nodes priorities =
 
 isEligibleCandidate :: NodeState -> Bool
 isEligibleCandidate ns =
-  not (nsIsSource ns)
+  not (isSource ns)
   && not (hasErrantGtid ns)
   && not (hasConnectError ns)
 

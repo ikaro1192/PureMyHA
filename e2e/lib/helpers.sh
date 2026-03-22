@@ -382,8 +382,11 @@ reset_cluster() {
   # Clear hook marker files
   $COMPOSE exec -T puremyhad rm -f /tmp/hook_*.log 2>/dev/null || true
 
-  # Wait for daemon to see healthy state
+  # Wait for daemon to see healthy state with mysql-source as source.
+  # After a failover in a previous test, workers need time to re-probe and
+  # detect the reconfigured topology (mysql-source = actual source).
   wait_for_health "Healthy" 60
+  wait_for_source "mysql-source" 30 || true
 
   echo "Cluster reset complete."
 }
