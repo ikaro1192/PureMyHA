@@ -125,6 +125,20 @@ ipc_fix_errant_gtid() {
   ipc_request '{"type":"fix-errant-gtid"}'
 }
 
+ipc_event_history() {
+  ipc_request '{"type":"event-history"}'
+}
+
+ipc_event_history_limit() {
+  local limit="$1"
+  ipc_request "{\"type\":\"event-history\",\"limit\":${limit}}"
+}
+
+ipc_event_history_cluster() {
+  local cluster="$1"
+  ipc_request "{\"type\":\"event-history\",\"cluster\":\"${cluster}\"}"
+}
+
 # ---------------------------------------------------------------------------
 # HTTP helpers (communicate with puremyhad via HTTP)
 # ---------------------------------------------------------------------------

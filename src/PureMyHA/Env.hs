@@ -10,16 +10,19 @@ module PureMyHA.Env
   , appLogInfo
   , appLogWarn
   , appLogError
+  , recordAppEvent
   ) where
 
 import Control.Concurrent.STM (TVar, readTVarIO)
 import Control.Monad.Reader (MonadReader, ReaderT, asks, runReaderT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Text (Text)
+import Data.Time (getCurrentTime)
 import PureMyHA.Config
+import PureMyHA.Event (EventBuffer, recordEvent)
 import PureMyHA.Logger (Logger, logInfo, logWarn, logError)
 import PureMyHA.Topology.State (TVarDaemonState, FailoverLock)
-import PureMyHA.Types (ClusterName)
+import PureMyHA.Types (ClusterName, Event (..), EventType)
 
 data ClusterEnv = ClusterEnv
   { envDaemonState :: TVarDaemonState
@@ -31,6 +34,7 @@ data ClusterEnv = ClusterEnv
   , envHooks       :: TVar (Maybe HooksConfig)
   , envLock        :: FailoverLock
   , envLogger      :: TVar Logger
+  , envEventBuffer :: EventBuffer
   }
 
 type App a = ReaderT ClusterEnv IO a
@@ -58,3 +62,10 @@ appLogInfo, appLogWarn, appLogError :: (MonadReader ClusterEnv m, MonadIO m) => 
 appLogInfo  msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logInfo l msg)
 appLogWarn  msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logWarn l msg)
 appLogError msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logError l msg)
+
+recordAppEvent :: (MonadReader ClusterEnv m, MonadIO m) => EventType -> Maybe Text -> Text -> m ()
+recordAppEvent evType mNode details = do
+  buf <- asks envEventBuffer
+  cn  <- getClusterName
+  now <- liftIO getCurrentTime
+  liftIO $ recordEvent buf (Event now cn evType mNode details)
