@@ -3,6 +3,7 @@ module PureMyHA.Logger
   , initLogger
   , closeLogger
   , reopenLogger
+  , setLogLevel
   , logDebug
   , logInfo
   , logWarn
@@ -10,12 +11,13 @@ module PureMyHA.Logger
   , nullLogger
   ) where
 
+import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
 import Data.Text (Text)
 import Katip
 import PureMyHA.Config (LogLevel (..))
 import System.IO (BufferMode (..), IOMode (..), hSetBuffering, openFile)
 
-newtype Logger = Logger LogEnv
+data Logger = Logger LogEnv (TVar Severity)
 
 logLevelToSeverity :: LogLevel -> Severity
 logLevelToSeverity LogLevelDebug = DebugS
@@ -27,24 +29,41 @@ initLogger :: FilePath -> LogLevel -> IO Logger
 initLogger logFile level = do
   h <- openFile logFile AppendMode
   hSetBuffering h LineBuffering
-  scribe <- mkHandleScribe ColorIfTerminal h (permitItem (logLevelToSeverity level)) V2
+  scribe <- mkHandleScribe ColorIfTerminal h (permitItem DebugS) V2
   le <- initLogEnv "puremyha" "production"
   le' <- registerScribe "file" scribe defaultScribeSettings le
-  pure (Logger le')
+  sevVar <- newTVarIO (logLevelToSeverity level)
+  pure (Logger le' sevVar)
 
 closeLogger :: Logger -> IO ()
-closeLogger (Logger le) = do
+closeLogger (Logger le _) = do
   _ <- closeScribes le
   pure ()
 
-reopenLogger :: FilePath -> LogLevel -> Logger -> IO Logger
-reopenLogger logFile level old = do
+-- | Reopen the log file (e.g. after log rotation via SIGUSR1).
+-- Reuses the existing severity TVar so any runtime log level override is preserved.
+reopenLogger :: FilePath -> Logger -> IO Logger
+reopenLogger logFile old@(Logger _ sevVar) = do
   closeLogger old
-  initLogger logFile level
+  h <- openFile logFile AppendMode
+  hSetBuffering h LineBuffering
+  scribe <- mkHandleScribe ColorIfTerminal h (permitItem DebugS) V2
+  le <- initLogEnv "puremyha" "production"
+  le' <- registerScribe "file" scribe defaultScribeSettings le
+  pure (Logger le' sevVar)
+
+-- | Atomically update the minimum log level. Takes effect immediately on the
+-- next log call without reopening or closing the log file.
+setLogLevel :: Logger -> LogLevel -> IO ()
+setLogLevel (Logger _ sevVar) level =
+  atomically $ writeTVar sevVar (logLevelToSeverity level)
 
 logAt :: Logger -> Severity -> Text -> IO ()
-logAt (Logger le) sev msg =
-  runKatipT le $ logMsg "puremyha" sev (logStr msg)
+logAt (Logger le sevVar) sev msg = do
+  minSev <- readTVarIO sevVar
+  if sev >= minSev
+    then runKatipT le $ logMsg "puremyha" sev (logStr msg)
+    else pure ()
 
 logDebug :: Logger -> Text -> IO ()
 logDebug l = logAt l DebugS
@@ -61,4 +80,5 @@ logError l = logAt l ErrorS
 nullLogger :: IO Logger
 nullLogger = do
   le <- initLogEnv "test" "test"
-  pure (Logger le)
+  sevVar <- newTVarIO InfoS
+  pure (Logger le sevVar)
