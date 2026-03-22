@@ -4,7 +4,7 @@ import Control.Concurrent.Async (Async, async, waitAnyCancel, race_, cancel)
 import Control.Concurrent.STM   (TMVar, TVar, atomically, newTVarIO, newEmptyTMVarIO,
                                   putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
-import Control.Monad (void, forM_)
+import Control.Monad (void, when, forM_)
 import Data.List (find)
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
@@ -18,6 +18,7 @@ import System.Posix.Signals (installHandler, sigTERM, sigINT, sigHUP, sigUSR1, H
 
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
+import PureMyHA.HTTP.Server (startHTTPServer)
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction)
 import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, logInfo, logWarn)
 import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker)
@@ -57,13 +58,18 @@ main = do
   clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
   clusterEnvs      <- mapM (initCluster tvar loggerVar) clusterPasswords
 
-  installHUPHandler (optConfigPath opts) clusterEnvs loggerVar
+  httpAsyncVar <- newTVarIO Nothing
+  installHUPHandler (optConfigPath opts) clusterEnvs loggerVar httpAsyncVar tvar
   installUSR1Handler (lcLogFile (cfgLogging cfg)) loggerVar
 
   allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar
+  when (hcEnabled (cfgHttp cfg)) $ do
+    a <- async (startHTTPServer (cfgHttp cfg) tvar)
+    atomically $ writeTVar httpAsyncVar (Just a)
+
   logger <- readTVarIO loggerVar
   logInfo logger "puremyhad started"
-  awaitShutdownAndCleanup loggerVar shutdownVar allWorkers
+  awaitShutdownAndCleanup loggerVar shutdownVar allWorkers httpAsyncVar
 
 loadAndValidateConfig :: FilePath -> IO Config
 loadAndValidateConfig path = do
@@ -80,8 +86,8 @@ installShutdownHandlers = do
   _ <- installHandler sigINT  h Nothing
   pure shutdownVar
 
-installHUPHandler :: FilePath -> [ClusterEnv] -> TVar Logger -> IO ()
-installHUPHandler configPath clusterEnvs loggerVar = do
+installHUPHandler :: FilePath -> [ClusterEnv] -> TVar Logger -> TVar (Maybe (Async ())) -> TVarDaemonState -> IO ()
+installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar = do
   _ <- installHandler sigHUP (Catch $ do
     logger <- readTVarIO loggerVar
     eCfg' <- loadConfig configPath
@@ -95,6 +101,13 @@ installHUPHandler configPath clusterEnvs loggerVar = do
             Just cc -> atomically $ do
               writeTVar (envMonitoring env) (ccMonitoring cc)
               writeTVar (envHooks env)      (ccHooks cc)
+        mOld <- readTVarIO httpAsyncVar
+        forM_ mOld cancel
+        if hcEnabled (cfgHttp cfg')
+          then do
+            a <- async (startHTTPServer (cfgHttp cfg') tvar)
+            atomically $ writeTVar httpAsyncVar (Just a)
+          else atomically $ writeTVar httpAsyncVar Nothing
         logInfo logger "SIGHUP: config reloaded") Nothing
   pure ()
 
@@ -132,14 +145,16 @@ startAllWorkers clusterEnvs socketPath tvar = do
 
   pure $ ipcAsync : monitorWorkers <> refreshWorkers
 
-awaitShutdownAndCleanup :: TVar Logger -> TMVar () -> [Async ()] -> IO ()
-awaitShutdownAndCleanup loggerVar shutdownVar allWorkers = do
+awaitShutdownAndCleanup :: TVar Logger -> TMVar () -> [Async ()] -> TVar (Maybe (Async ())) -> IO ()
+awaitShutdownAndCleanup loggerVar shutdownVar allWorkers httpAsyncVar = do
   race_
     (atomically (takeTMVar shutdownVar))
     (void (waitAnyCancel allWorkers))
   logger <- readTVarIO loggerVar
   logInfo logger "puremyhad shutting down"
   mapM_ cancel allWorkers
+  mHttp <- readTVarIO httpAsyncVar
+  forM_ mHttp cancel
   closeLogger logger
 
 initCluster

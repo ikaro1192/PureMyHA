@@ -9,9 +9,11 @@ module PureMyHA.Config
   , FailoverConfig (..)
   , HooksConfig (..)
   , LoggingConfig (..)
+  , HttpConfig (..)
   , CandidatePriority (..)
   , GlobalConfig (..)
   , defaultLoggingConfig
+  , defaultHttpConfig
   , loadConfig
   , parseDuration
   ) where
@@ -28,7 +30,17 @@ import Text.Read (readMaybe)
 data Config = Config
   { cfgClusters :: [ClusterConfig]
   , cfgLogging  :: LoggingConfig
+  , cfgHttp     :: HttpConfig
   } deriving (Show, Generic)
+
+data HttpConfig = HttpConfig
+  { hcEnabled       :: Bool
+  , hcListenAddress :: String
+  , hcPort          :: Int
+  } deriving (Show, Eq, Generic)
+
+defaultHttpConfig :: HttpConfig
+defaultHttpConfig = HttpConfig False "127.0.0.1" 8080
 
 data LoggingConfig = LoggingConfig
   { lcLogFile :: FilePath
@@ -163,10 +175,11 @@ instance FromJSON Config where
     mglobal     <- o .:? "global"
     rawClusters <- o .:  "clusters"
     logging     <- o .:? "logging" .!= defaultLoggingConfig
+    http        <- o .:? "http"    .!= defaultHttpConfig
     clusters    <- case mapM (resolveCluster mglobal) rawClusters of
       Left err -> fail err
       Right cs -> pure cs
-    pure $ Config clusters logging
+    pure $ Config clusters logging http
 
 instance FromJSON LoggingConfig where
   parseJSON = withObject "LoggingConfig" $ \o ->
@@ -230,6 +243,13 @@ instance FromJSON FailoverConfig where
 instance FromJSON CandidatePriority where
   parseJSON = withObject "CandidatePriority" $ \o ->
     CandidatePriority <$> o .: "host"
+
+instance FromJSON HttpConfig where
+  parseJSON = withObject "HttpConfig" $ \o ->
+    HttpConfig
+      <$> o .:? "enabled"        .!= False
+      <*> o .:? "listen_address" .!= "127.0.0.1"
+      <*> o .:? "port"           .!= 8080
 
 instance FromJSON HooksConfig where
   parseJSON = withObject "HooksConfig" $ \o ->

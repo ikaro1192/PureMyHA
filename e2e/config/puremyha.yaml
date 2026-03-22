@@ -19,6 +19,11 @@ clusters:
       pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
       post_switchover: /etc/puremyha/hooks/post_switchover.sh
 
+http:
+  enabled: true
+  listen_address: "0.0.0.0"
+  port: 8080
+
 logging:
   log_file: /var/log/puremyha.log
 

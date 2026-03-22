@@ -36,3 +36,12 @@ global:
     post_failover: /etc/puremyha/hooks/post_failover.sh
     pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
     post_switchover: /etc/puremyha/hooks/post_switchover.sh
+
+http:                                  # optional HTTP health check server
+  enabled: false                     # default: false — set to true to expose endpoints
+  listen_address: "127.0.0.1"        # default: 127.0.0.1 (use 0.0.0.0 for all interfaces)
+  port: 8080                         # default: 8080
+  # Endpoints (read-only, GET only):
+  #   GET /health                 → 200 {"status":"ok"} / 503 {"status":"degraded"}
+  #   GET /cluster/:name/status   → ClusterStatus JSON   (readiness probe / LB check)
+  #   GET /cluster/:name/topology → ClusterTopologyView JSON

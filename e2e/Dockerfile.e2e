@@ -18,7 +18,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      libgmp10 zlib1g socat jq default-mysql-client procps && \
+      libgmp10 zlib1g socat jq curl default-mysql-client procps && \
     rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /staging/puremyhad /usr/sbin/puremyhad
