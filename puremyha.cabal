@@ -107,6 +107,7 @@ test-suite puremyha-test
     PureMyHA.SwitchoverSpec
     PureMyHA.DiscoverySpec
     PureMyHA.ErrantGtidSpec
+    PureMyHA.ConnectionSpec
     PureMyHA.WorkerSpec
   build-depends:
     puremyha,

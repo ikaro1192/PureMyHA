@@ -22,8 +22,8 @@ import PureMyHA.Config
 import PureMyHA.Env
 import PureMyHA.Failover.Auto (runAutoFailover)
 import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
-import PureMyHA.Logger (logInfo, logWarn)
-import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
+import PureMyHA.Logger (logDebug, logInfo, logWarn)
+import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.Discovery (discoverTopology)
 import PureMyHA.Topology.State
@@ -119,15 +119,21 @@ monitorNode nid = do
   pws  <- asks envPasswords
   fdc  <- asks envDetection
   now  <- liftIO getCurrentTime
+  mc <- liftIO $ readTVarIO (envMonitoring env)
   let user      = credUser (ccCredentials cc)
       ci        = makeConnectInfo nid user (cpPassword pws)
       threshold = fdcConsecutiveFailuresForDead fdc
+      retries   = mcConnectRetries mc
+      backoff   = mcConnectRetryBackoff mc
+      cap       = mcConnectTimeout mc
+      logRetry msg = readTVarIO (envLogger env) >>= \l ->
+        logDebug l ("[" <> ccName cc <> "] Node " <> nodeHost nid <> ": " <> msg)
   -- Read old state before connecting, so we can preserve nsIsSource on error
   mOldNs <- liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
   let prevFailures = maybe 0 nsConsecutiveFailures mOldNs
-  result <- liftIO $ withNodeConn ci $ \conn -> do
+  result <- liftIO $ withNodeConnRetry retries backoff cap logRetry ci $ \conn -> do
     mRs      <- showReplicaStatus conn
     gtidExec <- getGtidExecuted conn
     pure (mRs, gtidExec)

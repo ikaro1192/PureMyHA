@@ -90,6 +90,8 @@ data MonitoringConfig = MonitoringConfig
   , mcReplicationLagWarning  :: NominalDiffTime
   , mcReplicationLagCritical :: NominalDiffTime
   , mcDiscoveryInterval      :: NominalDiffTime  -- 0 = disabled, default 300s
+  , mcConnectRetries         :: Int              -- ^ Total connection attempts per probe cycle (1 = no retry, default)
+  , mcConnectRetryBackoff    :: NominalDiffTime  -- ^ Initial backoff between retries, doubles each attempt, capped at connect_timeout (default 1s)
   } deriving (Show, Generic)
 
 data FailureDetectionConfig = FailureDetectionConfig
@@ -211,7 +213,9 @@ instance FromJSON MonitoringConfig where
       <*> (unDuration <$> o .:  "connect_timeout")
       <*> (unDuration <$> o .:  "replication_lag_warning")
       <*> (unDuration <$> o .:  "replication_lag_critical")
-      <*> (unDuration <$> o .:? "discovery_interval" .!= DurationField 300)
+      <*> (unDuration <$> o .:? "discovery_interval"    .!= DurationField 300)
+      <*>               o .:? "connect_retries"          .!= 1
+      <*> (unDuration <$> o .:? "connect_retry_backoff" .!= DurationField 1)
 
 instance FromJSON FailureDetectionConfig where
   parseJSON = withObject "FailureDetectionConfig" $ \o ->

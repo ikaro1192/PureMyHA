@@ -62,7 +62,7 @@ mkTestEnv :: TVarDaemonState -> ClusterConfig -> FailoverConfig -> IO ClusterEnv
 mkTestEnv tvar cc fc = do
   let pws = ClusterPasswords "" "" ""
       fdc = FailureDetectionConfig 0 3
-  mcVar    <- newTVarIO (MonitoringConfig 3 5 30 60 300)
+  mcVar    <- newTVarIO (MonitoringConfig 3 5 30 60 300 1 1)
   hooksVar <- newTVarIO Nothing
   lock     <- newFailoverLock
   logger    <- nullLogger

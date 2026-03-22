@@ -3,6 +3,7 @@ module PureMyHA.Logger
   , initLogger
   , closeLogger
   , reopenLogger
+  , logDebug
   , logInfo
   , logWarn
   , logError
@@ -37,6 +38,9 @@ reopenLogger logFile old = do
 logAt :: Logger -> Severity -> Text -> IO ()
 logAt (Logger le) sev msg =
   runKatipT le $ logMsg "puremyha" sev (logStr msg)
+
+logDebug :: Logger -> Text -> IO ()
+logDebug l = logAt l DebugS
 
 logInfo :: Logger -> Text -> IO ()
 logInfo l = logAt l InfoS
