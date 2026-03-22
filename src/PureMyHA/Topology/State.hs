@@ -17,6 +17,7 @@ module PureMyHA.Topology.State
   ) where
 
 import Control.Concurrent.STM
+import Data.Maybe (isJust)
 import qualified Data.Map.Strict as Map
 import Data.Time (UTCTime, addUTCTime, NominalDiffTime)
 import PureMyHA.Types
@@ -51,16 +52,21 @@ updateNodeState tvar clusterName ns =
     modifyTVar' ctVar $ \ct ->
       ct { ctNodes = Map.insert (nsNodeId ns) ns (ctNodes ct) }
 
--- | Like updateNodeState, but atomically reads nsRole and nsPaused from the
--- current topology state rather than using values baked into the NodeState.
--- This prevents race conditions where failover changes the role between
--- the worker's read and write.
+-- | Like updateNodeState, but atomically reads nsPaused from the current
+-- topology state (so pause/resume commands are never overwritten by probes).
+-- During a recovery block (recent auto-failover), also preserves nsRole from
+-- the topology to prevent a stale worker probe from re-introducing the old
+-- source as Source. Outside the recovery block window, the worker's probe
+-- result is trusted so that external topology changes are detected.
 updateNodeStatePreserveRole :: TVarDaemonState -> ClusterName -> NodeState -> STM ()
 updateNodeStatePreserveRole tvar clusterName ns =
   withClusterTVar tvar clusterName $ \ctVar ->
     modifyTVar' ctVar $ \ct ->
       let current = Map.lookup (nsNodeId ns) (ctNodes ct)
-          ns' = ns { nsRole   = maybe (nsRole ns) nsRole current
+          preserveRole = isJust (ctRecoveryBlockedUntil ct)
+          ns' = ns { nsRole   = if preserveRole
+                                  then maybe (nsRole ns) nsRole current
+                                  else nsRole ns
                    , nsPaused = maybe (nsPaused ns) nsPaused current
                    }
       in ct { ctNodes = Map.insert (nsNodeId ns) ns' (ctNodes ct) }
