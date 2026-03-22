@@ -38,6 +38,13 @@ global:
     post_failover: /etc/puremyha/hooks/post_failover.sh
     pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
     post_switchover: /etc/puremyha/hooks/post_switchover.sh
+    on_failure_detection: /etc/puremyha/hooks/on_failure_detection.sh              # optional
+    post_unsuccessful_failover: /etc/puremyha/hooks/post_unsuccessful_failover.sh  # optional
+
+logging:                               # optional logging configuration
+  log_file: /var/log/puremyha.log    # default: /var/log/puremyha.log
+  max_events: 1000                   # in-memory event history buffer size. Default: 1000
+  log_level: info                    # minimum log level: debug | info | warn | error. Default: info
 
 http:                                  # optional HTTP health check server
   enabled: false                     # default: false — set to true to expose endpoints
