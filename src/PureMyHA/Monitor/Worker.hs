@@ -128,7 +128,7 @@ monitorNode nid = do
       cap       = mcConnectTimeout mc
       logRetry msg = readTVarIO (envLogger env) >>= \l ->
         logDebug l ("[" <> ccName cc <> "] Node " <> nodeHost nid <> ": " <> msg)
-  -- Read old state before connecting, so we can preserve nsRole on error
+  -- Read old state before connecting for prevFailures count
   mOldNs <- liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
@@ -144,12 +144,12 @@ monitorNode nid = do
             { nsNodeId               = nid
             , nsReplicaStatus        = Nothing
             , nsGtidExecuted         = ""
-            , nsRole                 = maybe Replica nsRole mOldNs
+            , nsRole                 = Replica  -- actual role read atomically at write time
             , nsHealth               = NeedsAttention err
             , nsLastSeen             = Nothing
             , nsConnectError         = Just err
             , nsErrantGtids          = ""
-            , nsPaused               = maybe False nsPaused mOldNs
+            , nsPaused               = False    -- actual value read atomically at write time
             , nsConsecutiveFailures  = newFailures
             }
         Right (mRs, gtidExec) ->
@@ -162,7 +162,7 @@ monitorNode nid = do
             , nsLastSeen             = Just now
             , nsConnectError         = Nothing
             , nsErrantGtids          = ""
-            , nsPaused               = maybe False nsPaused mOldNs
+            , nsPaused               = False    -- actual value read atomically at write time
             , nsConsecutiveFailures  = 0
             }
   -- Update errant GTIDs by querying MySQL
@@ -179,7 +179,12 @@ monitorNode nid = do
                     <> T.pack (show threshold) <> "): " <> err
       Right _  -> pure ()
   logHealthChange nid mOldNs ns'''
-  liftIO $ atomically $ updateNodeState tvar (ccName cc) ns'''
+  -- On error: use atomic read-modify-write to preserve nsRole/nsPaused from
+  -- the current topology, preventing race conditions with failover.
+  -- On success: use direct update since the probe result is authoritative.
+  liftIO $ atomically $ case result of
+    Left _  -> updateNodeStatePreserveRole tvar (ccName cc) ns'''
+    Right _ -> updateNodeState tvar (ccName cc) ns'''
   -- Recompute cluster-level health
   recomputeClusterHealth
 

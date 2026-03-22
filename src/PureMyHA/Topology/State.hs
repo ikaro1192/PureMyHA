@@ -2,6 +2,7 @@ module PureMyHA.Topology.State
   ( newDaemonState
   , readDaemonState
   , updateNodeState
+  , updateNodeStatePreserveRole
   , updateClusterTopology
   , getClusterTopology
   , setRecoveryBlock
@@ -49,6 +50,20 @@ updateNodeState tvar clusterName ns =
   withClusterTVar tvar clusterName $ \ctVar ->
     modifyTVar' ctVar $ \ct ->
       ct { ctNodes = Map.insert (nsNodeId ns) ns (ctNodes ct) }
+
+-- | Like updateNodeState, but atomically reads nsRole and nsPaused from the
+-- current topology state rather than using values baked into the NodeState.
+-- This prevents race conditions where failover changes the role between
+-- the worker's read and write.
+updateNodeStatePreserveRole :: TVarDaemonState -> ClusterName -> NodeState -> STM ()
+updateNodeStatePreserveRole tvar clusterName ns =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct ->
+      let current = Map.lookup (nsNodeId ns) (ctNodes ct)
+          ns' = ns { nsRole   = maybe (nsRole ns) nsRole current
+                   , nsPaused = maybe (nsPaused ns) nsPaused current
+                   }
+      in ct { ctNodes = Map.insert (nsNodeId ns) ns' (ctNodes ct) }
 
 -- On first call: creates inner TVar and writes outer Map (startup only)
 -- On subsequent calls: modifyTVar' on inner TVar only
