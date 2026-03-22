@@ -179,12 +179,10 @@ monitorNode nid = do
                     <> T.pack (show threshold) <> "): " <> err
       Right _  -> pure ()
   logHealthChange nid mOldNs ns'''
-  -- On error: use atomic read-modify-write to preserve nsRole/nsPaused from
-  -- the current topology, preventing race conditions with failover.
-  -- On success: use direct update since the probe result is authoritative.
-  liftIO $ atomically $ case result of
-    Left _  -> updateNodeStatePreserveRole tvar (ccName cc) ns'''
-    Right _ -> updateNodeState tvar (ccName cc) ns'''
+  -- Use atomic read-modify-write to preserve nsRole/nsPaused from the current
+  -- topology. This prevents race conditions where failover or pause/resume
+  -- commands change these fields between the worker's read and write.
+  liftIO $ atomically $ updateNodeStatePreserveRole tvar (ccName cc) ns'''
   -- Recompute cluster-level health
   recomputeClusterHealth
 
