@@ -39,6 +39,7 @@ library
     PureMyHA.Config
     PureMyHA.Logger
     PureMyHA.Env
+    PureMyHA.Event
     PureMyHA.Hook
     PureMyHA.MySQL.Auth
     PureMyHA.MySQL.Connection
@@ -115,6 +116,7 @@ test-suite puremyha-test
     PureMyHA.ConnectionSpec
     PureMyHA.WorkerSpec
     PureMyHA.HTTPSpec
+    PureMyHA.EventSpec
   build-depends:
     puremyha,
     hspec            >= 2.9,

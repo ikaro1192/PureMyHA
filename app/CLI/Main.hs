@@ -30,6 +30,7 @@ data Command
   | CmdResumeReplica Text
   | CmdPauseFailover
   | CmdResumeFailover
+  | CmdEvents (Maybe Int)
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -72,6 +73,8 @@ cliOptions = CLIOptions
             (info (pure CmdPauseFailover) (progDesc "Pause automatic failover for maintenance"))
         <> command "resume-failover"
             (info (pure CmdResumeFailover) (progDesc "Resume automatic failover"))
+        <> command "events"
+            (info eventsCmd (progDesc "Show recent event history"))
         )
 
 demoteCmd :: Parser Command
@@ -84,6 +87,14 @@ pauseReplicaCmd = CmdPauseReplica <$> strOption (long "host" <> metavar "HOST" <
 
 resumeReplicaCmd :: Parser Command
 resumeReplicaCmd = CmdResumeReplica <$> strOption (long "host" <> metavar "HOST" <> help "Node to resume")
+
+eventsCmd :: Parser Command
+eventsCmd = CmdEvents
+  <$> optional (option auto
+        ( long "limit"
+        <> short 'n'
+        <> metavar "N"
+        <> help "Maximum number of events to show" ))
 
 switchoverCmd :: Parser Command
 switchoverCmd = CmdSwitchover
@@ -116,6 +127,7 @@ main = do
         CmdResumeReplica host -> ReqResumeReplica mCluster host
         CmdPauseFailover     -> ReqPauseFailover  mCluster
         CmdResumeFailover    -> ReqResumeFailover mCluster
+        CmdEvents mLimit     -> ReqEventHistory   mCluster mLimit
 
   eResp <- sendRequest socketPath req
   case eResp of
@@ -123,10 +135,11 @@ main = do
       hPutStrLn stderr $ "Error: " <> T.unpack err
       exitFailure
     Right resp -> case resp of
-      RespStatus statuses      -> printStatus json statuses
-      RespTopology views       -> printTopology json views
-      RespOperation result     -> printOperationResult json result
-      RespErrantGtids gtids    -> printErrantGtids json gtids
-      RespError msg            -> do
+      RespStatus statuses        -> printStatus json statuses
+      RespTopology views         -> printTopology json views
+      RespOperation result       -> printOperationResult json result
+      RespErrantGtids gtids      -> printErrantGtids json gtids
+      RespEventHistory evs       -> printEventHistory json evs
+      RespError msg              -> do
         hPutStrLn stderr $ "Daemon error: " <> T.unpack msg
         exitFailure

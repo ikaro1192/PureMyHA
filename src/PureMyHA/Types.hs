@@ -12,6 +12,8 @@ module PureMyHA.Types
   , NodeStateView (..)
   , OperationResult (..)
   , ErrantGtidInfo (..)
+  , EventType (..)
+  , Event (..)
   ) where
 
 import Data.Map.Strict (Map)
@@ -112,4 +114,23 @@ data OperationResult
 data ErrantGtidInfo = ErrantGtidInfo
   { egiNodeId     :: NodeId
   , egiErrantGtid :: Text
+  } deriving (Show, Eq, Generic)
+
+data EventType
+  = EvHealthChange       -- ^ Node health state transition
+  | EvClusterHealth      -- ^ Cluster-level health transition
+  | EvFailoverStarted
+  | EvFailoverCompleted
+  | EvFailoverFailed
+  | EvSwitchoverCompleted
+  | EvConfigReloaded
+  | EvPauseChanged       -- ^ Failover pause/resume
+  deriving (Show, Eq, Generic)
+
+data Event = Event
+  { evTimestamp :: UTCTime
+  , evCluster   :: ClusterName
+  , evType      :: EventType
+  , evNode      :: Maybe Text   -- ^ Affected node host (if applicable)
+  , evDetails   :: Text         -- ^ Human-readable description
   } deriving (Show, Eq, Generic)

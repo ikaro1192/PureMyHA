@@ -74,6 +74,7 @@ doFailover = do
           pure (Left err)
         Right () -> do
           appLogInfo $ "[" <> ccName cc <> "] Auto-failover started"
+          recordAppEvent EvFailoverStarted Nothing "Auto-failover started"
           executeFailover topo
 
 executeFailover :: ClusterTopology -> App (Either Text ())
@@ -100,6 +101,8 @@ executeFailover topo = runExceptT $ do
   let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts
   liftIO $ runHookFireForget mHooks hcPostFailover postEnv
   lift $ appLogInfo $ prefix <> "Auto-failover completed: new source is " <> nodeHost candidateId
+  lift $ recordAppEvent EvFailoverCompleted (Just (nodeHost candidateId))
+    ("Auto-failover completed: new source is " <> nodeHost candidateId)
 
 runPreFailoverHook :: NodeId -> Maybe Text -> App (Either Text ())
 runPreFailoverHook candidateId oldSourceHost = do
@@ -121,6 +124,7 @@ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
   case promoteResult of
     Left err -> do
       appLogError $ "[" <> clusterName <> "] Auto-failover failed: Promote failed: " <> err
+      recordAppEvent EvFailoverFailed (Just (nodeHost candidateId)) ("Auto-failover failed: Promote failed: " <> err)
       ts <- liftIO getCurrentTimestamp
       mHooks <- getHooksConfig
       let failEnv = HookEnv clusterName (Just (nodeHost candidateId)) oldSourceHost (Just "PromoteFailed") ts

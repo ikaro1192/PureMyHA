@@ -43,11 +43,12 @@ defaultHttpConfig :: HttpConfig
 defaultHttpConfig = HttpConfig False "127.0.0.1" 8080
 
 data LoggingConfig = LoggingConfig
-  { lcLogFile :: FilePath
+  { lcLogFile   :: FilePath
+  , lcMaxEvents :: Int      -- ^ In-memory event history buffer size (default 1000)
   } deriving (Show, Generic)
 
 defaultLoggingConfig :: LoggingConfig
-defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log"
+defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log" 1000
 
 -- | Global defaults applied to all clusters unless overridden per-cluster.
 data GlobalConfig = GlobalConfig
@@ -185,7 +186,9 @@ instance FromJSON Config where
 
 instance FromJSON LoggingConfig where
   parseJSON = withObject "LoggingConfig" $ \o ->
-    LoggingConfig <$> o .:? "log_file" .!= "/var/log/puremyha.log"
+    LoggingConfig
+      <$> o .:? "log_file"   .!= "/var/log/puremyha.log"
+      <*> o .:? "max_events" .!= 1000
 
 instance FromJSON GlobalConfig where
   parseJSON = withObject "GlobalConfig" $ \o ->

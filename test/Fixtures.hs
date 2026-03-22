@@ -20,6 +20,7 @@ import Data.Text (Text)
 import Data.Time (UTCTime, fromGregorian, UTCTime (..))
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..))
+import PureMyHA.Event (newEventBuffer)
 import PureMyHA.Logger (nullLogger)
 import PureMyHA.Topology.State (TVarDaemonState, newFailoverLock)
 import PureMyHA.Types
@@ -67,6 +68,7 @@ mkTestEnv tvar cc fc = do
   lock     <- newFailoverLock
   logger    <- nullLogger
   loggerVar <- newTVarIO logger
+  eventBuf  <- newEventBuffer 100
   pure ClusterEnv
     { envDaemonState = tvar
     , envCluster     = cc
@@ -77,6 +79,7 @@ mkTestEnv tvar cc fc = do
     , envHooks       = hooksVar
     , envLock        = lock
     , envLogger      = loggerVar
+    , envEventBuffer = eventBuf
     }
 
 healthySource :: NodeState
