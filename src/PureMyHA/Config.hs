@@ -93,7 +93,8 @@ data MonitoringConfig = MonitoringConfig
   } deriving (Show, Generic)
 
 data FailureDetectionConfig = FailureDetectionConfig
-  { fdcRecoveryBlockPeriod :: NominalDiffTime
+  { fdcRecoveryBlockPeriod         :: NominalDiffTime
+  , fdcConsecutiveFailuresForDead  :: Int   -- ^ Consecutive failures required to mark a node dead (default 3)
   } deriving (Show, Generic)
 
 data FailoverConfig = FailoverConfig
@@ -215,7 +216,8 @@ instance FromJSON MonitoringConfig where
 instance FromJSON FailureDetectionConfig where
   parseJSON = withObject "FailureDetectionConfig" $ \o ->
     FailureDetectionConfig
-      <$> (unDuration <$> o .: "recovery_block_period")
+      <$> (unDuration <$> o .:  "recovery_block_period")
+      <*> o .:? "consecutive_failures_for_dead" .!= 3
 
 instance FromJSON FailoverConfig where
   parseJSON = withObject "FailoverConfig" $ \o ->

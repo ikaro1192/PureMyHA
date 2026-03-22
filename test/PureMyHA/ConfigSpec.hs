@@ -103,6 +103,39 @@ spec = do
         Right cfg ->
           fdcRecoveryBlockPeriod (ccFailureDetection (head (cfgClusters cfg))) `shouldBe` 60
 
+    it "consecutive_failures_for_dead defaults to 3 when absent" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg ->
+          fdcConsecutiveFailuresForDead (ccFailureDetection (head (cfgClusters cfg))) `shouldBe` 3
+
+    it "parses explicit consecutive_failures_for_dead" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    failure_detection:"
+            , "      recovery_block_period: 3600s"
+            , "      consecutive_failures_for_dead: 5"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg ->
+          fdcConsecutiveFailuresForDead (ccFailureDetection (head (cfgClusters cfg))) `shouldBe` 5
+
     it "cluster-level failover overrides global" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"

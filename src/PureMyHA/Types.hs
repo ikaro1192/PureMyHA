@@ -51,15 +51,16 @@ data NodeHealth
   deriving (Eq, Show, Generic)
 
 data NodeState = NodeState
-  { nsNodeId        :: NodeId
-  , nsReplicaStatus :: Maybe ReplicaStatus
-  , nsGtidExecuted  :: Text
-  , nsIsSource      :: Bool
-  , nsHealth        :: NodeHealth
-  , nsLastSeen      :: Maybe UTCTime
-  , nsConnectError  :: Maybe Text
-  , nsErrantGtids   :: Text
-  , nsPaused        :: Bool
+  { nsNodeId               :: NodeId
+  , nsReplicaStatus        :: Maybe ReplicaStatus
+  , nsGtidExecuted         :: Text
+  , nsIsSource             :: Bool
+  , nsHealth               :: NodeHealth
+  , nsLastSeen             :: Maybe UTCTime
+  , nsConnectError         :: Maybe Text
+  , nsErrantGtids          :: Text
+  , nsPaused               :: Bool
+  , nsConsecutiveFailures  :: Int    -- ^ Number of consecutive probe failures; resets to 0 on success
   } deriving (Eq, Show, Generic)
 
 data ClusterTopology = ClusterTopology

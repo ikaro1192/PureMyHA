@@ -45,22 +45,23 @@ mkReplicaStatus srcHost srcPort ioRunning execGtid = ReplicaStatus
 
 mkNodeState :: NodeId -> Bool -> Maybe ReplicaStatus -> NodeHealth -> NodeState
 mkNodeState nid isSource mRs health = NodeState
-  { nsNodeId          = nid
-  , nsReplicaStatus   = mRs
-  , nsGtidExecuted    = ""
-  , nsIsSource        = isSource
-  , nsHealth          = health
-  , nsLastSeen        = Just fixedTime
-  , nsConnectError    = Nothing
-  , nsErrantGtids     = ""
-  , nsPaused          = False
+  { nsNodeId               = nid
+  , nsReplicaStatus        = mRs
+  , nsGtidExecuted         = ""
+  , nsIsSource             = isSource
+  , nsHealth               = health
+  , nsLastSeen             = Just fixedTime
+  , nsConnectError         = Nothing
+  , nsErrantGtids          = ""
+  , nsPaused               = False
+  , nsConsecutiveFailures  = 0
   }
 
 -- | Build a test ClusterEnv with dummy values for fields not under test
 mkTestEnv :: TVarDaemonState -> ClusterConfig -> FailoverConfig -> IO ClusterEnv
 mkTestEnv tvar cc fc = do
   let pws = ClusterPasswords "" "" ""
-      fdc = FailureDetectionConfig 0
+      fdc = FailureDetectionConfig 0 3
   mcVar    <- newTVarIO (MonitoringConfig 3 5 30 60 300)
   hooksVar <- newTVarIO Nothing
   lock     <- newFailoverLock
@@ -99,15 +100,16 @@ replicaWithIOError = mkNodeState (mkNodeId "db4" 3306) False
 
 unreachableNode :: NodeId -> NodeState
 unreachableNode nid = NodeState
-  { nsNodeId          = nid
-  , nsReplicaStatus   = Nothing
-  , nsGtidExecuted    = ""
-  , nsIsSource        = False
-  , nsHealth          = NeedsAttention "Connection refused"
-  , nsLastSeen        = Nothing
-  , nsConnectError    = Just "Connection refused"
-  , nsErrantGtids     = ""
-  , nsPaused          = False
+  { nsNodeId               = nid
+  , nsReplicaStatus        = Nothing
+  , nsGtidExecuted         = ""
+  , nsIsSource             = False
+  , nsHealth               = NeedsAttention "Connection refused"
+  , nsLastSeen             = Nothing
+  , nsConnectError         = Just "Connection refused"
+  , nsErrantGtids          = ""
+  , nsPaused               = False
+  , nsConsecutiveFailures  = 0
   }
 
 unreachableReplica :: NodeState
@@ -118,15 +120,16 @@ clusterWithDeadSource :: Map NodeId NodeState
 clusterWithDeadSource = Map.fromList
   [ (mkNodeId "db1" 3306, (unreachableNode (mkNodeId "db1" 3306)) { nsIsSource = True })
   , (mkNodeId "db2" 3306, NodeState
-      { nsNodeId    = mkNodeId "db2" 3306
-      , nsReplicaStatus = Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")
-      , nsGtidExecuted    = ""
-      , nsIsSource  = False
-      , nsHealth    = Healthy
-      , nsLastSeen  = Just fixedTime
-      , nsConnectError = Nothing
-      , nsErrantGtids = ""
-      , nsPaused = False
+      { nsNodeId               = mkNodeId "db2" 3306
+      , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")
+      , nsGtidExecuted         = ""
+      , nsIsSource             = False
+      , nsHealth               = Healthy
+      , nsLastSeen             = Just fixedTime
+      , nsConnectError         = Nothing
+      , nsErrantGtids          = ""
+      , nsPaused               = False
+      , nsConsecutiveFailures  = 0
       })
   ]
 

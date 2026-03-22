@@ -36,15 +36,16 @@ spec = do
       let cluster = Map.fromList
             [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })
             , (NodeId "db2" 3306, NodeState
-                { nsNodeId        = NodeId "db2" 3306
-                , nsReplicaStatus = Just (mkReplicaStatus "db1" 3306 IOConnecting "")
-                , nsGtidExecuted  = ""
-                , nsIsSource      = False
-                , nsHealth        = Healthy
-                , nsLastSeen      = Just fixedTime
-                , nsConnectError  = Nothing
-                , nsErrantGtids   = ""
-                , nsPaused        = False
+                { nsNodeId               = NodeId "db2" 3306
+                , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IOConnecting "")
+                , nsGtidExecuted         = ""
+                , nsIsSource             = False
+                , nsHealth               = Healthy
+                , nsLastSeen             = Just fixedTime
+                , nsConnectError         = Nothing
+                , nsErrantGtids          = ""
+                , nsPaused               = False
+                , nsConsecutiveFailures  = 0
                 })
             ]
       detectClusterHealth cluster `shouldBe` DeadSource
@@ -53,15 +54,16 @@ spec = do
       let cluster = Map.fromList
             [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsIsSource = True })
             , (NodeId "db2" 3306, NodeState
-                { nsNodeId        = NodeId "db2" 3306
-                , nsReplicaStatus = Just (mkReplicaStatus "db1" 3306 IOYes "")
-                , nsGtidExecuted  = ""
-                , nsIsSource      = False
-                , nsHealth        = Healthy
-                , nsLastSeen      = Just fixedTime
-                , nsConnectError  = Nothing
-                , nsErrantGtids   = ""
-                , nsPaused        = False
+                { nsNodeId               = NodeId "db2" 3306
+                , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IOYes "")
+                , nsGtidExecuted         = ""
+                , nsIsSource             = False
+                , nsHealth               = Healthy
+                , nsLastSeen             = Just fixedTime
+                , nsConnectError         = Nothing
+                , nsErrantGtids          = ""
+                , nsPaused               = False
+                , nsConsecutiveFailures  = 0
                 })
             ]
       detectClusterHealth cluster `shouldBe` UnreachableSource

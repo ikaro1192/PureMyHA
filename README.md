@@ -25,6 +25,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Automatic Failover** — Detects dead sources and promotes the best replica (GTID-aware, errant-GTID-safe, waits for relay log apply)
 - **Manual Switchover** — Planned maintenance with zero-data-loss semantics
 - **Errant GTID Detection & Repair** — Identifies and fixes errant GTIDs via empty transactions
+- **Consecutive Failure Threshold** — Requires N consecutive probe failures before marking a node dead, preventing failover on transient TCP timeouts or momentary MySQL unresponsiveness (configurable `consecutive_failures_for_dead`, default 3)
 - **Anti-Flap Protection** — Blocks repeated automatic failovers via configurable `recovery_block_period`
 - **Hook Support** — Pre/post hooks for failover and switchover events
 - **MySQL 8.4 Native** — Uses only modern syntax (`SHOW REPLICA STATUS`, `CHANGE REPLICATION SOURCE TO`, etc.)
@@ -186,6 +187,7 @@ global:
     discovery_interval: 300s   # Optional; 0s = disabled. Default: 300s
   failure_detection:
     recovery_block_period: 3600s   # Block auto-failover for this long after a failover
+    consecutive_failures_for_dead: 3  # Require N consecutive probe failures before marking a node dead (default: 3)
   failover:
     auto_failover: true
     min_replicas_for_failover: 1
@@ -302,7 +304,8 @@ PureMyHA writes structured, timestamped logs via [katip](https://hackage.haskell
 | Event | Level |
 |-------|-------|
 | Daemon started | Info |
-| Node unreachable / connect failed | Warn |
+| Node probe failed (below consecutive threshold) | Info |
+| Node unreachable / connect failed (threshold reached) | Warn |
 | Node recovered | Info |
 | Auto-failover started / completed / failed | Info / Error |
 | Switchover started / completed / failed | Info / Error |

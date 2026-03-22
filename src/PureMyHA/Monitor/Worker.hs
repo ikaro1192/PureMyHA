@@ -4,6 +4,7 @@ module PureMyHA.Monitor.Worker
   , WorkerRegistry
   , monitorNode
   , runWorker
+  , suppressBelowThreshold
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -101,53 +102,78 @@ runTopologyRefresh reg = do
     a <- async (runApp env (runWorker nid))
     atomically $ modifyTVar' reg (Map.insert nid a)
 
+-- | Suppress NeedsAttention health state when consecutive failure count is below
+-- the configured threshold. Falls back to previous health (or Healthy if no prior state).
+suppressBelowThreshold :: Int -> Int -> Maybe NodeState -> NodeState -> NodeState
+suppressBelowThreshold threshold failCount mOldNs ns
+  | failCount > 0 && failCount < threshold =
+      ns { nsHealth = maybe Healthy nsHealth mOldNs }
+  | otherwise = ns
+
 -- | Perform a single monitoring cycle for a node
 monitorNode :: NodeId -> App ()
 monitorNode nid = do
+  env  <- ask
   tvar <- asks envDaemonState
   cc   <- asks envCluster
   pws  <- asks envPasswords
+  fdc  <- asks envDetection
   now  <- liftIO getCurrentTime
-  let user = credUser (ccCredentials cc)
-      ci   = makeConnectInfo nid user (cpPassword pws)
+  let user      = credUser (ccCredentials cc)
+      ci        = makeConnectInfo nid user (cpPassword pws)
+      threshold = fdcConsecutiveFailuresForDead fdc
   -- Read old state before connecting, so we can preserve nsIsSource on error
   mOldNs <- liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
+  let prevFailures = maybe 0 nsConsecutiveFailures mOldNs
   result <- liftIO $ withNodeConn ci $ \conn -> do
     mRs      <- showReplicaStatus conn
     gtidExec <- getGtidExecuted conn
     pure (mRs, gtidExec)
+  let newFailures = case result of { Left _ -> prevFailures + 1; Right _ -> 0 }
   let ns = case result of
         Left err ->
           NodeState
-            { nsNodeId          = nid
-            , nsReplicaStatus   = Nothing
-            , nsGtidExecuted    = ""
-            , nsIsSource        = maybe False nsIsSource mOldNs
-            , nsHealth          = NeedsAttention err
-            , nsLastSeen        = Nothing
-            , nsConnectError    = Just err
-            , nsErrantGtids     = ""
-            , nsPaused          = maybe False nsPaused mOldNs
+            { nsNodeId               = nid
+            , nsReplicaStatus        = Nothing
+            , nsGtidExecuted         = ""
+            , nsIsSource             = maybe False nsIsSource mOldNs
+            , nsHealth               = NeedsAttention err
+            , nsLastSeen             = Nothing
+            , nsConnectError         = Just err
+            , nsErrantGtids          = ""
+            , nsPaused               = maybe False nsPaused mOldNs
+            , nsConsecutiveFailures  = newFailures
             }
         Right (mRs, gtidExec) ->
           NodeState
-            { nsNodeId          = nid
-            , nsReplicaStatus   = mRs
-            , nsGtidExecuted    = gtidExec
-            , nsIsSource        = mRs == Nothing
-            , nsHealth          = Healthy
-            , nsLastSeen        = Just now
-            , nsConnectError    = Nothing
-            , nsErrantGtids     = ""
-            , nsPaused          = maybe False nsPaused mOldNs
+            { nsNodeId               = nid
+            , nsReplicaStatus        = mRs
+            , nsGtidExecuted         = gtidExec
+            , nsIsSource             = mRs == Nothing
+            , nsHealth               = Healthy
+            , nsLastSeen             = Just now
+            , nsConnectError         = Nothing
+            , nsErrantGtids          = ""
+            , nsPaused               = maybe False nsPaused mOldNs
+            , nsConsecutiveFailures  = 0
             }
   -- Update errant GTIDs by querying MySQL
   ns' <- enrichErrantGtids ns
-  let ns'' = ns' { nsHealth = detectNodeHealth ns' }
-  logHealthChange nid mOldNs ns''
-  liftIO $ atomically $ updateNodeState tvar (ccName cc) ns''
+  let ns''  = ns' { nsHealth = detectNodeHealth ns' }
+  -- Apply consecutive failure threshold: suppress NeedsAttention until N consecutive failures
+  let ns''' = suppressBelowThreshold threshold newFailures mOldNs ns''
+  -- Log below-threshold failures for observability
+  liftIO $ when (newFailures > 0 && newFailures < threshold) $ do
+    logger <- readTVarIO (envLogger env)
+    case result of
+      Left err -> logInfo logger $ "[" <> ccName cc <> "] Node " <> nodeHost nid
+                    <> " probe failed (" <> T.pack (show newFailures) <> "/"
+                    <> T.pack (show threshold) <> "): " <> err
+      Right _  -> pure ()
+  logHealthChange nid mOldNs ns'''
+  liftIO $ atomically $ updateNodeState tvar (ccName cc) ns'''
   -- Recompute cluster-level health
   recomputeClusterHealth
 
