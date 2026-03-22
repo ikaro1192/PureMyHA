@@ -241,13 +241,13 @@ recomputeClusterHealth = do
     Just topo -> do
       let newHealth = detectClusterHealth (ctNodes topo)
           newSrcId  = identifySource (Map.elems (ctNodes topo))
+      let transitioned     = ctHealth topo /= newHealth
+          observedHealthy  = ctObservedHealthy topo || newHealth == Healthy
           topo' = topo
             { ctHealth          = newHealth
             , ctSourceNodeId    = newSrcId
-            , ctObservedHealthy = newHealth == Healthy
+            , ctObservedHealthy = observedHealthy
             }
-      let transitioned     = ctHealth topo /= newHealth
-          observedHealthy  = ctObservedHealthy topo || newHealth == Healthy
       -- Fire on_failure_detection hook on transition to a dead state
       liftIO $ when transitioned $
         case newHealth of
