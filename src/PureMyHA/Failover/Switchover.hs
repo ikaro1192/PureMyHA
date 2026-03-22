@@ -5,6 +5,7 @@ module PureMyHA.Failover.Switchover
   ) where
 
 import Control.Concurrent (threadDelay)
+import Control.Concurrent.STM (atomically)
 import Control.Exception (try, SomeException)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -119,7 +120,19 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
               appLogError $ "[" <> ccName cc <> "] Switchover failed: Promote failed: " <> err
               pure (Left $ "Promote failed: " <> err)
             Right () -> do
-              -- Step 5: Reconnect remaining replicas (including old source)
+              -- Step 5: Update topology roles atomically
+              tvar <- asks envDaemonState
+              liftIO $ atomically $ do
+                case oldSourceId of
+                  Just srcId ->
+                    case Map.lookup srcId (ctNodes topo) of
+                      Just srcNs -> updateNodeState tvar (ccName cc) (srcNs { nsRole = Replica })
+                      Nothing -> pure ()
+                  Nothing -> pure ()
+                case Map.lookup candidateId (ctNodes topo) of
+                  Just candNs -> updateNodeState tvar (ccName cc) (candNs { nsRole = Source })
+                  Nothing -> pure ()
+              -- Step 6: Reconnect remaining replicas (including old source)
               let others = switchoverReconnectTargets (ctNodes topo) candidateId
               mapM_ (reconnectToNew candidateId) others
 

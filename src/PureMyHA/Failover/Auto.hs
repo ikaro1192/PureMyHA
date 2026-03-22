@@ -95,7 +95,7 @@ executeFailover topo = runExceptT $ do
   ExceptT $ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost
   lift $ reconnectOtherReplicas candidateId topo
   now <- liftIO getCurrentTime
-  lift $ commitFailoverState topo now
+  lift $ commitFailoverState candidateId topo now
   ts <- liftIO getCurrentTimestamp
   mHooks <- lift getHooksConfig
   let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts
@@ -139,16 +139,20 @@ reconnectOtherReplicas candidateId topo = do
         (Map.elems (ctNodes topo))
   mapM_ (reconnectReplica candidateId) otherReplicas
 
-commitFailoverState :: ClusterTopology -> UTCTime -> App ()
-commitFailoverState topo now = do
+commitFailoverState :: NodeId -> ClusterTopology -> UTCTime -> App ()
+commitFailoverState candidateId topo now = do
   tvar <- asks envDaemonState
   cc   <- asks envCluster
   fdc  <- asks envDetection
   let oldSources = filter isSource (Map.elems (ctNodes topo))
+      candidate  = Map.lookup candidateId (ctNodes topo)
   liftIO $ atomically $ do
     recordFailover tvar (ccName cc) now
     setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
     mapM_ (\ns -> updateNodeState tvar (ccName cc) (ns { nsRole = Replica })) oldSources
+    case candidate of
+      Just ns -> updateNodeState tvar (ccName cc) (ns { nsRole = Source })
+      Nothing -> pure ()
 
 promoteCandidate :: NodeId -> Int -> App (Either Text ())
 promoteCandidate nid waitTimeout = do
