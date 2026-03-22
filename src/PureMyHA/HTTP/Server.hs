@@ -95,7 +95,7 @@ renderMetrics ds = BSL.fromStrict $ TE.encodeUtf8 $ T.unlines $
   ++
   metricBlock "puremyha_node_replication_lag_seconds" "gauge"
     "Replication lag in seconds (-1 if unknown or not applicable)"
-    [ (nodeLabels name ns, lagVal (nsReplicaStatus ns))
+    [ (nodeLabels name ns, lagVal (nsProbeResult ns))
     | (name, ct) <- Map.toAscList (dsClusters ds)
     , ns <- Map.elems (ctNodes ct) ]
   ++
@@ -133,6 +133,6 @@ boolVal :: Bool -> Text
 boolVal True  = "1"
 boolVal False = "0"
 
-lagVal :: Maybe ReplicaStatus -> Text
-lagVal Nothing   = "-1"
-lagVal (Just rs) = maybe "-1" (T.pack . show) (rsSecondsBehindSource rs)
+lagVal :: ProbeResult -> Text
+lagVal ProbeSuccess{prReplicaStatus = Just rs} = maybe "-1" (T.pack . show) (rsSecondsBehindSource rs)
+lagVal _ = "-1"

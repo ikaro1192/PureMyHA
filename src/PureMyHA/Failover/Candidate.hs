@@ -75,14 +75,16 @@ hasErrantGtid :: NodeState -> Bool
 hasErrantGtid ns = not (T.null (nsErrantGtids ns))
 
 hasConnectError :: NodeState -> Bool
-hasConnectError ns = case nsConnectError ns of
-  Nothing -> False
-  Just e  -> not (T.null e)
+hasConnectError ns = case nsProbeResult ns of
+  ProbeFailure{prConnectError = e} -> not (T.null e)
+  ProbeSuccess{}                   -> False
 
 toCandidateInfo :: [CandidatePriority] -> NodeState -> CandidateInfo
 toCandidateInfo priorities ns = CandidateInfo
   { ciNodeId       = nsNodeId ns
-  , ciExecutedGtid = maybe "" rsExecutedGtidSet (nsReplicaStatus ns)
+  , ciExecutedGtid = case nsProbeResult ns of
+      ProbeSuccess{prReplicaStatus = Just rs} -> rsExecutedGtidSet rs
+      _ -> ""
   , ciPriorityRank = priorityRank priorities (nodeHost (nsNodeId ns))
   }
 

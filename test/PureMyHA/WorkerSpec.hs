@@ -10,7 +10,7 @@ spec = describe "suppressBelowThreshold" $ do
   let threshold = 3
       errNs     = healthySource
                     { nsHealth              = NeedsAttention "refused"
-                    , nsConnectError        = Just "refused"
+                    , nsProbeResult         = ProbeFailure "refused"
                     , nsConsecutiveFailures = 1
                     }
 

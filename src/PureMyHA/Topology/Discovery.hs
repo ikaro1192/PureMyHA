@@ -129,28 +129,22 @@ buildNodeStateFromProbe
   -> Either Text (Maybe ReplicaStatus, Text)
   -> NodeState
 buildNodeStateFromProbe nid _ (Left err) = NodeState
-  { nsNodeId               = nid
-  , nsReplicaStatus        = Nothing
-  , nsGtidExecuted         = ""
-  , nsRole                 = Replica
-  , nsHealth               = NeedsAttention err
-  , nsLastSeen             = Nothing
-  , nsConnectError         = Just err
-  , nsErrantGtids          = ""
-  , nsPaused               = False
-  , nsConsecutiveFailures  = 0
+  { nsNodeId              = nid
+  , nsRole                = Replica
+  , nsHealth              = NeedsAttention err
+  , nsProbeResult         = ProbeFailure err
+  , nsErrantGtids         = ""
+  , nsPaused              = False
+  , nsConsecutiveFailures = 0
   }
 buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
-  { nsNodeId               = nid
-  , nsReplicaStatus        = mRs
-  , nsGtidExecuted         = gtidExec
-  , nsRole                 = if mRs == Nothing then Source else Replica  -- no replica status = potential source
-  , nsHealth               = Healthy
-  , nsLastSeen             = Just now
-  , nsConnectError         = Nothing
-  , nsErrantGtids          = ""
-  , nsPaused               = False
-  , nsConsecutiveFailures  = 0
+  { nsNodeId              = nid
+  , nsRole                = if mRs == Nothing then Source else Replica  -- no replica status = potential source
+  , nsHealth              = Healthy
+  , nsProbeResult         = ProbeSuccess now mRs gtidExec
+  , nsErrantGtids         = ""
+  , nsPaused              = False
+  , nsConsecutiveFailures = 0
   }
 
 -- | Calculate next nodes to probe from a discovered node's replica status (pure)
@@ -160,13 +154,13 @@ nextDiscoveryTargets
   -> Set NodeId  -- ^ current remaining queue
   -> Set NodeId
 nextDiscoveryTargets ns visited rest =
-  case nsReplicaStatus ns of
-    Just rs ->
+  case nsProbeResult ns of
+    ProbeSuccess{prReplicaStatus = Just rs} ->
       let srcId = NodeId (rsSourceHost rs) (rsSourcePort rs)
       in if Set.notMember srcId visited && rsSourceHost rs /= ""
            then Set.insert srcId rest
            else rest
-    Nothing -> rest
+    _ -> rest
 
 -- | Build an initial (empty) topology from config
 buildInitialTopology :: ClusterConfig -> ClusterTopology

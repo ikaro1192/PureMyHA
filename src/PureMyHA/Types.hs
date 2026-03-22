@@ -8,7 +8,9 @@ module PureMyHA.Types
   , NodeRole (..)
   , isSource
   , findNodeByHost
+  , ProbeResult (..)
   , NodeState (..)
+  , nsIsReachable
   , ClusterTopology (..)
   , DaemonState (..)
   , ClusterStatus (..)
@@ -72,18 +74,35 @@ findNodeByHost h nodes =
     (x:_) -> Just x
     []    -> Nothing
 
+-- | Result of probing a node. Encodes the invariant that a successful probe
+-- always has a last-seen time and optional replica info, while a failed probe
+-- always has an error message and never has replica info or a last-seen time.
+data ProbeResult
+  = ProbeSuccess
+      { prLastSeen      :: UTCTime
+      , prReplicaStatus :: Maybe ReplicaStatus
+      , prGtidExecuted  :: Text
+      }
+  | ProbeFailure
+      { prConnectError  :: Text
+      }
+  deriving (Eq, Show, Generic)
+
 data NodeState = NodeState
-  { nsNodeId               :: NodeId
-  , nsReplicaStatus        :: Maybe ReplicaStatus
-  , nsGtidExecuted         :: Text
-  , nsRole                 :: NodeRole
-  , nsHealth               :: NodeHealth
-  , nsLastSeen             :: Maybe UTCTime
-  , nsConnectError         :: Maybe Text
-  , nsErrantGtids          :: Text
-  , nsPaused               :: Bool
-  , nsConsecutiveFailures  :: Int    -- ^ Number of consecutive probe failures; resets to 0 on success
+  { nsNodeId              :: NodeId
+  , nsRole                :: NodeRole
+  , nsHealth              :: NodeHealth
+  , nsProbeResult         :: ProbeResult
+  , nsErrantGtids         :: Text
+  , nsPaused              :: Bool
+  , nsConsecutiveFailures :: Int    -- ^ Number of consecutive probe failures; resets to 0 on success
   } deriving (Eq, Show, Generic)
+
+-- | True if the last probe succeeded
+nsIsReachable :: NodeState -> Bool
+nsIsReachable ns = case nsProbeResult ns of
+  ProbeSuccess{} -> True
+  ProbeFailure{} -> False
 
 data ClusterTopology = ClusterTopology
   { ctClusterName           :: ClusterName

@@ -86,7 +86,7 @@ spec = do
     it "selects replica with higher GTID score when no priority set" $ do
       let replicaLongGtid = healthyReplica
             { nsNodeId = NodeId "db3" 3306
-            , nsReplicaStatus = Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")
+            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) ""
             }
           nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
@@ -113,7 +113,7 @@ spec = do
     it "orders by GTID score descending when no priority" $ do
       let replicaLongGtid = healthyReplica
             { nsNodeId = NodeId "db3" 3306
-            , nsReplicaStatus = Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")
+            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) ""
             }
       let result = rankCandidates [healthyReplica, replicaLongGtid] []
       ciNodeId (head result) `shouldBe` NodeId "db3" 3306
@@ -121,7 +121,7 @@ spec = do
     it "priority order takes precedence over GTID score" $ do
       let replicaLongGtid = healthyReplica
             { nsNodeId = NodeId "db3" 3306
-            , nsReplicaStatus = Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")
+            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) ""
             }
           -- db2 has lower GTID but appears first in priority
           priorities = [CandidatePriority "db2"]

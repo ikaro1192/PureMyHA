@@ -8,7 +8,7 @@ module PureMyHA.Monitor.Detector
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.List (nub)
-import Data.Maybe (mapMaybe, isJust)
+import Data.Maybe (mapMaybe)
 import qualified Data.Text as T
 import PureMyHA.Types
 
@@ -19,7 +19,7 @@ detectClusterHealth nodes
   | otherwise =
       let nodeList = Map.elems nodes
           sourceCandidates = filter isSource nodeList
-          reachableNodes = filter (isJust . nsLastSeen) nodeList
+          reachableNodes = filter nsIsReachable nodeList
       in case sourceCandidates of
            [] -> detectNoSource nodeList reachableNodes
            [_src] -> detectSingleSource nodeList reachableNodes _src
@@ -50,36 +50,30 @@ detectDeadSource nodeList =
               then DeadSource
               else UnreachableSource
 
-nsIsReachable :: NodeState -> Bool
-nsIsReachable ns = isJust (nsLastSeen ns) && nsConnectError ns == Nothing
-
 replicaIOStopped :: NodeState -> Bool
-replicaIOStopped ns =
-  case nsReplicaStatus ns of
-    Just rs -> rsReplicaIORunning rs /= IOYes
-    Nothing -> False
+replicaIOStopped ns = case nsProbeResult ns of
+  ProbeSuccess{prReplicaStatus = Just rs} -> rsReplicaIORunning rs /= IOYes
+  _ -> False
 
 hasIoError :: [NodeState] -> Bool
-hasIoError = any $ \ns ->
-  case nsReplicaStatus ns of
-    Just rs -> not (T.null (rsLastIOError rs))
-    Nothing -> False
+hasIoError = any $ \ns -> case nsProbeResult ns of
+  ProbeSuccess{prReplicaStatus = Just rs} -> not (T.null (rsLastIOError rs))
+  _ -> False
 
 hasIoConnecting :: [NodeState] -> Bool
-hasIoConnecting = any $ \ns ->
-  case nsReplicaStatus ns of
-    Just rs -> rsReplicaIORunning rs == IOConnecting
-    Nothing -> False
+hasIoConnecting = any $ \ns -> case nsProbeResult ns of
+  ProbeSuccess{prReplicaStatus = Just rs} -> rsReplicaIORunning rs == IOConnecting
+  _ -> False
 
 -- | Detect health for a single node
 detectNodeHealth :: NodeState -> NodeHealth
-detectNodeHealth ns
-  | isJust (nsConnectError ns) = NeedsAttention (maybe "" id (nsConnectError ns))
-  | not (T.null (nsErrantGtids ns)) =
-      NeedsAttention ("Errant GTIDs: " <> nsErrantGtids ns)
-  | otherwise = case nsReplicaStatus ns of
-      Nothing -> Healthy  -- source or standalone
-      Just rs -> detectReplicaHealth rs
+detectNodeHealth ns = case nsProbeResult ns of
+  ProbeFailure{prConnectError = e} -> NeedsAttention e
+  ProbeSuccess{prReplicaStatus = mrs}
+    | not (T.null (nsErrantGtids ns)) ->
+        NeedsAttention ("Errant GTIDs: " <> nsErrantGtids ns)
+    | Just rs <- mrs -> detectReplicaHealth rs
+    | otherwise      -> Healthy  -- source or standalone
 
 detectReplicaHealth :: ReplicaStatus -> NodeHealth
 detectReplicaHealth rs
@@ -110,9 +104,7 @@ identifySource nodes =
               _   -> Nothing
 
 getSourceId :: NodeState -> Maybe NodeId
-getSourceId ns = case nsReplicaStatus ns of
-  Just rs ->
-    if rsSourceHost rs /= ""
-      then Just (NodeId (rsSourceHost rs) (rsSourcePort rs))
-      else Nothing
-  Nothing -> Nothing
+getSourceId ns = case nsProbeResult ns of
+  ProbeSuccess{prReplicaStatus = Just rs}
+    | rsSourceHost rs /= "" -> Just (NodeId (rsSourceHost rs) (rsSourcePort rs))
+  _ -> Nothing

@@ -46,16 +46,13 @@ mkReplicaStatus srcHost srcPort ioRunning execGtid = ReplicaStatus
 
 mkNodeState :: NodeId -> NodeRole -> Maybe ReplicaStatus -> NodeHealth -> NodeState
 mkNodeState nid role mRs health = NodeState
-  { nsNodeId               = nid
-  , nsReplicaStatus        = mRs
-  , nsGtidExecuted         = ""
-  , nsRole                 = role
-  , nsHealth               = health
-  , nsLastSeen             = Just fixedTime
-  , nsConnectError         = Nothing
-  , nsErrantGtids          = ""
-  , nsPaused               = False
-  , nsConsecutiveFailures  = 0
+  { nsNodeId              = nid
+  , nsRole                = role
+  , nsHealth              = health
+  , nsProbeResult         = ProbeSuccess fixedTime mRs ""
+  , nsErrantGtids         = ""
+  , nsPaused              = False
+  , nsConsecutiveFailures = 0
   }
 
 -- | Build a test ClusterEnv with dummy values for fields not under test
@@ -103,16 +100,13 @@ replicaWithIOError = mkNodeState (mkNodeId "db4" 3306) Replica
 
 unreachableNode :: NodeId -> NodeState
 unreachableNode nid = NodeState
-  { nsNodeId               = nid
-  , nsReplicaStatus        = Nothing
-  , nsGtidExecuted         = ""
-  , nsRole                 = Replica
-  , nsHealth               = NeedsAttention "Connection refused"
-  , nsLastSeen             = Nothing
-  , nsConnectError         = Just "Connection refused"
-  , nsErrantGtids          = ""
-  , nsPaused               = False
-  , nsConsecutiveFailures  = 0
+  { nsNodeId              = nid
+  , nsRole                = Replica
+  , nsHealth              = NeedsAttention "Connection refused"
+  , nsProbeResult         = ProbeFailure "Connection refused"
+  , nsErrantGtids         = ""
+  , nsPaused              = False
+  , nsConsecutiveFailures = 0
   }
 
 unreachableReplica :: NodeState
@@ -123,16 +117,13 @@ clusterWithDeadSource :: Map NodeId NodeState
 clusterWithDeadSource = Map.fromList
   [ (mkNodeId "db1" 3306, (unreachableNode (mkNodeId "db1" 3306)) { nsRole = Source })
   , (mkNodeId "db2" 3306, NodeState
-      { nsNodeId               = mkNodeId "db2" 3306
-      , nsReplicaStatus        = Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")
-      , nsGtidExecuted         = ""
-      , nsRole                 = Replica
-      , nsHealth               = Healthy
-      , nsLastSeen             = Just fixedTime
-      , nsConnectError         = Nothing
-      , nsErrantGtids          = ""
-      , nsPaused               = False
-      , nsConsecutiveFailures  = 0
+      { nsNodeId              = mkNodeId "db2" 3306
+      , nsRole                = Replica
+      , nsHealth              = Healthy
+      , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")) ""
+      , nsErrantGtids         = ""
+      , nsPaused              = False
+      , nsConsecutiveFailures = 0
       })
   ]
 

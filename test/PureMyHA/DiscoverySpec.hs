@@ -40,27 +40,26 @@ spec = do
 
   describe "buildNodeStateFromProbe" $ do
 
-    it "connection failure sets NeedsAttention health and connectError" $ do
+    it "connection failure sets NeedsAttention health and ProbeFailure" $ do
       let ns = buildNodeStateFromProbe testNid now (Left "Connection refused")
-      nsHealth      ns `shouldBe` NeedsAttention "Connection refused"
-      nsConnectError ns `shouldBe` Just "Connection refused"
-      nsLastSeen    ns `shouldBe` Nothing
+      nsHealth ns `shouldBe` NeedsAttention "Connection refused"
+      nsProbeResult ns `shouldBe` ProbeFailure "Connection refused"
 
     it "success with replica status sets role=Replica" $ do
       let ns = buildNodeStateFromProbe testNid now (Right (Just testRs, "uuid1:1-100"))
-      nsRole          ns `shouldBe` Replica
-      nsReplicaStatus ns `shouldBe` Just testRs
-      nsLastSeen      ns `shouldBe` Just now
+      nsRole ns `shouldBe` Replica
+      prReplicaStatus (nsProbeResult ns) `shouldBe` Just testRs
+      prLastSeen (nsProbeResult ns) `shouldBe` now
 
     it "success without replica status sets role=Source" $ do
       let ns = buildNodeStateFromProbe testNid now (Right (Nothing, "uuid1:1-100"))
-      nsRole          ns `shouldBe` Source
-      nsReplicaStatus ns `shouldBe` Nothing
+      nsRole ns `shouldBe` Source
+      prReplicaStatus (nsProbeResult ns) `shouldBe` Nothing
 
-    it "success records the provided timestamp in nsLastSeen" $ do
+    it "success records the provided timestamp in prLastSeen" $ do
       let t  = UTCTime (fromGregorian 2025 12 31) 3600
           ns = buildNodeStateFromProbe testNid t (Right (Nothing, "uuid1:1-5"))
-      nsLastSeen ns `shouldBe` Just t
+      prLastSeen (nsProbeResult ns) `shouldBe` t
 
   describe "buildClusterTopology" $ do
 
