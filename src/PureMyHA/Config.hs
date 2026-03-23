@@ -3,6 +3,7 @@ module PureMyHA.Config
   , ClusterConfig (..)
   , NodeConfig (..)
   , Credentials (..)
+  , DbCredentials (..)
   , ClusterPasswords (..)
   , MonitoringConfig (..)
   , FailureDetectionConfig (..)
@@ -99,10 +100,14 @@ data RawClusterConfig = RawClusterConfig
   , rccHooks                  :: Maybe HooksConfig
   } deriving (Show, Generic)
 
+data DbCredentials = DbCredentials
+  { dbUser     :: Text
+  , dbPassword :: Text
+  } deriving (Show)
+
 data ClusterPasswords = ClusterPasswords
-  { cpPassword     :: Text   -- ^ monitoring/management password
-  , cpReplUser     :: Text   -- ^ replication user
-  , cpReplPassword :: Text   -- ^ replication password
+  { cpMonCredentials  :: DbCredentials  -- ^ monitoring/management credentials
+  , cpReplCredentials :: DbCredentials  -- ^ replication credentials
   } deriving (Show)
 
 data NodeConfig = NodeConfig

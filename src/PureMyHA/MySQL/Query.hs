@@ -27,6 +27,7 @@ import Database.MySQL.Base
   , Query (..), ColumnDef (..)
   )
 import qualified System.IO.Streams as S
+import PureMyHA.Config (DbCredentials (..))
 import PureMyHA.Types
 
 -- | Convert a lazy ByteString SQL to a Query
@@ -121,12 +122,12 @@ getGtidExecuted conn = do
     _         -> pure ""
 
 -- | CHANGE REPLICATION SOURCE TO ... SOURCE_AUTO_POSITION=1
-changeReplicationSourceTo :: MySQLConn -> Text -> Int -> Text -> Text -> IO ()
-changeReplicationSourceTo conn host port replUser replPassword = do
+changeReplicationSourceTo :: MySQLConn -> Text -> Int -> DbCredentials -> IO ()
+changeReplicationSourceTo conn host port DbCredentials{..} = do
   let sql = "CHANGE REPLICATION SOURCE TO SOURCE_HOST='" <> host
             <> "', SOURCE_PORT=" <> T.pack (show port)
-            <> ", SOURCE_USER='" <> replUser <> "'"
-            <> ", SOURCE_PASSWORD='" <> replPassword <> "'"
+            <> ", SOURCE_USER='" <> dbUser <> "'"
+            <> ", SOURCE_PASSWORD='" <> dbPassword <> "'"
             <> ", SOURCE_AUTO_POSITION=1"
             <> ", GET_SOURCE_PUBLIC_KEY=1"
   _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))

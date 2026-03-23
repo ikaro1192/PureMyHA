@@ -5,8 +5,8 @@ module PureMyHA.Env
   , getMonitoringConfig
   , getHooksConfig
   , getClusterName
-  , getMySQLUser
-  , getMonPassword
+  , getMonCredentials
+  , getReplCredentials
   , appLogInfo
   , appLogWarn
   , appLogError
@@ -52,11 +52,11 @@ getHooksConfig = asks envHooks >>= liftIO . readTVarIO
 getClusterName :: MonadReader ClusterEnv m => m ClusterName
 getClusterName = asks (ccName . envCluster)
 
-getMySQLUser :: MonadReader ClusterEnv m => m Text
-getMySQLUser = asks (credUser . ccCredentials . envCluster)
+getMonCredentials :: MonadReader ClusterEnv m => m DbCredentials
+getMonCredentials = asks (cpMonCredentials . envPasswords)
 
-getMonPassword :: MonadReader ClusterEnv m => m Text
-getMonPassword = asks (cpPassword . envPasswords)
+getReplCredentials :: MonadReader ClusterEnv m => m DbCredentials
+getReplCredentials = asks (cpReplCredentials . envPasswords)
 
 appLogInfo, appLogWarn, appLogError :: (MonadReader ClusterEnv m, MonadIO m) => Text -> m ()
 appLogInfo  = withLogger logInfo

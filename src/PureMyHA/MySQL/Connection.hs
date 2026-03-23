@@ -12,16 +12,17 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (NominalDiffTime)
 import Database.MySQL.Base (ConnectInfo (..), defaultConnectInfo, close, MySQLConn)
+import PureMyHA.Config (DbCredentials (..))
 import PureMyHA.MySQL.Auth (connectWithAuth)
 import PureMyHA.Types (NodeId (..))
 
 -- | Build ConnectInfo from NodeId and credentials
-makeConnectInfo :: NodeId -> Text -> Text -> ConnectInfo
-makeConnectInfo NodeId{..} user password = defaultConnectInfo
+makeConnectInfo :: NodeId -> DbCredentials -> ConnectInfo
+makeConnectInfo NodeId{..} DbCredentials{..} = defaultConnectInfo
   { ciHost     = T.unpack nodeHost
   , ciPort     = fromIntegral nodePort
-  , ciUser     = TE.encodeUtf8 user
-  , ciPassword = TE.encodeUtf8 password
+  , ciUser     = TE.encodeUtf8 dbUser
+  , ciPassword = TE.encodeUtf8 dbPassword
   , ciDatabase = ""
   }
 

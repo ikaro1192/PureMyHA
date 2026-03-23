@@ -202,7 +202,10 @@ loadClusterPasswords cc = do
   monPw <- loadPassword (ccCredentials cc)
   let replCreds = fromMaybe (ccCredentials cc) (ccReplicationCredentials cc)
   replPw <- loadPassword replCreds
-  pure $ ClusterPasswords monPw (credUser replCreds) replPw
+  pure $ ClusterPasswords
+    { cpMonCredentials  = DbCredentials (credUser (ccCredentials cc)) monPw
+    , cpReplCredentials = DbCredentials (credUser replCreds) replPw
+    }
 
 loadPassword :: Credentials -> IO Text
 loadPassword creds = do

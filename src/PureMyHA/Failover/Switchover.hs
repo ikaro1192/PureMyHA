@@ -77,14 +77,13 @@ doSwitchover
   -> ClusterTopology
   -> App (Either Text ())
 doSwitchover candidateId oldSourceId oldSourceHost topo = do
-  cc   <- asks envCluster
-  user <- getMySQLUser
-  password <- getMonPassword
+  cc    <- asks envCluster
+  creds <- getMonCredentials
   -- Step 1: Set old source to read_only (abort on failure to prevent split-brain)
   readOnlyResult <- liftIO $ case oldSourceId of
     Nothing -> pure (Right ())
     Just srcId -> do
-      let srcCi = makeConnectInfo srcId user password
+      let srcCi = makeConnectInfo srcId creds
       withNodeConn srcCi setReadOnly
   case readOnlyResult of
     Left err -> do
@@ -95,14 +94,14 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
       mOldGtid <- liftIO $ case oldSourceId of
         Nothing -> pure Nothing
         Just srcId -> do
-          let srcCi = makeConnectInfo srcId user password
+          let srcCi = makeConnectInfo srcId creds
           result <- withNodeConn srcCi getGtidExecuted
           pure $ case result of
             Right gtid -> Just gtid
             Left _     -> Nothing
 
       -- Step 3: Wait for candidate to catch up
-      let candidateCi = makeConnectInfo candidateId user password
+      let candidateCi = makeConnectInfo candidateId creds
       caught <- liftIO $ waitForCatchup candidateCi mOldGtid maxWaitSeconds
 
       if not caught
@@ -168,14 +167,13 @@ waitForCatchup ci (Just targetGtid) secondsLeft
 
 reconnectToNew :: NodeId -> NodeState -> App ()
 reconnectToNew newSourceId ns = do
-  user <- getMySQLUser
-  password <- getMonPassword
-  pws <- asks envPasswords
-  let ci = makeConnectInfo (nsNodeId ns) user password
+  monCreds  <- getMonCredentials
+  replCreds <- getReplCredentials
+  let ci = makeConnectInfo (nsNodeId ns) monCreds
   liftIO $ do
     _ <- withNodeConn ci $ \conn -> do
       _ <- try @SomeException (stopReplica conn)
-      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) (cpReplUser pws) (cpReplPassword pws)
+      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replCreds
       setReadOnly conn
       startReplica conn
     pure ()

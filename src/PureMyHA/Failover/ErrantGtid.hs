@@ -11,7 +11,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import PureMyHA.Config (ClusterConfig (..))
-import PureMyHA.Env (App, ClusterEnv (..), getMySQLUser, getMonPassword)
+import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.GTID (GtidEntry (..), GtidInterval (..), parseGtidIntervals)
 import PureMyHA.MySQL.Query (injectEmptyTransaction)
@@ -33,10 +33,9 @@ collectErrantGtids = nub . concatMap (concatMap expandGtidEntry)
 -- | Fix errant GTIDs by injecting empty transactions on the source
 runFixErrantGtid :: App (Either Text ())
 runFixErrantGtid = do
-  tvar <- asks (envDaemonState)
-  cc   <- asks (envCluster)
-  user <- getMySQLUser
-  password <- getMonPassword
+  tvar  <- asks (envDaemonState)
+  cc    <- asks (envCluster)
+  creds <- getMonCredentials
   liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     case mTopo of
@@ -55,7 +54,7 @@ runFixErrantGtid = do
                   Left err -> pure (Left ("GTID parse error: " <> T.pack err))
                   Right entryLists -> do
                     let gtids = collectErrantGtids entryLists
-                    let srcCi = makeConnectInfo srcId user password
+                    let srcCi = makeConnectInfo srcId creds
                     result <- withNodeConn srcCi $ \conn ->
                       mapM_ (injectEmptyTransaction conn) gtids
                     case result of

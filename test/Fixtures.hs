@@ -58,7 +58,7 @@ mkNodeState nid role mRs health = NodeState
 -- | Build a test ClusterEnv with dummy values for fields not under test
 mkTestEnv :: TVarDaemonState -> ClusterConfig -> FailoverConfig -> IO ClusterEnv
 mkTestEnv tvar cc fc = do
-  let pws = ClusterPasswords "" "" ""
+  let pws = ClusterPasswords (DbCredentials "" "") (DbCredentials "" "")
       fdc = FailureDetectionConfig 0 3
   mcVar    <- newTVarIO (MonitoringConfig 3 5 30 60 300 1 1)
   hooksVar <- newTVarIO Nothing

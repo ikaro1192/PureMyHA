@@ -116,12 +116,11 @@ monitorNode nid = do
   env  <- ask
   tvar <- asks envDaemonState
   cc   <- asks envCluster
-  pws  <- asks envPasswords
   fdc  <- asks envDetection
   now  <- liftIO getCurrentTime
-  mc <- liftIO $ readTVarIO (envMonitoring env)
-  let user      = credUser (ccCredentials cc)
-      ci        = makeConnectInfo nid user (cpPassword pws)
+  mc   <- liftIO $ readTVarIO (envMonitoring env)
+  creds <- getMonCredentials
+  let ci        = makeConnectInfo nid creds
       threshold = fdcConsecutiveFailuresForDead fdc
       retries   = mcConnectRetries mc
       backoff   = mcConnectRetryBackoff mc
@@ -202,10 +201,9 @@ logHealthChange nid mOld new = do
 
 enrichErrantGtids :: NodeState -> App NodeState
 enrichErrantGtids ns = do
-  tvar <- asks envDaemonState
-  cc   <- asks envCluster
-  pws  <- asks envPasswords
-  let user = credUser (ccCredentials cc)
+  tvar  <- asks envDaemonState
+  cc    <- asks envCluster
+  creds <- getMonCredentials
   liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     case mTopo of
@@ -223,7 +221,7 @@ enrichErrantGtids ns = do
                   sourceGtid = case nsProbeResult srcNs of
                     ProbeSuccess{prGtidExecuted = g} -> g
                     ProbeFailure{} -> ""
-                  ci = makeConnectInfo srcId user (cpPassword pws)
+                  ci = makeConnectInfo srcId creds
               result <- withNodeConn ci $ \conn ->
                 gtidSubtract conn replicaGtid sourceGtid
               case result of
