@@ -4,8 +4,8 @@ import Control.Concurrent.STM (atomically)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Text (Text)
-import PureMyHA.Config (ClusterConfig (..), ClusterPasswords (..))
-import PureMyHA.Env (App, ClusterEnv (..), getMySQLUser, getMonPassword, appLogInfo, appLogError)
+import PureMyHA.Config (ClusterConfig (..))
+import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getReplCredentials, appLogInfo, appLogError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
   ( stopReplica, setReadOnly, changeReplicationSourceTo, startReplica )
@@ -18,11 +18,10 @@ runDemote
   -> Text       -- ^ new source host
   -> App (Either Text ())
 runDemote demoteHost srcHost = do
-  tvar <- asks envDaemonState
-  cc   <- asks envCluster
-  pws  <- asks envPasswords
-  user <- getMySQLUser
-  password <- getMonPassword
+  tvar      <- asks envDaemonState
+  cc        <- asks envCluster
+  monCreds  <- getMonCredentials
+  replCreds <- getReplCredentials
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure (Left "Cluster not found")
@@ -33,13 +32,13 @@ runDemote demoteHost srcHost = do
         (Just demoteNs, Just srcNs) -> do
           let demoteId = nsNodeId demoteNs
               srcId    = nsNodeId srcNs
-              ci       = makeConnectInfo demoteId user password
+              ci       = makeConnectInfo demoteId monCreds
           appLogInfo $ "[" <> ccName cc <> "] Demoting " <> demoteHost
                     <> " to replica under " <> srcHost
           result <- liftIO $ withNodeConn ci $ \conn -> do
             stopReplica conn
             setReadOnly conn
-            changeReplicationSourceTo conn (nodeHost srcId) (nodePort srcId) (cpReplUser pws) (cpReplPassword pws)
+            changeReplicationSourceTo conn (nodeHost srcId) (nodePort srcId) replCreds
             startReplica conn
           case result of
             Left err -> do

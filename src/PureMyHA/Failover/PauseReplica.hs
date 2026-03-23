@@ -6,7 +6,7 @@ import Control.Monad.Reader (asks)
 import Data.Text (Text)
 import Database.MySQL.Base (MySQLConn)
 import PureMyHA.Config (ClusterConfig (..))
-import PureMyHA.Env (App, ClusterEnv (..), getMySQLUser, getMonPassword, appLogInfo, appLogError)
+import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, appLogInfo, appLogError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query (stopReplica, startReplica)
 import PureMyHA.Topology.State (getClusterTopology, updateNodeState)
@@ -34,10 +34,9 @@ withTargetNode
   -> (NodeState -> NodeState)        -- ^ state update on success
   -> App (Either Text ())
 withTargetNode actionName targetHost mysqlAction stateUpdate = do
-  tvar <- asks envDaemonState
-  cc   <- asks envCluster
-  user <- getMySQLUser
-  password <- getMonPassword
+  tvar  <- asks envDaemonState
+  cc    <- asks envCluster
+  creds <- getMonCredentials
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure (Left "Cluster not found")
@@ -45,7 +44,7 @@ withTargetNode actionName targetHost mysqlAction stateUpdate = do
       case findNodeByHost targetHost (ctNodes topo) of
         Nothing -> pure (Left $ "Node not found: " <> targetHost)
         Just targetNs -> do
-          let ci = makeConnectInfo (nsNodeId targetNs) user password
+          let ci = makeConnectInfo (nsNodeId targetNs) creds
           appLogInfo $ "[" <> ccName cc <> "] " <> actionName <> " replication on " <> targetHost
           result <- liftIO $ withNodeConn ci $ \conn -> mysqlAction conn
           case result of

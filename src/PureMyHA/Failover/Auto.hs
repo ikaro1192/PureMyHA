@@ -156,11 +156,10 @@ commitFailoverState candidateId topo now = do
 
 promoteCandidate :: NodeId -> Int -> App (Either Text ())
 promoteCandidate nid waitTimeout = do
-  user <- getMySQLUser
-  password <- getMonPassword
+  creds <- getMonCredentials
   clusterName <- getClusterName
   logger <- asks envLogger >>= liftIO . readTVarIO
-  let ci = makeConnectInfo nid user password
+  let ci = makeConnectInfo nid creds
   liftIO $ do
     result <- withNodeConn ci $ \conn -> do
       caughtUp <- waitForRelayLogApply conn waitTimeout
@@ -176,14 +175,13 @@ promoteCandidate nid waitTimeout = do
 
 reconnectReplica :: NodeId -> NodeState -> App ()
 reconnectReplica newSourceId ns = do
-  user <- getMySQLUser
-  password <- getMonPassword
-  pws <- asks envPasswords
-  let ci = makeConnectInfo (nsNodeId ns) user password
+  monCreds  <- getMonCredentials
+  replCreds <- getReplCredentials
+  let ci = makeConnectInfo (nsNodeId ns) monCreds
   liftIO $ do
     _ <- withNodeConn ci $ \conn -> do
       stopReplica conn
-      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) (cpReplUser pws) (cpReplPassword pws)
+      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replCreds
       setReadOnly conn
       startReplica conn
     pure ()
