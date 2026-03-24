@@ -8,8 +8,8 @@ echo "=== Test 05: Errant GTID ==="
 wait_for_health "Healthy" 60
 
 # Verify no errant GTIDs initially
-errant_before=$(ipc_errant_gtid)
-errant_count_before=$(echo "$errant_before" | jq '.data | length')
+errant_before=$(cli_errant_gtid)
+errant_count_before=$(echo "$errant_before" | jq '. | length')
 assert_eq "No errant GTIDs initially" "0" "$errant_count_before"
 
 # Inject an errant transaction on mysql-replica1
@@ -25,8 +25,8 @@ mysql_exec mysql-replica1 "
 # Wait for the monitor to detect the errant GTID
 echo "  Waiting for errant GTID detection..."
 for i in $(seq 1 20); do
-  errant_result=$(ipc_errant_gtid)
-  errant_count=$(echo "$errant_result" | jq '.data | length')
+  errant_result=$(cli_errant_gtid)
+  errant_count=$(echo "$errant_result" | jq '. | length')
   if [ "$errant_count" -ge 1 ]; then
     echo "  Errant GTID detected (${i}s)"
     break
@@ -34,22 +34,22 @@ for i in $(seq 1 20); do
   sleep 1
 done
 
-errant_result=$(ipc_errant_gtid)
-errant_count=$(echo "$errant_result" | jq '.data | length')
+errant_result=$(cli_errant_gtid)
+errant_count=$(echo "$errant_result" | jq '. | length')
 assert_eq "Errant GTID detected" "1" "$errant_count"
 
 # Fix errant GTIDs
 echo "  Fixing errant GTIDs..."
-fix_result=$(ipc_fix_errant_gtid)
+fix_result=$(cli_fix_errant_gtid)
 echo "  Fix response: $fix_result"
-fix_success=$(echo "$fix_result" | jq -r '.data.success // empty')
+fix_success=$(echo "$fix_result" | jq -r '.success // empty')
 assert_not_empty "Fix errant GTID returns success" "$fix_success"
 
 # Wait for the fix to propagate
 echo "  Waiting for fix to propagate..."
 for i in $(seq 1 20); do
-  errant_after=$(ipc_errant_gtid)
-  errant_count_after=$(echo "$errant_after" | jq '.data | length')
+  errant_after=$(cli_errant_gtid)
+  errant_count_after=$(echo "$errant_after" | jq '. | length')
   if [ "$errant_count_after" -eq 0 ]; then
     echo "  Errant GTIDs cleared (${i}s)"
     break
@@ -57,8 +57,8 @@ for i in $(seq 1 20); do
   sleep 1
 done
 
-errant_after=$(ipc_errant_gtid)
-errant_count_after=$(echo "$errant_after" | jq '.data | length')
+errant_after=$(cli_errant_gtid)
+errant_count_after=$(echo "$errant_after" | jq '. | length')
 assert_eq "No errant GTIDs after fix" "0" "$errant_count_after"
 
 test_summary

@@ -58,7 +58,7 @@ assert_eq "POST /health returns 405" "405" "$status"
 
 # GET /health returns 503 when source is dead
 # Pause auto-failover so health stays degraded long enough to observe
-ipc_pause_failover >/dev/null 2>&1
+cli_pause_failover >/dev/null 2>&1
 $COMPOSE stop mysql-source
 wait_for_health_not "Healthy" 30
 
@@ -71,6 +71,6 @@ assert_eq "/health body has status=degraded" "degraded" "$degraded_status"
 
 # Restore for cleanup
 $COMPOSE start mysql-source
-ipc_resume_failover >/dev/null 2>&1
+cli_resume_failover >/dev/null 2>&1
 
 test_summary

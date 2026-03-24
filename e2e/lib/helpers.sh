@@ -63,80 +63,61 @@ test_summary() {
 }
 
 # ---------------------------------------------------------------------------
-# IPC helpers (communicate with puremyhad via Unix socket)
+# CLI helpers (communicate with puremyhad via puremyha command)
 # ---------------------------------------------------------------------------
 
-ipc_request() {
-  local json="$1"
-  $COMPOSE exec -T puremyhad sh -c \
-    "printf '%s\n' '$json' | socat - UNIX-CONNECT:/run/puremyhad.sock"
+cli_exec() {
+  $COMPOSE exec -T puremyhad puremyha --json --socket /run/puremyhad.sock "$@"
 }
 
-ipc_status() {
-  ipc_request '{"type":"status"}'
+cli_status() {
+  cli_exec status
 }
 
-ipc_topology() {
-  ipc_request '{"type":"topology"}'
+cli_topology() {
+  cli_exec topology
 }
 
-ipc_switchover() {
+cli_switchover() {
   local to_host="${1:-}"
   local dry_run="${2:-false}"
-  if [ -n "$to_host" ]; then
-    ipc_request "{\"type\":\"switchover\",\"dryRun\":${dry_run},\"toHost\":\"${to_host}\"}"
-  else
-    ipc_request "{\"type\":\"switchover\",\"dryRun\":${dry_run}}"
-  fi
+  local args=()
+  [ -n "$to_host" ] && args+=(--to "$to_host")
+  [ "$dry_run" = "true" ] && args+=(--dry-run)
+  cli_exec switchover "${args[@]}"
 }
 
-ipc_ack_recovery() {
-  ipc_request '{"type":"ack-recovery"}'
+cli_ack_recovery() {
+  cli_exec ack-recovery
 }
 
-ipc_demote() {
+cli_demote() {
   local host="$1" source_host="$2"
-  ipc_request "{\"type\":\"demote\",\"host\":\"${host}\",\"sourceHost\":\"${source_host}\"}"
+  cli_exec demote --host "$host" --source "$source_host"
 }
 
-ipc_pause_replica() {
-  local host="$1"
-  ipc_request "{\"type\":\"pause-replica\",\"host\":\"${host}\"}"
+cli_pause_replica() {
+  cli_exec pause-replica --host "$1"
 }
 
-ipc_resume_replica() {
-  local host="$1"
-  ipc_request "{\"type\":\"resume-replica\",\"host\":\"${host}\"}"
+cli_resume_replica() {
+  cli_exec resume-replica --host "$1"
 }
 
-ipc_pause_failover() {
-  ipc_request '{"type":"pause-failover"}'
+cli_pause_failover() {
+  cli_exec pause-failover
 }
 
-ipc_resume_failover() {
-  ipc_request '{"type":"resume-failover"}'
+cli_resume_failover() {
+  cli_exec resume-failover
 }
 
-ipc_errant_gtid() {
-  ipc_request '{"type":"errant-gtid"}'
+cli_errant_gtid() {
+  cli_exec errant-gtid
 }
 
-ipc_fix_errant_gtid() {
-  ipc_request '{"type":"fix-errant-gtid"}'
-}
-
-ipc_event_history() {
-  ipc_request '{"type":"event-history"}'
-}
-
-ipc_event_history_limit() {
-  local limit="$1"
-  ipc_request "{\"type\":\"event-history\",\"limit\":${limit}}"
-}
-
-ipc_event_history_cluster() {
-  local cluster="$1"
-  ipc_request "{\"type\":\"event-history\",\"cluster\":\"${cluster}\"}"
+cli_fix_errant_gtid() {
+  cli_exec fix-errant-gtid
 }
 
 # ---------------------------------------------------------------------------
@@ -153,25 +134,25 @@ http_get_body() {
   $COMPOSE exec -T puremyhad curl -s "http://127.0.0.1:8080${path}"
 }
 
-# Extract fields from IPC status response
+# Extract fields from CLI status response
 get_health() {
-  ipc_status | jq -r '.data[0].health // empty' 2>/dev/null || echo ""
+  cli_status | jq -r '.[0].health // empty' 2>/dev/null || echo ""
 }
 
 get_source_host() {
-  ipc_status | jq -r '.data[0].sourceHost // empty' 2>/dev/null || echo ""
+  cli_status | jq -r '.[0].sourceHost // empty' 2>/dev/null || echo ""
 }
 
 get_node_count() {
-  ipc_status | jq -r '.data[0].nodeCount // empty' 2>/dev/null || echo ""
+  cli_status | jq -r '.[0].nodeCount // empty' 2>/dev/null || echo ""
 }
 
 get_paused() {
-  ipc_status | jq -r '.data[0].paused // empty' 2>/dev/null || echo ""
+  cli_status | jq -r '.[0].paused // empty' 2>/dev/null || echo ""
 }
 
 get_recovery_blocked() {
-  ipc_status | jq -r '.data[0].recoveryBlockedUntil // "null"' 2>/dev/null || echo "null"
+  cli_status | jq -r '.[0].recoveryBlockedUntil // "null"' 2>/dev/null || echo "null"
 }
 
 # ---------------------------------------------------------------------------
@@ -375,9 +356,9 @@ reset_cluster() {
   wait_for_replication mysql-replica1 60 || true
   wait_for_replication mysql-replica2 60 || true
 
-  # Clear recovery block and resume failover via IPC
-  ipc_ack_recovery >/dev/null 2>&1 || true
-  ipc_resume_failover >/dev/null 2>&1 || true
+  # Clear recovery block and resume failover via CLI
+  cli_ack_recovery >/dev/null 2>&1 || true
+  cli_resume_failover >/dev/null 2>&1 || true
 
   # Clear hook marker files
   $COMPOSE exec -T puremyhad rm -f /tmp/hook_*.log 2>/dev/null || true

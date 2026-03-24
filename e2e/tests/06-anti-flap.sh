@@ -25,9 +25,9 @@ assert_neq "Recovery block is set after failover" "null" "$recovery_blocked"
 
 # Acknowledge recovery to clear the block
 echo "  Sending ack-recovery..."
-ack_result=$(ipc_ack_recovery)
+ack_result=$(cli_ack_recovery)
 echo "  Ack response: $ack_result"
-ack_success=$(echo "$ack_result" | jq -r '.data.success // empty')
+ack_success=$(echo "$ack_result" | jq -r '.success // empty')
 assert_eq "Ack recovery succeeds" "Recovery block cleared" "$ack_success"
 
 # Verify block is cleared
