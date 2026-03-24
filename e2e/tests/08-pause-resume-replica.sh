@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test: Pause and Resume Replica
-# Tests pausing and resuming replication on a replica via IPC.
+# Tests pausing and resuming replication on a replica via puremyha CLI.
 set -euo pipefail
 source "$(dirname "$0")/../lib/helpers.sh"
 echo "=== Test 08: Pause / Resume Replica ==="
@@ -9,18 +9,18 @@ wait_for_health "Healthy" 60
 
 # --- Pause replication on mysql-replica1 ---
 echo "  Pausing replication on mysql-replica1..."
-pause_result=$(ipc_pause_replica "mysql-replica1")
+pause_result=$(cli_pause_replica "mysql-replica1")
 echo "  Pause response: $pause_result"
 
-pause_success=$(echo "$pause_result" | jq -r '.data.success // empty')
+pause_success=$(echo "$pause_result" | jq -r '.success // empty')
 assert_not_empty "Pause returns success message" "$pause_success"
 
 # Wait for daemon to pick up paused state
 sleep 3
 
 # Verify paused flag in topology
-topo=$(ipc_topology)
-paused=$(echo "$topo" | jq -r '.data[0].nodes[] | select(.host == "mysql-replica1") | .paused')
+topo=$(cli_topology)
+paused=$(echo "$topo" | jq -r '.[0].nodes[] | select(.host == "mysql-replica1") | .paused')
 assert_eq "mysql-replica1 paused == true" "true" "$paused"
 
 # --- Write data on source, verify it does NOT reach paused replica ---
@@ -44,18 +44,18 @@ assert_eq "Data replicated to running replica2" "1" "$running_count"
 
 # --- Resume replication on mysql-replica1 ---
 echo "  Resuming replication on mysql-replica1..."
-resume_result=$(ipc_resume_replica "mysql-replica1")
+resume_result=$(cli_resume_replica "mysql-replica1")
 echo "  Resume response: $resume_result"
 
-resume_success=$(echo "$resume_result" | jq -r '.data.success // empty')
+resume_success=$(echo "$resume_result" | jq -r '.success // empty')
 assert_not_empty "Resume returns success message" "$resume_success"
 
 # Wait for daemon to pick up resumed state and data to catch up
 sleep 5
 
 # Verify paused flag is now false
-topo=$(ipc_topology)
-paused=$(echo "$topo" | jq -r '.data[0].nodes[] | select(.host == "mysql-replica1") | .paused')
+topo=$(cli_topology)
+paused=$(echo "$topo" | jq -r '.[0].nodes[] | select(.host == "mysql-replica1") | .paused')
 assert_eq "mysql-replica1 paused == false" "false" "$paused"
 
 # Verify data caught up on replica1

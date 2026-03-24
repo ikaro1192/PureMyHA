@@ -59,7 +59,7 @@ assert_contains "consecutive_failures=0 for mysql-source" \
   'puremyha_node_consecutive_failures{cluster="e2e",host="mysql-source",port="3306"} 0' "$body"
 
 # Degraded state: stop source and verify cluster_healthy becomes 0
-ipc_pause_failover >/dev/null 2>&1
+cli_pause_failover >/dev/null 2>&1
 $COMPOSE stop mysql-source
 wait_for_health_not "Healthy" 30
 
@@ -69,6 +69,6 @@ assert_contains "cluster_healthy=0 when degraded" \
 
 # Restore
 $COMPOSE start mysql-source
-ipc_resume_failover >/dev/null 2>&1
+cli_resume_failover >/dev/null 2>&1
 
 test_summary

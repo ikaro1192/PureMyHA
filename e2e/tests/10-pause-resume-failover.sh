@@ -14,8 +14,8 @@ assert_eq "Original source is mysql-source" "mysql-source" "$orig_source"
 
 # 2. Pause failover
 echo "  Sending pause-failover..."
-pause_result=$(ipc_pause_failover)
-pause_success=$(echo "$pause_result" | jq -r '.data.success // empty')
+pause_result=$(cli_pause_failover)
+pause_success=$(echo "$pause_result" | jq -r '.success // empty')
 assert_eq "Pause failover succeeds" "Failover paused" "$pause_success"
 
 # 3. Verify paused=true in status
@@ -39,8 +39,8 @@ assert_eq "Source unchanged (failover blocked)" "$orig_source" "$source_after"
 
 # 6. Resume failover
 echo "  Sending resume-failover..."
-resume_result=$(ipc_resume_failover)
-resume_success=$(echo "$resume_result" | jq -r '.data.success // empty')
+resume_result=$(cli_resume_failover)
+resume_success=$(echo "$resume_result" | jq -r '.success // empty')
 assert_eq "Resume failover succeeds" "Failover resumed" "$resume_success"
 
 # 7. Wait for failover to complete

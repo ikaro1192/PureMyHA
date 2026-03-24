@@ -18,22 +18,22 @@ source_host=$(get_source_host)
 assert_eq "Source is mysql-source" "mysql-source" "$source_host"
 
 # Check topology details
-topo=$(ipc_topology)
-topo_node_count=$(echo "$topo" | jq '.data[0].nodes | length')
+topo=$(cli_topology)
+topo_node_count=$(echo "$topo" | jq '.[0].nodes | length')
 assert_eq "Topology shows 3 nodes" "3" "$topo_node_count"
 
-source_count=$(echo "$topo" | jq '[.data[0].nodes[] | select(.isSource==true)] | length')
+source_count=$(echo "$topo" | jq '[.[0].nodes[] | select(.isSource==true)] | length')
 assert_eq "Exactly 1 source" "1" "$source_count"
 
-replica_count=$(echo "$topo" | jq '[.data[0].nodes[] | select(.isSource==false)] | length')
+replica_count=$(echo "$topo" | jq '[.[0].nodes[] | select(.isSource==false)] | length')
 assert_eq "Exactly 2 replicas" "2" "$replica_count"
 
 # Verify no connect errors on any node
-error_count=$(echo "$topo" | jq '[.data[0].nodes[] | select(.connectError!=null)] | length')
+error_count=$(echo "$topo" | jq '[.[0].nodes[] | select(.connectError!=null)] | length')
 assert_eq "No connection errors" "0" "$error_count"
 
 # Verify no errant GTIDs
-errant_count=$(echo "$topo" | jq '[.data[0].nodes[] | select(.errantGtids!="" and .errantGtids!=null)] | length')
+errant_count=$(echo "$topo" | jq '[.[0].nodes[] | select(.errantGtids!="" and .errantGtids!=null)] | length')
 assert_eq "No errant GTIDs" "0" "$errant_count"
 
 test_summary

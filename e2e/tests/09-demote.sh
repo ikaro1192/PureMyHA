@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test: Demote (change a replica's replication source)
-# Tests demoting a replica to replicate from a different source via IPC.
+# Tests demoting a replica to replicate from a different source via puremyha CLI.
 set -euo pipefail
 source "$(dirname "$0")/../lib/helpers.sh"
 echo "=== Test 09: Demote ==="
@@ -9,10 +9,10 @@ wait_for_health "Healthy" 60
 
 # --- Step 1: Switchover to mysql-replica1 (make it the new source) ---
 echo "  Switching over to mysql-replica1..."
-switch_result=$(ipc_switchover "mysql-replica1" "false")
+switch_result=$(cli_switchover "mysql-replica1" "false")
 echo "  Switchover response: $switch_result"
 
-switch_success=$(echo "$switch_result" | jq -r '.data.success // empty')
+switch_success=$(echo "$switch_result" | jq -r '.success // empty')
 assert_not_empty "Switchover returns success" "$switch_success"
 
 # Wait for topology to settle
@@ -31,10 +31,10 @@ current_repl_source=$(mysql_exec mysql-replica2 "SELECT HOST FROM performance_sc
 echo "  mysql-replica2 current replication source: $current_repl_source"
 
 echo "  Demoting mysql-replica2 to replicate from mysql-replica1..."
-demote_result=$(ipc_demote "mysql-replica2" "mysql-replica1")
+demote_result=$(cli_demote "mysql-replica2" "mysql-replica1")
 echo "  Demote response: $demote_result"
 
-demote_success=$(echo "$demote_result" | jq -r '.data.success // empty')
+demote_success=$(echo "$demote_result" | jq -r '.success // empty')
 assert_not_empty "Demote returns success message" "$demote_success"
 
 # Wait for replication to re-establish

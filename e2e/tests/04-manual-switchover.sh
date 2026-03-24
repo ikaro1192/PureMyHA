@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Test: Manual Switchover
-# Tests dry-run and real switchover via IPC.
+# Tests dry-run and real switchover via puremyha CLI.
 set -euo pipefail
 source "$(dirname "$0")/../lib/helpers.sh"
 echo "=== Test 04: Manual Switchover ==="
@@ -12,11 +12,11 @@ echo "  Original source: $orig_source"
 
 # --- Dry-run switchover ---
 echo "  Testing dry-run switchover to mysql-replica2..."
-dry_result=$(ipc_switchover "mysql-replica2" "true")
+dry_result=$(cli_switchover "mysql-replica2" "true")
 echo "  Dry-run response: $dry_result"
 
 # Verify dry-run reports success
-dry_success=$(echo "$dry_result" | jq -r '.data.success // empty')
+dry_success=$(echo "$dry_result" | jq -r '.success // empty')
 assert_not_empty "Dry-run returns success message" "$dry_success"
 
 # Source should be unchanged after dry-run
@@ -25,10 +25,10 @@ assert_eq "Source unchanged after dry-run" "$orig_source" "$current_source"
 
 # --- Real switchover ---
 echo "  Executing switchover to mysql-replica2..."
-switch_result=$(ipc_switchover "mysql-replica2" "false")
+switch_result=$(cli_switchover "mysql-replica2" "false")
 echo "  Switchover response: $switch_result"
 
-switch_success=$(echo "$switch_result" | jq -r '.data.success // empty')
+switch_success=$(echo "$switch_result" | jq -r '.success // empty')
 assert_not_empty "Switchover returns success" "$switch_success"
 
 # Wait for topology to settle
