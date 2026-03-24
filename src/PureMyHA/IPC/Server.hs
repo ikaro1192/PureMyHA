@@ -10,7 +10,6 @@ import Control.Concurrent.Async (async)
 import Control.Concurrent.STM (TVar, atomically, readTVarIO)
 import Control.Exception (bracket, try, catch, SomeException, finally)
 import Data.Aeson (encode, eitherDecode)
-import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
@@ -29,6 +28,7 @@ import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
 import System.Posix.Files (removeLink)
 import PureMyHA.IPC.Protocol
+import qualified PureMyHA.IPC.Socket as IPCSocket
 import PureMyHA.Topology.State
 import PureMyHA.Types
 
@@ -81,18 +81,11 @@ handleClient sock tvar clusterMap discoveryMap loggerVar = do
     Right () -> pure ()
 
 recvLine :: Socket -> IO String
-recvLine sock = go []
-  where
-    go acc = do
-      chunk <- NSB.recv sock 4096
-      if BS.null chunk
-        then pure (BSC.unpack (BS.concat (reverse acc)))
-        else do
-          let acc' = chunk : acc
-              full = BSC.unpack (BS.concat (reverse acc'))
-          if '\n' `elem` full
-            then pure (takeWhile (/= '\n') full)
-            else go acc'
+recvLine sock = do
+  result <- IPCSocket.recvLine sock
+  pure $ case result of
+    Left _   -> ""
+    Right bs -> BSC.unpack bs
 
 sendResponse :: Socket -> Response -> IO ()
 sendResponse sock resp = do
