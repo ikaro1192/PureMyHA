@@ -8,8 +8,6 @@ module PureMyHA.IPC.Client
 
 import Control.Exception (bracket, try, SomeException)
 import Data.Aeson (encode, eitherDecode)
-import qualified Data.ByteString as BS
-import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BL
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Data.Text (Text)
@@ -19,6 +17,7 @@ import Data.Time (UTCTime, formatTime, defaultTimeLocale)
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.IPC.Protocol
+import qualified PureMyHA.IPC.Socket as IPCSocket
 import PureMyHA.Types
 
 -- | Send a request to the daemon and return the response
@@ -40,22 +39,12 @@ connectSocket path = do
   pure sock
 
 recvResponse :: Socket -> IO (Either Text Response)
-recvResponse sock = go []
-  where
-    go acc = do
-      chunk <- NSB.recv sock 4096
-      if BS.null chunk
-        then pure (Left "Connection closed before response")
-        else do
-          let acc' = chunk : acc
-              full = BS.concat (reverse acc')
-          if BSC.elem '\n' full
-            then
-              let line = BSC.takeWhile (/= '\n') full
-              in pure $ case eitherDecode (BL.fromStrict line) of
-                Left err   -> Left (T.pack err)
-                Right resp -> Right resp
-            else go acc'
+recvResponse sock = do
+  result <- IPCSocket.recvLine sock
+  pure $ result >>= \bs ->
+    case eitherDecode (BL.fromStrict bs) of
+      Left err   -> Left (T.pack err)
+      Right resp -> Right resp
 
 -- | Print cluster status in tabular format
 printStatus :: Bool -> [ClusterStatus] -> IO ()

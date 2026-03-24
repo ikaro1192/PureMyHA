@@ -55,6 +55,7 @@ library
     PureMyHA.Failover.ErrantGtid
     PureMyHA.Failover.Switchover
     PureMyHA.IPC.Protocol
+    PureMyHA.IPC.Socket
     PureMyHA.IPC.Server
     PureMyHA.IPC.Client
     PureMyHA.HTTP.Server
