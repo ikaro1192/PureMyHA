@@ -319,7 +319,6 @@ puremyha -j switchover --to db2
 # Pipe to jq
 puremyha -j status | jq '.[0].health'
 puremyha -j topology | jq '.[0].nodes[].host'
-puremyha -j events | jq '.[].type'
 
 # validate-config JSON output
 puremyha --json validate-config --config /etc/puremyha/config.yaml
