@@ -11,7 +11,7 @@ import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
 import PureMyHA.Config (ClusterConfig (..))
-import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials)
+import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getTLSConfig)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.GTID (GtidEntry (..), GtidInterval (..), GtidUUID (..), TransactionId (..), parseGtidIntervals)
 import PureMyHA.MySQL.Query (injectEmptyTransaction)
@@ -36,6 +36,7 @@ runFixErrantGtid = do
   tvar  <- asks (envDaemonState)
   cc    <- asks (envCluster)
   creds <- getMonCredentials
+  mTls  <- getTLSConfig
   liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     case mTopo of
@@ -55,7 +56,7 @@ runFixErrantGtid = do
                   Right entryLists -> do
                     let gtids = collectErrantGtids entryLists
                     let srcCi = makeConnectInfo srcId creds
-                    result <- withNodeConn srcCi $ \conn ->
+                    result <- withNodeConn mTls srcCi $ \conn ->
                       mapM_ (injectEmptyTransaction conn) gtids
                     case result of
                       Left err -> pure (Left ("Connection to source failed: " <> err))

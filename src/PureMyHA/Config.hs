@@ -14,6 +14,9 @@ module PureMyHA.Config
   , CandidatePriority (..)
   , GlobalConfig (..)
   , LogLevel (..)
+  , TLSMode (..)
+  , TLSMinVersion (..)
+  , TLSConfig (..)
   , parseLogLevel
   , logLevelToText
   , defaultLoggingConfig
@@ -77,6 +80,27 @@ data GlobalConfig = GlobalConfig
   , gcHooks            :: Maybe HooksConfig
   } deriving (Show, Generic)
 
+data TLSMode
+  = TLSDisabled
+  | TLSSkipVerify
+  | TLSVerifyCA
+  | TLSVerifyFull
+  deriving (Show, Eq, Generic)
+
+-- | Minimum TLS protocol version. Defaults to TLS 1.2 when not specified.
+data TLSMinVersion
+  = TLSVersion12  -- ^ Allow TLS 1.2 and TLS 1.3
+  | TLSVersion13  -- ^ Allow TLS 1.3 only
+  deriving (Show, Eq, Generic)
+
+data TLSConfig = TLSConfig
+  { tlsMode       :: TLSMode
+  , tlsMinVersion :: Maybe TLSMinVersion  -- ^ Nothing = TLS 1.2+ (default)
+  , tlsCACert     :: Maybe FilePath       -- ^ required for verify-ca / verify-full
+  , tlsClientCert :: Maybe FilePath       -- ^ optional (mutual TLS)
+  , tlsClientKey  :: Maybe FilePath       -- ^ optional (mutual TLS)
+  } deriving (Show, Eq, Generic)
+
 data ClusterConfig = ClusterConfig
   { ccName                   :: ClusterName
   , ccNodes                  :: [NodeConfig]
@@ -86,6 +110,7 @@ data ClusterConfig = ClusterConfig
   , ccFailureDetection       :: FailureDetectionConfig
   , ccFailover               :: FailoverConfig
   , ccHooks                  :: Maybe HooksConfig
+  , ccTLS                    :: Maybe TLSConfig
   } deriving (Show, Generic)
 
 -- | Internal type used only for YAML parsing; all per-cluster settings are optional.
@@ -98,6 +123,7 @@ data RawClusterConfig = RawClusterConfig
   , rccFailureDetection       :: Maybe FailureDetectionConfig
   , rccFailover               :: Maybe FailoverConfig
   , rccHooks                  :: Maybe HooksConfig
+  , rccTLS                    :: Maybe TLSConfig
   } deriving (Show, Generic)
 
 data DbCredentials = DbCredentials
@@ -188,6 +214,7 @@ resolveCluster mglobal raw = do
     , ccFailureDetection       = fdc
     , ccFailover               = fc
     , ccHooks                  = rccHooks raw <|> (gcHooks =<< mglobal)
+    , ccTLS                    = rccTLS raw
     }
   where
     require field getter globalVal =
@@ -225,6 +252,31 @@ instance FromJSON GlobalConfig where
       <*> o .:? "failover"
       <*> o .:? "hooks"
 
+instance FromJSON TLSMode where
+  parseJSON = withText "TLSMode" $ \t -> case t of
+    "disabled"    -> pure TLSDisabled
+    "skip-verify" -> pure TLSSkipVerify
+    "verify-ca"   -> pure TLSVerifyCA
+    "verify-full" -> pure TLSVerifyFull
+    _             -> fail $ "Invalid tls.mode: " <> show t
+                         <> " (expected: disabled, skip-verify, verify-ca, verify-full)"
+
+instance FromJSON TLSMinVersion where
+  parseJSON = withText "TLSMinVersion" $ \t -> case t of
+    "1.2" -> pure TLSVersion12
+    "1.3" -> pure TLSVersion13
+    _     -> fail $ "Invalid tls.min_version: " <> show t
+                 <> " (expected: \"1.2\" or \"1.3\")"
+
+instance FromJSON TLSConfig where
+  parseJSON = withObject "TLSConfig" $ \o ->
+    TLSConfig
+      <$> o .:? "mode"        .!= TLSDisabled
+      <*> o .:? "min_version"
+      <*> o .:? "ca_cert"
+      <*> o .:? "client_cert"
+      <*> o .:? "client_key"
+
 instance FromJSON RawClusterConfig where
   parseJSON = withObject "RawClusterConfig" $ \o ->
     RawClusterConfig
@@ -236,6 +288,7 @@ instance FromJSON RawClusterConfig where
       <*> o .:? "failure_detection"
       <*> o .:? "failover"
       <*> o .:? "hooks"
+      <*> o .:? "tls"
 
 instance FromJSON NodeConfig where
   parseJSON = withObject "NodeConfig" $ \o ->

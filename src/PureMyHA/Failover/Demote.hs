@@ -5,7 +5,7 @@ import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Text (Text)
 import PureMyHA.Config (ClusterConfig (..))
-import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getReplCredentials, appLogInfo, appLogError)
+import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getReplCredentials, getTLSConfig, appLogInfo, appLogError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
   ( stopReplica, setReadOnly, changeReplicationSourceTo, startReplica )
@@ -22,6 +22,7 @@ runDemote demoteHost srcHost = do
   cc        <- asks envCluster
   monCreds  <- getMonCredentials
   replCreds <- getReplCredentials
+  mTls      <- getTLSConfig
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure (Left "Cluster not found")
@@ -35,7 +36,7 @@ runDemote demoteHost srcHost = do
               ci       = makeConnectInfo demoteId monCreds
           appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Demoting " <> demoteHost
                     <> " to replica under " <> srcHost
-          result <- liftIO $ withNodeConn ci $ \conn -> do
+          result <- liftIO $ withNodeConn mTls ci $ \conn -> do
             stopReplica conn
             setReadOnly conn
             changeReplicationSourceTo conn (nodeHost srcId) (nodePort srcId) replCreds

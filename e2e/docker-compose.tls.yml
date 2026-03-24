@@ -1,0 +1,23 @@
+# docker-compose overlay for TLS E2E tests.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
+# Mounts TLS certificates into MySQL containers and switches puremyhad to a TLS config.
+services:
+  mysql-source:
+    volumes:
+      - ./tls:/etc/mysql/tls:ro
+      - ./mysql-conf/source-tls.cnf:/etc/mysql/conf.d/tls.cnf:ro
+
+  mysql-replica1:
+    volumes:
+      - ./tls:/etc/mysql/tls:ro
+      - ./mysql-conf/replica-tls.cnf:/etc/mysql/conf.d/tls.cnf:ro
+
+  mysql-replica2:
+    volumes:
+      - ./tls:/etc/mysql/tls:ro
+      - ./mysql-conf/replica-tls.cnf:/etc/mysql/conf.d/tls.cnf:ro
+
+  puremyhad:
+    volumes:
+      - ./tls:/etc/puremyha/tls:ro
+    command: ["puremyhad", "--config", "/etc/puremyha/puremyha-tls-skip-verify.yaml", "--socket", "/run/puremyhad.sock"]

@@ -11,6 +11,12 @@ clusters:
     replication_credentials:           # optional; falls back to credentials if omitted
       user: repl
       password_file: /etc/puremyha/repl.pass
+    # tls:                                             # optional per-cluster TLS for MySQL connections
+    #   mode: disabled                                 # disabled | skip-verify | verify-ca | verify-full. Default: disabled
+    #   min_version: "1.2"                             # optional; "1.2" (default, allows TLS 1.2+) | "1.3" (TLS 1.3 only)
+    #   ca_cert: /etc/puremyha/tls/ca-cert.pem        # required for verify-ca / verify-full
+    #   client_cert: /etc/puremyha/tls/client.pem     # optional (mutual TLS)
+    #   client_key: /etc/puremyha/tls/client-key.pem  # optional (mutual TLS)
     # monitoring / failure_detection / failover / hooks:
     #   Omitted here — values are inherited from the global section below.
     #   Any of these can be specified per-cluster to override the global defaults.

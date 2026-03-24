@@ -120,6 +120,7 @@ monitorNode nid = do
   now  <- liftIO getCurrentTime
   mc   <- liftIO $ readTVarIO (envMonitoring env)
   creds <- getMonCredentials
+  mTls  <- getTLSConfig
   let ci        = makeConnectInfo nid creds
       threshold = fdcConsecutiveFailuresForDead fdc
       retries   = mcConnectRetries mc
@@ -132,7 +133,7 @@ monitorNode nid = do
     mTopo <- getClusterTopology tvar (ccName cc)
     pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
   let prevFailures = maybe 0 nsConsecutiveFailures mOldNs
-  result <- liftIO $ withNodeConnRetry retries backoff cap logRetry ci $ \conn -> do
+  result <- liftIO $ withNodeConnRetry retries backoff cap logRetry mTls ci $ \conn -> do
     mRs      <- showReplicaStatus conn
     gtidExec <- getGtidExecuted conn
     pure (mRs, gtidExec)
@@ -201,6 +202,7 @@ enrichErrantGtids ns = do
   tvar  <- asks envDaemonState
   cc    <- asks envCluster
   creds <- getMonCredentials
+  mTls  <- getTLSConfig
   liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     case mTopo of
@@ -219,7 +221,7 @@ enrichErrantGtids ns = do
                     ProbeSuccess{prGtidExecuted = g} -> g
                     ProbeFailure{} -> ""
                   ci = makeConnectInfo srcId creds
-              result <- withNodeConn ci $ \conn ->
+              result <- withNodeConn mTls ci $ \conn ->
                 gtidSubtract conn replicaGtid sourceGtid
               case result of
                 Left _         -> pure ns

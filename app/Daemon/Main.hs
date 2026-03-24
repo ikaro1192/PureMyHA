@@ -181,6 +181,7 @@ initCluster tvar loggerVar (cc, pws) = do
         , envHooks       = hooksVar
         , envLock        = lock
         , envLogger      = loggerVar
+        , envTLS         = ccTLS cc
         }
   topo <- runApp env discoverTopology
   logger <- readTVarIO loggerVar

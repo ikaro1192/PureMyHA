@@ -12,7 +12,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (NominalDiffTime)
 import Database.MySQL.Base (ConnectInfo (..), defaultConnectInfo, close, MySQLConn)
-import PureMyHA.Config (DbCredentials (..))
+import PureMyHA.Config (DbCredentials (..), TLSConfig)
 import PureMyHA.MySQL.Auth (connectWithAuth)
 import PureMyHA.Types (NodeId (..))
 
@@ -28,11 +28,12 @@ makeConnectInfo NodeId{..} DbCredentials{..} = defaultConnectInfo
 
 -- | Execute an action with a MySQL connection, ensuring cleanup
 withNodeConn
-  :: ConnectInfo
+  :: Maybe TLSConfig
+  -> ConnectInfo
   -> (MySQLConn -> IO a)
   -> IO (Either Text a)
-withNodeConn ci action = do
-  result <- try @SomeException $ bracket (connectWithAuth ci) close action
+withNodeConn mTls ci action = do
+  result <- try @SomeException $ bracket (connectWithAuth mTls ci) close action
   pure $ case result of
     Left err -> Left (T.pack (show err))
     Right v  -> Right v
@@ -69,9 +70,10 @@ withNodeConnRetry
   -> NominalDiffTime  -- ^ initial backoff
   -> NominalDiffTime  -- ^ backoff cap (typically connect_timeout)
   -> (Text -> IO ())  -- ^ debug log callback
+  -> Maybe TLSConfig
   -> ConnectInfo
   -> (MySQLConn -> IO a)
   -> IO (Either Text a)
-withNodeConnRetry maxAttempts initialBackoff backoffCap logMsg ci action =
+withNodeConnRetry maxAttempts initialBackoff backoffCap logMsg mTls ci action =
   retryWithBackoff maxAttempts initialBackoff backoffCap logMsg
-    (withNodeConn ci action)
+    (withNodeConn mTls ci action)

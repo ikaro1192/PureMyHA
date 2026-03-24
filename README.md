@@ -28,6 +28,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Consecutive Failure Threshold** — Requires N consecutive probe failures before marking a node dead, preventing failover on transient TCP timeouts or momentary MySQL unresponsiveness (configurable `consecutive_failures_for_dead`, default 3)
 - **Anti-Flap Protection** — Blocks repeated automatic failovers via configurable `recovery_block_period`
 - **Hook Support** — Pre/post hooks for failover and switchover events
+- **Optional TLS** — Per-cluster TLS for MySQL connections (`disabled` / `skip-verify` / `verify-ca` / `verify-full`), supports `require_secure_transport=ON`; minimum TLS version configurable (`"1.2"` / `"1.3"`)
 - **MySQL 8.4 Native** — Uses only modern syntax (`SHOW REPLICA STATUS`, `CHANGE REPLICATION SOURCE TO`, etc.)
 - **Graceful Shutdown** — Cleans up the socket file and exits on SIGTERM/SIGINT
 - **Config Hot-Reload** — Reloads `monitoring` and `hooks` config per cluster on SIGHUP without restart
@@ -188,7 +189,7 @@ See [docs/cli.md](docs/cli.md) for the full CLI reference including all commands
 
 | Purpose | Library |
 |---------|---------|
-| MySQL connectivity | `mysql-haskell` (pure Haskell, no C library dependency) + custom `caching_sha2_password` auth |
+| MySQL connectivity | `mysql-haskell` (pure Haskell, no C library dependency) + custom `caching_sha2_password` auth + optional TLS (1.2 / 1.3) |
 | Configuration | `yaml` + `optparse-applicative` |
 | Concurrency | `async` + `STM` (each node monitored in an independent thread) |
 | Logging | `katip` (structured logging with JSON output) |

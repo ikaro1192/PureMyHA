@@ -6,7 +6,7 @@ import Control.Monad.Reader (asks)
 import Data.Text (Text)
 import Database.MySQL.Base (MySQLConn)
 import PureMyHA.Config (ClusterConfig (..))
-import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, appLogInfo, appLogError)
+import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getTLSConfig, appLogInfo, appLogError)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query (stopReplica, startReplica)
 import PureMyHA.Topology.State (getClusterTopology, updateNodeState)
@@ -37,6 +37,7 @@ withTargetNode actionName targetHost mysqlAction stateUpdate = do
   tvar  <- asks envDaemonState
   cc    <- asks envCluster
   creds <- getMonCredentials
+  mTls  <- getTLSConfig
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> pure (Left "Cluster not found")
@@ -46,7 +47,7 @@ withTargetNode actionName targetHost mysqlAction stateUpdate = do
         Just targetNs -> do
           let ci = makeConnectInfo (nsNodeId targetNs) creds
           appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replication on " <> targetHost
-          result <- liftIO $ withNodeConn ci $ \conn -> mysqlAction conn
+          result <- liftIO $ withNodeConn mTls ci $ \conn -> mysqlAction conn
           case result of
             Left err -> do
               appLogError $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " failed: " <> err

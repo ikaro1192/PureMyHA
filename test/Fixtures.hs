@@ -74,6 +74,7 @@ mkTestEnv tvar cc fc = do
     , envHooks       = hooksVar
     , envLock        = lock
     , envLogger      = loggerVar
+    , envTLS         = Nothing
     }
 
 healthySource :: NodeState

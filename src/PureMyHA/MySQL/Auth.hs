@@ -37,10 +37,24 @@ import           Database.MySQL.Protocol.Packet  (Packet (..), decodeFromPacket,
 import           System.IO.Streams               (InputStream)
 import qualified Data.Connection                 as TCP
 import qualified System.IO.Streams.TCP           as TCP
+import           PureMyHA.Config                 (TLSConfig (..), TLSMode (..))
+import           PureMyHA.MySQL.TLS              (buildClientParams, upgradeTLS)
 
 -- | CLIENT_PLUGIN_AUTH capability flag (not included in mysql-haskell's clientCap).
 clientPluginAuth :: Word32
 clientPluginAuth = 0x00080000
+
+-- | CLIENT_SSL capability flag — requests TLS upgrade before authentication.
+clientSSL :: Word32
+clientSSL = 0x00000800
+
+-- | Serialise an SSL_REQUEST packet (32-byte prefix of HandshakeResponse41, no credentials).
+putSSLRequest :: Word32 -> Word32 -> Word8 -> Binary.Put
+putSSLRequest caps maxPkt charset = do
+    Binary.putWord32le caps
+    Binary.putWord32le maxPkt
+    Binary.putWord8 charset
+    replicateM_ 23 (Binary.putWord8 0x00)
 
 -- | SHA-256 scramble for the @caching_sha2_password@ fast-auth path.
 --
@@ -211,14 +225,18 @@ handleAuthResponse is writePacket nonce pass = loop
                                      ++ show pluginName))
 
 -- | Drop-in replacement for 'Database.MySQL.Base.connect' with
--- @caching_sha2_password@ (MySQL 8.4 default) support.
-connectWithAuth :: ConnectInfo -> IO MySQLConn
-connectWithAuth (ConnectInfo host port db user pass charset) =
+-- @caching_sha2_password@ (MySQL 8.4 default) support and optional TLS.
+--
+-- When 'TLSConfig' is provided (and mode is not 'TLSDisabled'), the function
+-- performs the MySQL STARTTLS-like protocol: it sends an SSL_REQUEST packet
+-- before the normal auth handshake, performs the TLS handshake over the raw
+-- socket, then continues with @caching_sha2_password@ / @mysql_native_password@
+-- authentication over the encrypted channel.
+connectWithAuth :: Maybe TLSConfig -> ConnectInfo -> IO MySQLConn
+connectWithAuth mTls (ConnectInfo host port db user pass charset) =
     bracketOnError open TCP.close go
   where
     open = TCP.connectSocket host port >>= TCP.socketToConnection bUFSIZE
-
-    sendPacket c pkt = TCP.send c (Binary.runPut (Binary.put pkt))
 
     go c = do
         let is = TCP.source c
@@ -226,25 +244,42 @@ connectWithAuth (ConnectInfo host port db user pass charset) =
         p   <- readPacket is'
         greet <- decodeFromPacket p :: IO Greeting
 
-        let plugin = greetingAuthPlugin greet
-            nonce  = greetingSalt1 greet `B.append` greetingSalt2 greet
+        let plugin   = greetingAuthPlugin greet
+            nonce    = greetingSalt1 greet `B.append` greetingSalt2 greet
             authResp = scrambleSHA256 pass nonce
-            caps     = clientCap .|. clientPluginAuth
-            authPkt = putToPacket 1
-                        (putAuthPacket caps clientMaxPacketSize charset
-                                       user authResp db (Just plugin))
+            baseCaps = clientCap .|. clientPluginAuth
 
-        sendPacket c authPkt
-        handleAuthResponse is' (sendPacket c) nonce pass
+        -- Perform TLS upgrade if configured and not disabled
+        (writeP, readIS, authSeqN, authCaps) <- case mTls of
+          Just tlsCfg | tlsMode tlsCfg /= TLSDisabled -> do
+            let sslCaps = baseCaps .|. clientSSL
+                sslPkt  = putToPacket 1
+                            (putSSLRequest sslCaps clientMaxPacketSize charset)
+            TCP.send c (Binary.runPut (Binary.put sslPkt))
+            params <- buildClientParams tlsCfg host
+            let (sock, _) = TCP.connExtraInfo c
+            (tlsIs, tlsSend) <- upgradeTLS params sock
+            tlsIS' <- decodeInputStream tlsIs
+            let writePacket pkt = tlsSend (Binary.runPut (Binary.put pkt))
+            return (writePacket, tlsIS', 2 :: Word8, sslCaps)
+          _ -> do
+            let writePacket pkt = TCP.send c (Binary.runPut (Binary.put pkt))
+            return (writePacket, is', 1 :: Word8, baseCaps)
+
+        let authPkt = putToPacket authSeqN
+                        (putAuthPacket authCaps clientMaxPacketSize charset
+                                       user authResp db (Just plugin))
+        writeP authPkt
+        handleAuthResponse readIS writeP nonce pass
 
         consumed <- newIORef True
         let waitNotMandatoryOK =
-                catch (void (waitCommandReply is'))
+                catch (void (waitCommandReply readIS))
                       ((\_ -> return ()) :: SomeException -> IO ())
             conn = MySQLConn
-                       is'
-                       (sendPacket c)
-                       (writeCommand COM_QUIT (sendPacket c)
+                       readIS
+                       writeP
+                       (writeCommand COM_QUIT writeP
                         >> waitNotMandatoryOK
                         >> TCP.close c)
                        consumed

@@ -17,8 +17,8 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
-import PureMyHA.Config (ClusterConfig (..), DbCredentials, NodeConfig (..))
-import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials)
+import PureMyHA.Config (ClusterConfig (..), DbCredentials, NodeConfig (..), TLSConfig)
+import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getTLSConfig)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
@@ -30,9 +30,10 @@ discoverTopology :: App ClusterTopology
 discoverTopology = do
   cc     <- asks envCluster
   creds  <- getMonCredentials
+  mTls   <- getTLSConfig
   logger <- asks envLogger >>= liftIO . readTVarIO
   let seedNodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
-  nodeStates <- liftIO $ discoverAll creds (Set.fromList seedNodes) Set.empty Map.empty logger
+  nodeStates <- liftIO $ discoverAll mTls creds (Set.fromList seedNodes) Set.empty Map.empty logger
   pure (buildClusterTopology (ccName cc) nodeStates)
 
 -- | Build a ClusterTopology from discovered node states (pure)
@@ -59,13 +60,14 @@ buildClusterTopology name nodeStates =
 
 -- | Recursively discover nodes
 discoverAll
-  :: DbCredentials     -- ^ credentials
+  :: Maybe TLSConfig   -- ^ TLS configuration
+  -> DbCredentials     -- ^ credentials
   -> Set NodeId        -- ^ queue
   -> Set NodeId        -- ^ visited
   -> Map NodeId NodeState
   -> Logger
   -> IO (Map NodeId NodeState)
-discoverAll creds queue visited acc logger
+discoverAll mTls creds queue visited acc logger
   | Set.null queue = do
       logInfo logger $ "[discovery] Queue empty, discovery complete (" <> T.pack (show (Map.size acc)) <> " node(s))"
       pure acc
@@ -73,23 +75,23 @@ discoverAll creds queue visited acc logger
       logInfo logger $ "[discovery] Queue: " <> T.pack (show (map (\n -> nodeHost n <> ":" <> T.pack (show (nodePort n))) (Set.toList queue)))
       let (nid, rest) = Set.deleteFindMin queue
       if Set.member nid visited
-        then discoverAll creds rest visited acc logger
+        then discoverAll mTls creds rest visited acc logger
         else do
-          (ns, replicaIds) <- probeNode creds nid logger
+          (ns, replicaIds) <- probeNode mTls creds nid logger
           let visited'  = Set.insert nid visited
               acc'      = Map.insert nid ns acc
               fromRs    = nextDiscoveryTargets ns visited' rest
               newQueue  = foldr (\rid q -> if Set.notMember rid visited' then Set.insert rid q else q) fromRs replicaIds
-          discoverAll creds newQueue visited' acc' logger
+          discoverAll mTls creds newQueue visited' acc' logger
 
 -- | Probe a single node and return its NodeState plus any replicas discovered
 -- via SHOW PROCESSLIST (only populated when the node is a source).
-probeNode :: DbCredentials -> NodeId -> Logger -> IO (NodeState, [NodeId])
-probeNode creds nid logger = do
+probeNode :: Maybe TLSConfig -> DbCredentials -> NodeId -> Logger -> IO (NodeState, [NodeId])
+probeNode mTls creds nid logger = do
   logInfo logger $ "[discovery] Probing " <> nodeHost nid <> ":" <> T.pack (show (nodePort nid))
   now <- getCurrentTime
   let ci = makeConnectInfo nid creds
-  result <- withNodeConn ci $ \conn -> do
+  result <- withNodeConn mTls ci $ \conn -> do
     mReplicaStatus <- showReplicaStatus conn
     gtidExec       <- getGtidExecuted conn
     replicaIds <- case mReplicaStatus of
