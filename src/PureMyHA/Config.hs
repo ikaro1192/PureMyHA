@@ -32,6 +32,7 @@ import Data.Time (NominalDiffTime)
 import Data.Yaml (decodeFileEither)
 import GHC.Generics (Generic)
 import Text.Read (readMaybe)
+import PureMyHA.Types (ClusterName (..), unClusterName)
 
 data Config = Config
   { cfgClusters :: [ClusterConfig]
@@ -77,7 +78,7 @@ data GlobalConfig = GlobalConfig
   } deriving (Show, Generic)
 
 data ClusterConfig = ClusterConfig
-  { ccName                   :: Text
+  { ccName                   :: ClusterName
   , ccNodes                  :: [NodeConfig]
   , ccCredentials            :: Credentials
   , ccReplicationCredentials :: Maybe Credentials
@@ -179,7 +180,7 @@ resolveCluster mglobal raw = do
   fdc <- require "failure_detection" rccFailureDetection (gcFailureDetection =<< mglobal)
   fc  <- require "failover"          rccFailover         (gcFailover         =<< mglobal)
   pure ClusterConfig
-    { ccName                   = rccName raw
+    { ccName                   = ClusterName (rccName raw)
     , ccNodes                  = rccNodes raw
     , ccCredentials            = rccCredentials raw
     , ccReplicationCredentials = rccReplicationCredentials raw
@@ -314,13 +315,13 @@ validateConfig cfg = clusterErrors ++ httpErrors
 
     clusterNames = map ccName clusters
     duplicateClusterErrors =
-      [ "duplicate cluster name: '" <> T.unpack n <> "'"
+      [ "duplicate cluster name: '" <> T.unpack (unClusterName n) <> "'"
       | n <- duplicates clusterNames ]
 
     validateCluster :: ClusterConfig -> [String]
     validateCluster cc = nodeErrors ++ monErrors ++ fdErrors
       where
-        cname  = T.unpack (ccName cc)
+        cname  = T.unpack (unClusterName (ccName cc))
         prefix = "cluster '" <> cname <> "': "
         nodes  = ccNodes cc
 

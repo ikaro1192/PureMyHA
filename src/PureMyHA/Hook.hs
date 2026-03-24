@@ -14,9 +14,10 @@ import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
 import System.Exit (ExitCode (..))
 import System.Process (createProcess, proc, waitForProcess, env)
 import PureMyHA.Config (HooksConfig (..))
+import PureMyHA.Types (ClusterName, unClusterName)
 
 data HookEnv = HookEnv
-  { hookClusterName :: Text
+  { hookClusterName :: ClusterName
   , hookNewSource   :: Maybe Text
   , hookOldSource   :: Maybe Text
   , hookFailureType :: Maybe Text   -- e.g. "DeadSource", "PromoteFailed"
@@ -32,14 +33,14 @@ getCurrentTimestamp =
 runHook :: FilePath -> HookEnv -> IO (Either Text ())
 runHook scriptPath hookEnv = do
   let envVars =
-        [ ("PUREMYHA_CLUSTER", T.unpack (hookClusterName hookEnv))
+        [ ("PUREMYHA_CLUSTER", T.unpack (unClusterName (hookClusterName hookEnv)))
         ] ++
         maybe [] (\h -> [("PUREMYHA_NEW_SOURCE", T.unpack h)]) (hookNewSource hookEnv) ++
         maybe [] (\h -> [("PUREMYHA_OLD_SOURCE", T.unpack h)]) (hookOldSource hookEnv) ++
         maybe [] (\ft -> [("PUREMYHA_FAILURE_TYPE", T.unpack ft)]) (hookFailureType hookEnv) ++
         [("PUREMYHA_TIMESTAMP", T.unpack (hookTimestamp hookEnv))]
   result <- try @SomeException $ do
-    (_, _, _, ph) <- createProcess (proc scriptPath [T.unpack (hookClusterName hookEnv)])
+    (_, _, _, ph) <- createProcess (proc scriptPath [T.unpack (unClusterName (hookClusterName hookEnv))])
       { env = Just envVars }
     exitCode <- waitForProcess ph
     pure exitCode

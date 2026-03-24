@@ -64,23 +64,23 @@ doFailover = do
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> do
-      appLogError $ "[" <> ccName cc <> "] Auto-failover failed: Cluster not found"
+      appLogError $ "[" <> unClusterName (ccName cc) <> "] Auto-failover failed: Cluster not found"
       pure (Left "Cluster not found")
     Just topo -> do
       now <- liftIO getCurrentTime
       case checkAutoFailoverPreconditions now topo (fcMinReplicasForFailover fc) of
         Left err -> do
-          appLogError $ "[" <> ccName cc <> "] Auto-failover failed: " <> err
+          appLogError $ "[" <> unClusterName (ccName cc) <> "] Auto-failover failed: " <> err
           pure (Left err)
         Right () -> do
-          appLogInfo $ "[" <> ccName cc <> "] Auto-failover started"
+          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Auto-failover started"
           executeFailover topo
 
 executeFailover :: ClusterTopology -> App (Either Text ())
 executeFailover topo = runExceptT $ do
   cc <- lift $ asks envCluster
   fc <- lift $ asks envFailover
-  let prefix = "[" <> ccName cc <> "] "
+  let prefix = "[" <> unClusterName (ccName cc) <> "] "
   candidateId <- ExceptT $ do
     case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
       Left err -> do
@@ -110,7 +110,7 @@ runPreFailoverHook candidateId oldSourceHost = do
   preResult <- liftIO $ runHookOrAbort mHooks hcPreFailover preEnv
   case preResult of
     Left err -> do
-      appLogError $ "[" <> ccName cc <> "] Pre-failover hook aborted failover: " <> err
+      appLogError $ "[" <> unClusterName (ccName cc) <> "] Pre-failover hook aborted failover: " <> err
       pure (Left $ "Pre-failover hook failed: " <> err)
     Right () -> pure (Right ())
 
@@ -120,7 +120,7 @@ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
   promoteResult <- promoteCandidate candidateId waitTimeout
   case promoteResult of
     Left err -> do
-      appLogError $ "[" <> clusterName <> "] Auto-failover failed: Promote failed: " <> err
+      appLogError $ "[" <> unClusterName clusterName <> "] Auto-failover failed: Promote failed: " <> err
       ts <- liftIO getCurrentTimestamp
       mHooks <- getHooksConfig
       let failEnv = HookEnv clusterName (Just (nodeHost candidateId)) oldSourceHost (Just "PromoteFailed") ts
@@ -160,8 +160,8 @@ promoteCandidate nid waitTimeout = do
     result <- withNodeConn ci $ \conn -> do
       caughtUp <- waitForRelayLogApply conn waitTimeout
       if caughtUp
-        then logInfo logger $ "[" <> clusterName <> "] Relay log apply completed on " <> nodeHost nid
-        else logError logger $ "[" <> clusterName <> "] WARNING: Relay log apply timed out on " <> nodeHost nid <> ", proceeding with promotion"
+        then logInfo logger $ "[" <> unClusterName clusterName <> "] Relay log apply completed on " <> nodeHost nid
+        else logError logger $ "[" <> unClusterName clusterName <> "] WARNING: Relay log apply timed out on " <> nodeHost nid <> ", proceeding with promotion"
       stopReplica conn
       resetReplicaAll conn
       setReadWrite conn

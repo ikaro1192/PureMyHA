@@ -45,18 +45,18 @@ runSwitchover mToHost = do
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing -> do
-      appLogError $ "[" <> ccName cc <> "] Switchover failed: Cluster not found"
+      appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: Cluster not found"
       pure (Left "Cluster not found")
     Just topo ->
       case selectCandidate (ctNodes topo) (fcCandidatePriority fc) mToHost of
         Left err -> do
-          appLogError $ "[" <> ccName cc <> "] Switchover failed: " <> err
+          appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: " <> err
           pure (Left err)
         Right candidateId -> do
           let oldSourceId   = ctSourceNodeId topo
               oldSourceHost = fmap nodeHost oldSourceId
 
-          appLogInfo $ "[" <> ccName cc <> "] Switchover started"
+          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover started"
 
           -- Pre-switchover hook (blocking: non-zero exit aborts)
           mHooks <- getHooksConfig
@@ -65,7 +65,7 @@ runSwitchover mToHost = do
           preResult <- liftIO $ runHookOrAbort mHooks hcPreSwitchover preEnv
           case preResult of
             Left err -> do
-              appLogError $ "[" <> ccName cc <> "] Pre-switchover hook aborted: " <> err
+              appLogError $ "[" <> unClusterName (ccName cc) <> "] Pre-switchover hook aborted: " <> err
               pure (Left $ "Pre-switchover hook failed: " <> err)
             Right () ->
               doSwitchover candidateId oldSourceId oldSourceHost topo
@@ -87,7 +87,7 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
       withNodeConn srcCi setReadOnly
   case readOnlyResult of
     Left err -> do
-      appLogError $ "[" <> ccName cc <> "] Switchover aborted: cannot set old source read_only: " <> err
+      appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover aborted: cannot set old source read_only: " <> err
       pure (Left $ "Cannot set old source read_only: " <> err)
     Right () -> do
       -- Step 2: Get old source GTID set
@@ -106,7 +106,7 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
 
       if not caught
         then do
-          appLogError $ "[" <> ccName cc <> "] Switchover failed: Candidate did not catch up within timeout"
+          appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: Candidate did not catch up within timeout"
           pure (Left "Candidate did not catch up within timeout")
         else do
           -- Step 4: Promote candidate
@@ -116,7 +116,7 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
             setReadWrite conn
           case promoteResult of
             Left err -> do
-              appLogError $ "[" <> ccName cc <> "] Switchover failed: Promote failed: " <> err
+              appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: Promote failed: " <> err
               pure (Left $ "Promote failed: " <> err)
             Right () -> do
               -- Step 5: Update topology roles atomically
@@ -141,7 +141,7 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
               let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts
               liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
 
-              appLogInfo $ "[" <> ccName cc <> "] Switchover completed: new source is " <> nodeHost candidateId
+              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover completed: new source is " <> nodeHost candidateId
               pure (Right ())
 
 waitForCatchup :: ConnectInfo -> Maybe Text -> Int -> IO Bool

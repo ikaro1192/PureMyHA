@@ -12,6 +12,7 @@ import PureMyHA.Config (loadConfig, validateConfig)
 import PureMyHA.IPC.Client
 import PureMyHA.IPC.Protocol
 import PureMyHA.IPC.Server (defaultSocketPath)
+import PureMyHA.Types (ClusterName (..))
 
 data CLIOptions = CLIOptions
   { optSocketPath  :: FilePath
@@ -123,7 +124,7 @@ main = do
     (fullDesc <> progDesc "PureMyHA CLI" <> header "puremyha"))
 
   let socketPath = optSocketPath opts
-      mCluster   = optCluster opts
+      mCluster   = fmap ClusterName (optCluster opts)
       json       = optJsonOutput opts
 
   case optCommand opts of
