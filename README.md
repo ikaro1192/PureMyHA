@@ -53,9 +53,30 @@ See [docs/configuration.md](docs/configuration.md) for required MySQL user privi
 ```mermaid
 graph LR
     CLI["puremyha (CLI)"] <-->|"Unix socket\n/run/puremyhad.sock"| Daemon["puremyhad (daemon)"]
-    LB["Load balancer / K8s probe"] -->|"HTTP :8080\n(read-only)"| Daemon
-    Daemon -->|"per-node threads (STM)"| db1["db1 (source)"]
-    db1 -->|replication| db2["db2 (replica)"]
+    LB["Health probe / Metrics scraper"] -->|"HTTP :8080\n(read-only)"| Daemon
+
+    subgraph cluster1["Cluster 1"]
+        src1["db1 (source)"]
+        rep1a["db2 (replica)"]
+        rep1n["dbN (replica)"]
+        src1 -->|replication| rep1a
+        src1 -->|replication| rep1n
+    end
+
+    subgraph clusterN["Cluster N"]
+        srcN["db1 (source)"]
+        repNa["db2 (replica)"]
+        repNn["dbN (replica)"]
+        srcN -->|replication| repNa
+        srcN -->|replication| repNn
+    end
+
+    Daemon -->|"per-node threads (STM)"| src1
+    Daemon --> rep1a
+    Daemon --> rep1n
+    Daemon -->|"per-node threads (STM)"| srcN
+    Daemon --> repNa
+    Daemon --> repNn
 ```
 
 | Component    | Role |
