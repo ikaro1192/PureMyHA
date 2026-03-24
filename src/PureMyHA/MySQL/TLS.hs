@@ -1,0 +1,107 @@
+-- | TLS support for MySQL connections.
+--
+-- Builds TLS client parameters from 'TLSConfig' and performs the TLS upgrade
+-- over an existing raw socket (MySQL STARTTLS-like protocol).
+module PureMyHA.MySQL.TLS
+  ( buildClientParams
+  , upgradeTLS
+  ) where
+
+import           Control.Exception               (throwIO)
+import           Data.ByteString                 (ByteString)
+import qualified Data.ByteString                 as B
+import qualified Data.ByteString.Lazy            as BL
+import           Data.X509                       (HashALG (..))
+import qualified Data.X509.CertificateStore      as X509Store
+import qualified Data.X509.Validation            as XV
+import           Network.Socket                  (Socket)
+import qualified Network.TLS                     as TLS
+import qualified Network.TLS.Extra.Cipher        as TLS
+import qualified System.IO.Streams               as Streams
+import           System.IO.Streams               (InputStream)
+import           PureMyHA.Config                 (TLSConfig (..), TLSMode (..))
+
+-- | Build 'TLS.ClientParams' from a 'TLSConfig' and the server hostname.
+-- The hostname is used for SNI and certificate hostname verification.
+buildClientParams :: TLSConfig -> String -> IO TLS.ClientParams
+buildClientParams cfg hostname = do
+  store <- buildCertStore cfg
+  creds <- buildCredentials cfg
+  let base   = TLS.defaultParamsClient hostname B.empty
+      shared = (TLS.clientShared base)
+        { TLS.sharedCAStore      = store
+        , TLS.sharedCredentials  = creds
+        }
+      hooks  = buildHooks (tlsMode cfg)
+      supp   = (TLS.clientSupported base)
+        { TLS.supportedCiphers = TLS.ciphersuite_default }
+  return base
+    { TLS.clientShared    = shared
+    , TLS.clientHooks     = hooks
+    , TLS.clientSupported = supp
+    }
+
+-- | Perform TLS handshake on the raw socket, returning a new
+-- 'InputStream' 'ByteString' backed by TLS and a corresponding send function.
+upgradeTLS
+  :: TLS.ClientParams
+  -> Socket
+  -> IO (InputStream ByteString, BL.ByteString -> IO ())
+upgradeTLS params sock = do
+  ctx <- TLS.contextNew sock params
+  TLS.handshake ctx
+  is <- Streams.makeInputStream $ do
+    bs <- TLS.recvData ctx
+    return (if B.null bs then Nothing else Just bs)
+  let sendFn = TLS.sendData ctx
+  return (is, sendFn)
+
+-- ---------------------------------------------------------------------------
+-- Internal helpers
+-- ---------------------------------------------------------------------------
+
+buildCertStore :: TLSConfig -> IO X509Store.CertificateStore
+buildCertStore cfg = case tlsMode cfg of
+  TLSDisabled   -> return mempty
+  TLSSkipVerify -> return mempty
+  TLSVerifyCA   -> loadFileStore (tlsCACert cfg)
+  TLSVerifyFull -> loadFileStore (tlsCACert cfg)
+
+loadFileStore :: Maybe FilePath -> IO X509Store.CertificateStore
+loadFileStore Nothing     = return mempty
+loadFileStore (Just path) = do
+  mStore <- X509Store.readCertificateStore path
+  case mStore of
+    Nothing    -> throwIO (userError ("Failed to load CA certificate: " ++ path))
+    Just store -> return store
+
+buildCredentials :: TLSConfig -> IO TLS.Credentials
+buildCredentials cfg =
+  case (tlsClientCert cfg, tlsClientKey cfg) of
+    (Just certFile, Just keyFile) -> do
+      result <- TLS.credentialLoadX509 certFile keyFile
+      case result of
+        Left err   -> throwIO (userError ("Failed to load client certificate: " ++ err))
+        Right cred -> return (TLS.Credentials [cred])
+    _ -> return mempty
+
+buildHooks :: TLSMode -> TLS.ClientHooks
+buildHooks TLSSkipVerify =
+  TLS.defaultClientHooks
+    { TLS.onServerCertificate = \_ _ _ _ -> return [] }
+buildHooks TLSVerifyCA =
+  TLS.defaultClientHooks
+    { TLS.onServerCertificate = verifyCAOnly }
+buildHooks _ = TLS.defaultClientHooks
+
+-- | Validate the certificate chain against the CA store, but skip hostname check.
+verifyCAOnly
+  :: X509Store.CertificateStore
+  -> TLS.ValidationCache
+  -> XV.ServiceID
+  -> TLS.CertificateChain
+  -> IO [XV.FailedReason]
+verifyCAOnly store cache serviceID chain =
+  XV.validate HashSHA256 XV.defaultHooks
+    (XV.defaultChecks { XV.checkFQHN = False })
+    store cache serviceID chain

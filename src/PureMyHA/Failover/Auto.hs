@@ -153,11 +153,12 @@ commitFailoverState candidateId topo now = do
 promoteCandidate :: NodeId -> Int -> App (Either Text ())
 promoteCandidate nid waitTimeout = do
   creds <- getMonCredentials
+  mTls  <- getTLSConfig
   clusterName <- getClusterName
   logger <- asks envLogger >>= liftIO . readTVarIO
   let ci = makeConnectInfo nid creds
   liftIO $ do
-    result <- withNodeConn ci $ \conn -> do
+    result <- withNodeConn mTls ci $ \conn -> do
       caughtUp <- waitForRelayLogApply conn waitTimeout
       if caughtUp
         then logInfo logger $ "[" <> unClusterName clusterName <> "] Relay log apply completed on " <> nodeHost nid
@@ -173,9 +174,10 @@ reconnectReplica :: NodeId -> NodeState -> App ()
 reconnectReplica newSourceId ns = do
   monCreds  <- getMonCredentials
   replCreds <- getReplCredentials
+  mTls      <- getTLSConfig
   let ci = makeConnectInfo (nsNodeId ns) monCreds
   liftIO $ do
-    _ <- withNodeConn ci $ \conn -> do
+    _ <- withNodeConn mTls ci $ \conn -> do
       stopReplica conn
       changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replCreds
       setReadOnly conn

@@ -12,6 +12,7 @@ import PureMyHA.Config
   , LoggingConfig (..), LogLevel (..), parseLogLevel
   , parseDuration
   , validateConfig
+  , TLSMode (..), TLSConfig (..)
   )
 
 spec :: Spec
@@ -308,6 +309,129 @@ spec = do
             , "    replication_lag_critical: 30s"
             , "  failure_detection:"
             , "    recovery_block_period: 3600s"
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
+
+  describe "TLS config parsing" $ do
+    it "ccTLS defaults to Nothing when tls key is absent" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg -> ccTLS (head (cfgClusters cfg)) `shouldSatisfy` isNothing
+
+    it "parses tls.mode: disabled" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: disabled"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg ->
+          fmap tlsMode (ccTLS (head (cfgClusters cfg))) `shouldBe` Just TLSDisabled
+
+    it "parses tls.mode: skip-verify" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: skip-verify"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg ->
+          fmap tlsMode (ccTLS (head (cfgClusters cfg))) `shouldBe` Just TLSSkipVerify
+
+    it "parses tls.mode: verify-ca with ca_cert" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: verify-ca"
+            , "      ca_cert: /etc/tls/ca.pem"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg -> do
+          let mTls = ccTLS (head (cfgClusters cfg))
+          fmap tlsMode (mTls) `shouldBe` Just TLSVerifyCA
+          (mTls >>= tlsCACert) `shouldBe` Just "/etc/tls/ca.pem"
+
+    it "parses tls.mode: verify-full with ca_cert" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: verify-full"
+            , "      ca_cert: /etc/tls/ca.pem"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg ->
+          fmap tlsMode (ccTLS (head (cfgClusters cfg))) `shouldBe` Just TLSVerifyFull
+
+    it "parses mutual TLS with client_cert and client_key" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: verify-full"
+            , "      ca_cert: /etc/tls/ca.pem"
+            , "      client_cert: /etc/tls/client.pem"
+            , "      client_key: /etc/tls/client-key.pem"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg -> do
+          let mTls = ccTLS (head (cfgClusters cfg))
+          (mTls >>= tlsClientCert) `shouldBe` Just "/etc/tls/client.pem"
+          (mTls >>= tlsClientKey)  `shouldBe` Just "/etc/tls/client-key.pem"
+
+    it "rejects unknown tls.mode" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: full-verify"
+            , globalBlock
             ]
       decodeConfig yaml `shouldSatisfy` isLeft
 

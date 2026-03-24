@@ -44,6 +44,7 @@ library
     PureMyHA.MySQL.Connection
     PureMyHA.MySQL.Query
     PureMyHA.MySQL.GTID
+    PureMyHA.MySQL.TLS
     PureMyHA.Topology.Discovery
     PureMyHA.Topology.State
     PureMyHA.Monitor.Worker
@@ -75,7 +76,12 @@ library
     asn1-types       >= 0.3,
     warp             >= 3.3,
     wai              >= 3.2,
-    http-types       >= 0.12
+    http-types       >= 0.12,
+    tls                     >= 2.0,
+    crypton-x509            >= 1.7,
+    crypton-x509-store      >= 1.6,
+    crypton-x509-validation >= 1.6,
+    data-default-class      >= 0.1
 
 executable puremyhad
   import:          common-options

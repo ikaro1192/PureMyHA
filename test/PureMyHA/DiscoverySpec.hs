@@ -33,6 +33,7 @@ testCC = ClusterConfig
   , ccFailureDetection       = FailureDetectionConfig 3600 3
   , ccFailover               = FailoverConfig True 1 [] 60
   , ccHooks                  = Nothing
+  , ccTLS                    = Nothing
   }
 
 spec :: Spec

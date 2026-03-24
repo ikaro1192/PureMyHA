@@ -79,12 +79,13 @@ doSwitchover
 doSwitchover candidateId oldSourceId oldSourceHost topo = do
   cc    <- asks envCluster
   creds <- getMonCredentials
+  mTls  <- getTLSConfig
   -- Step 1: Set old source to read_only (abort on failure to prevent split-brain)
   readOnlyResult <- liftIO $ case oldSourceId of
     Nothing -> pure (Right ())
     Just srcId -> do
       let srcCi = makeConnectInfo srcId creds
-      withNodeConn srcCi setReadOnly
+      withNodeConn mTls srcCi setReadOnly
   case readOnlyResult of
     Left err -> do
       appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover aborted: cannot set old source read_only: " <> err
@@ -95,14 +96,14 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
         Nothing -> pure Nothing
         Just srcId -> do
           let srcCi = makeConnectInfo srcId creds
-          result <- withNodeConn srcCi getGtidExecuted
+          result <- withNodeConn mTls srcCi getGtidExecuted
           pure $ case result of
             Right gtid -> Just gtid
             Left _     -> Nothing
 
       -- Step 3: Wait for candidate to catch up
       let candidateCi = makeConnectInfo candidateId creds
-      caught <- liftIO $ waitForCatchup candidateCi mOldGtid maxWaitSeconds
+      caught <- liftIO $ waitForCatchup mTls candidateCi mOldGtid maxWaitSeconds
 
       if not caught
         then do
@@ -110,7 +111,7 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
           pure (Left "Candidate did not catch up within timeout")
         else do
           -- Step 4: Promote candidate
-          promoteResult <- liftIO $ withNodeConn candidateCi $ \conn -> do
+          promoteResult <- liftIO $ withNodeConn mTls candidateCi $ \conn -> do
             stopReplica conn
             resetReplicaAll conn
             setReadWrite conn
@@ -144,12 +145,12 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
               appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover completed: new source is " <> nodeHost candidateId
               pure (Right ())
 
-waitForCatchup :: ConnectInfo -> Maybe Text -> Int -> IO Bool
-waitForCatchup _ Nothing _ = pure True
-waitForCatchup ci (Just targetGtid) secondsLeft
+waitForCatchup :: Maybe TLSConfig -> ConnectInfo -> Maybe Text -> Int -> IO Bool
+waitForCatchup _ _ Nothing _ = pure True
+waitForCatchup mTls ci (Just targetGtid) secondsLeft
   | secondsLeft <= 0 = pure False
   | otherwise = do
-      result <- withNodeConn ci $ \conn -> do
+      result <- withNodeConn mTls ci $ \conn -> do
         mRs <- showReplicaStatus conn
         case mRs of
           Nothing -> pure True
@@ -157,19 +158,20 @@ waitForCatchup ci (Just targetGtid) secondsLeft
       case result of
         Left _      -> do
           threadDelay 1_000_000
-          waitForCatchup ci (Just targetGtid) (secondsLeft - 1)
+          waitForCatchup mTls ci (Just targetGtid) (secondsLeft - 1)
         Right True  -> pure True
         Right False -> do
           threadDelay 1_000_000
-          waitForCatchup ci (Just targetGtid) (secondsLeft - 1)
+          waitForCatchup mTls ci (Just targetGtid) (secondsLeft - 1)
 
 reconnectToNew :: NodeId -> NodeState -> App ()
 reconnectToNew newSourceId ns = do
   monCreds  <- getMonCredentials
   replCreds <- getReplCredentials
+  mTls      <- getTLSConfig
   let ci = makeConnectInfo (nsNodeId ns) monCreds
   liftIO $ do
-    _ <- withNodeConn ci $ \conn -> do
+    _ <- withNodeConn mTls ci $ \conn -> do
       _ <- try @SomeException (stopReplica conn)
       changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replCreds
       setReadOnly conn

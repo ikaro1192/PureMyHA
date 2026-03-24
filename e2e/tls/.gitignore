@@ -1,0 +1,3 @@
+# Generated TLS certificates — do not commit
+*.pem
+*.srl

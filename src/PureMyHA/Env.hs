@@ -7,6 +7,7 @@ module PureMyHA.Env
   , getClusterName
   , getMonCredentials
   , getReplCredentials
+  , getTLSConfig
   , appLogInfo
   , appLogWarn
   , appLogError
@@ -31,6 +32,7 @@ data ClusterEnv = ClusterEnv
   , envHooks       :: TVar (Maybe HooksConfig)
   , envLock        :: FailoverLock
   , envLogger      :: TVar Logger
+  , envTLS         :: Maybe TLSConfig
   }
 
 type App a = ReaderT ClusterEnv IO a
@@ -53,6 +55,9 @@ getMonCredentials = asks (cpMonCredentials . envPasswords)
 
 getReplCredentials :: MonadReader ClusterEnv m => m DbCredentials
 getReplCredentials = asks (cpReplCredentials . envPasswords)
+
+getTLSConfig :: MonadReader ClusterEnv m => m (Maybe TLSConfig)
+getTLSConfig = asks envTLS
 
 appLogInfo, appLogWarn, appLogError :: (MonadReader ClusterEnv m, MonadIO m) => Text -> m ()
 appLogInfo  = withLogger logInfo
