@@ -186,15 +186,12 @@ logHealthChange nid mOld new = do
   if nsPaused new
     then pure ()
     else case (fmap nsHealth mOld, nsHealth new) of
-      (Just Healthy, NeedsAttention err) -> do
+      (Just Healthy, NeedsAttention err) ->
         liftIO $ logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " unreachable: " <> err
-        recordAppEvent EvHealthChange (Just host) $ "Node " <> host <> " unreachable: " <> err
-      (Just (NeedsAttention _), Healthy) -> do
+      (Just (NeedsAttention _), Healthy) ->
         liftIO $ logInfo logger $ "[" <> clusterName <> "] Node " <> host <> " recovered"
-        recordAppEvent EvHealthChange (Just host) $ "Node " <> host <> " recovered"
-      (Nothing, NeedsAttention err) -> do
+      (Nothing, NeedsAttention err) ->
         liftIO $ logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " initial connect failed: " <> err
-        recordAppEvent EvHealthChange (Just host) $ "Node " <> host <> " initial connect failed: " <> err
       _ -> pure ()
   where
     host = nodeHost nid
@@ -257,13 +254,10 @@ recomputeClusterHealth = do
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           _ -> pure ()
       -- Log all health transitions for observability
-      when transitioned $ do
-        liftIO $ do
-          logger <- readTVarIO (envLogger env)
-          logInfo logger $ "[" <> ccName cc <> "] Cluster health: "
-            <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
-        recordAppEvent EvClusterHealth Nothing $
-          T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
+      when transitioned $ liftIO $ do
+        logger <- readTVarIO (envLogger env)
+        logInfo logger $ "[" <> ccName cc <> "] Cluster health: "
+          <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
       liftIO $ atomically $ updateClusterHealthFields tvar (ccName cc) newHealth newSrcId observedHealthy
       -- Trigger auto-failover when DeadSource (not just on transition, so resume-failover works)
       -- The failover lock prevents concurrent execution; anti-flap block prevents repeated failovers

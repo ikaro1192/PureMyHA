@@ -36,7 +36,6 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Pause/Resume Auto-Failover** — Temporarily disable automatic failover for maintenance windows
 - **HTTP Health Check Endpoint** — Optional read-only HTTP listener for load balancer probes and Kubernetes liveness/readiness checks (`GET /health`, `/cluster/:name/status`, `/cluster/:name/topology`)
 - **Prometheus Metrics Endpoint** — `GET /metrics` exposes cluster health, replication lag, consecutive failures, and node role in Prometheus text exposition format for Grafana and other monitoring stacks
-- **In-Memory Event History** — Maintains a bounded ring buffer of recent events (health changes, failovers, switchovers, config reloads); queryable instantly via `puremyha events` without log parsing
 - **Runtime Log Level Control** — Change log verbosity without restarting the daemon via `puremyha set-log-level debug|info|warn|error` (IPC override takes precedence until the next SIGHUP, which resets to the configured `log_level`)
 - **Config Validation** — `puremyha validate-config` validates the config file offline (no daemon required), reporting YAML parse errors, missing required fields, and semantic constraint violations (port ranges, threshold ordering, etc.)
 
@@ -221,11 +220,10 @@ http:                                  # Optional HTTP server (disabled by defau
 
 logging:
   log_file: /var/log/puremyha.log  # Optional; defaults to /var/log/puremyha.log
-  max_events: 1000                  # Optional; in-memory event buffer size (default: 1000)
   log_level: info                   # Optional; debug | info | warn | error (default: info)
 ```
 
-`monitoring`, `failure_detection`, `failover`, and `hooks` can be set per-cluster or defined as defaults in the `global` section. Per-cluster settings take precedence over `global` on a section-by-section basis. `monitoring`, `failure_detection`, and `failover` are required in at least one of the two. The `logging` section is optional and global (defaults to `/var/log/puremyha.log`, `max_events: 1000`, and `log_level: info` when omitted).
+`monitoring`, `failure_detection`, `failover`, and `hooks` can be set per-cluster or defined as defaults in the `global` section. Per-cluster settings take precedence over `global` on a section-by-section basis. `monitoring`, `failure_detection`, and `failover` are required in at least one of the two. The `logging` section is optional and global (defaults to `/var/log/puremyha.log` and `log_level: info` when omitted).
 
 See `config/config.yaml.example` for a full annotated example.
 
@@ -304,10 +302,6 @@ puremyha pause-failover [--cluster=<name>]
 # Resume automatic failover
 puremyha resume-failover [--cluster=<name>]
 
-# Show recent event history (health changes, failovers, switchovers, config reloads)
-# Events are newest-first; buffer is cleared on daemon restart
-puremyha events [--limit=N] [--cluster=<name>]
-
 # Change daemon log level at runtime (no restart required)
 # IPC override takes precedence until the next SIGHUP
 puremyha set-log-level debug|info|warn|error
@@ -325,7 +319,6 @@ puremyha -j switchover --to db2
 # Pipe to jq
 puremyha -j status | jq '.[0].health'
 puremyha -j topology | jq '.[0].nodes[].host'
-puremyha -j events | jq '.[].type'
 
 # validate-config JSON output
 puremyha --json validate-config --config /etc/puremyha/config.yaml
@@ -435,38 +428,6 @@ The IPC override takes precedence until the next SIGHUP, which resets the level 
 [2026-03-17 12:35:12 UTC] [Info] [main] Auto-failover completed: new source is db2
 [2026-03-17 12:35:13 UTC] [Info] [main] Node db1 recovered
 ```
-
-## Event History
-
-In addition to file logging, PureMyHA maintains a bounded in-memory ring buffer of recent events that can be queried instantly without log parsing.
-
-```bash
-# Show all recent events (newest first)
-puremyha events
-
-# Show the 10 most recent events
-puremyha events --limit 10
-
-# Show events for a specific cluster
-puremyha events --cluster main
-
-# JSON output for scripting
-puremyha --json events | jq '.[] | {time: .timestamp, type: .type, node: .node}'
-```
-
-### Recorded event types
-
-| Type | Trigger |
-|------|---------|
-| `HealthChange` | A node transitions between `Healthy` and `NeedsAttention` |
-| `ClusterHealth` | Cluster-level health state changes (e.g. `Healthy → DeadSource`) |
-| `FailoverStarted` | Auto-failover begins |
-| `FailoverCompleted` | Auto-failover succeeds; `.node` holds the promoted host |
-| `FailoverFailed` | Auto-failover aborted (pre-hook rejection or promotion error) |
-| `SwitchoverCompleted` | Manual switchover succeeds; `.node` holds the promoted host |
-| `ConfigReloaded` | Config hot-reloaded via SIGHUP |
-
-The buffer size is controlled by `logging.max_events` (default: `1000`). The buffer is ephemeral — it is cleared on daemon restart, consistent with PureMyHA's stateless design.
 
 ## Failover Flow
 

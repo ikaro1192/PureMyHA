@@ -142,8 +142,6 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
               liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
 
               appLogInfo $ "[" <> ccName cc <> "] Switchover completed: new source is " <> nodeHost candidateId
-              recordAppEvent EvSwitchoverCompleted (Just (nodeHost candidateId))
-                ("Switchover completed: new source is " <> nodeHost candidateId)
               pure (Right ())
 
 waitForCatchup :: ConnectInfo -> Maybe Text -> Int -> IO Bool

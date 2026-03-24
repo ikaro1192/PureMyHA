@@ -6,8 +6,6 @@ module PureMyHA.IPC.Protocol
   , ClusterTopologyView (..)
   , OperationResult (..)
   , ErrantGtidInfo (..)
-  , Event (..)
-  , EventType (..)
   ) where
 
 import Data.Aeson
@@ -23,8 +21,6 @@ import PureMyHA.Types
   , OperationResult (..)
   , ErrantGtidInfo (..)
   , NodeId (..)
-  , Event (..)
-  , EventType (..)
   )
 -- JSON instances for core types
 
@@ -131,45 +127,6 @@ instance FromJSON ErrantGtidInfo where
   parseJSON = withObject "ErrantGtidInfo" $ \o ->
     ErrantGtidInfo <$> o .: "nodeId" <*> o .: "errantGtid"
 
-instance ToJSON EventType where
-  toJSON EvHealthChange      = String "HealthChange"
-  toJSON EvClusterHealth     = String "ClusterHealth"
-  toJSON EvFailoverStarted   = String "FailoverStarted"
-  toJSON EvFailoverCompleted = String "FailoverCompleted"
-  toJSON EvFailoverFailed    = String "FailoverFailed"
-  toJSON EvSwitchoverCompleted = String "SwitchoverCompleted"
-  toJSON EvConfigReloaded    = String "ConfigReloaded"
-  toJSON EvPauseChanged      = String "PauseChanged"
-
-instance FromJSON EventType where
-  parseJSON (String "HealthChange")       = pure EvHealthChange
-  parseJSON (String "ClusterHealth")      = pure EvClusterHealth
-  parseJSON (String "FailoverStarted")    = pure EvFailoverStarted
-  parseJSON (String "FailoverCompleted")  = pure EvFailoverCompleted
-  parseJSON (String "FailoverFailed")     = pure EvFailoverFailed
-  parseJSON (String "SwitchoverCompleted") = pure EvSwitchoverCompleted
-  parseJSON (String "ConfigReloaded")     = pure EvConfigReloaded
-  parseJSON (String "PauseChanged")       = pure EvPauseChanged
-  parseJSON _                             = fail "Invalid EventType"
-
-instance ToJSON Event where
-  toJSON Event{..} = object
-    [ "timestamp" .= evTimestamp
-    , "cluster"   .= evCluster
-    , "type"      .= evType
-    , "node"      .= evNode
-    , "details"   .= evDetails
-    ]
-
-instance FromJSON Event where
-  parseJSON = withObject "Event" $ \o ->
-    Event
-      <$> o .: "timestamp"
-      <*> o .: "cluster"
-      <*> o .: "type"
-      <*> o .: "node"
-      <*> o .: "details"
-
 -- | IPC Request types
 data Request
   = ReqStatus   { reqCluster :: Maybe ClusterName }
@@ -184,7 +141,6 @@ data Request
   | ReqResumeReplica { reqCluster :: Maybe ClusterName, reqResumeHost :: Text }
   | ReqPauseFailover  { reqCluster :: Maybe ClusterName }
   | ReqResumeFailover { reqCluster :: Maybe ClusterName }
-  | ReqEventHistory   { reqCluster :: Maybe ClusterName, reqLimit :: Maybe Int }
   | ReqSetLogLevel    { reqLogLevel :: Text }
   deriving (Show, Eq, Generic)
 
@@ -201,7 +157,6 @@ instance ToJSON Request where
   toJSON (ReqResumeReplica mc h) = object ["type" .= ("resume-replica" :: Text), "cluster" .= mc, "host" .= h]
   toJSON (ReqPauseFailover  mc)  = object ["type" .= ("pause-failover"   :: Text), "cluster" .= mc]
   toJSON (ReqResumeFailover mc)  = object ["type" .= ("resume-failover"  :: Text), "cluster" .= mc]
-  toJSON (ReqEventHistory mc ml) = object ["type" .= ("event-history"   :: Text), "cluster" .= mc, "limit" .= ml]
   toJSON (ReqSetLogLevel lvl)    = object ["type" .= ("set-log-level"   :: Text), "level" .= lvl]
 
 instance FromJSON Request where
@@ -220,7 +175,6 @@ instance FromJSON Request where
       "resume-replica"  -> ReqResumeReplica <$> o .:? "cluster" <*> o .: "host"
       "pause-failover"  -> ReqPauseFailover  <$> o .:? "cluster"
       "resume-failover" -> ReqResumeFailover <$> o .:? "cluster"
-      "event-history"   -> ReqEventHistory   <$> o .:? "cluster" <*> o .:? "limit"
       "set-log-level"   -> ReqSetLogLevel    <$> o .:  "level"
       _                 -> fail $ "Unknown request type: " <> show t
 
@@ -230,7 +184,6 @@ data Response
   | RespTopology [ClusterTopologyView]
   | RespOperation OperationResult
   | RespErrantGtids [ErrantGtidInfo]
-  | RespEventHistory [Event]
   | RespError Text
   deriving (Show, Eq, Generic)
 
@@ -239,7 +192,6 @@ instance ToJSON Response where
   toJSON (RespTopology tv)      = object ["type" .= ("topology" :: Text),        "data" .= tv]
   toJSON (RespOperation r)      = object ["type" .= ("operation" :: Text),       "data" .= r]
   toJSON (RespErrantGtids es)   = object ["type" .= ("errant-gtids" :: Text),    "data" .= es]
-  toJSON (RespEventHistory evs) = object ["type" .= ("event-history" :: Text),   "data" .= evs]
   toJSON (RespError msg)        = object ["type" .= ("error" :: Text),           "message" .= msg]
 
 instance FromJSON Response where
@@ -250,6 +202,5 @@ instance FromJSON Response where
       "topology"      -> RespTopology     <$> o .: "data"
       "operation"     -> RespOperation    <$> o .: "data"
       "errant-gtids"  -> RespErrantGtids  <$> o .: "data"
-      "event-history" -> RespEventHistory <$> o .: "data"
       "error"         -> RespError        <$> o .: "message"
       _               -> fail $ "Unknown response type: " <> show t

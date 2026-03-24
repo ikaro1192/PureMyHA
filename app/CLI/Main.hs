@@ -33,7 +33,6 @@ data Command
   | CmdResumeReplica Text
   | CmdPauseFailover
   | CmdResumeFailover
-  | CmdEvents (Maybe Int)
   | CmdSetLogLevel Text
   | CmdValidateConfig FilePath
 
@@ -78,8 +77,6 @@ cliOptions = CLIOptions
             (info (pure CmdPauseFailover) (progDesc "Pause automatic failover for maintenance"))
         <> command "resume-failover"
             (info (pure CmdResumeFailover) (progDesc "Resume automatic failover"))
-        <> command "events"
-            (info eventsCmd (progDesc "Show recent event history"))
         <> command "set-log-level"
             (info setLogLevelCmd (progDesc "Set daemon log level (debug|info|warn|error)"))
         <> command "validate-config"
@@ -96,14 +93,6 @@ pauseReplicaCmd = CmdPauseReplica <$> strOption (long "host" <> metavar "HOST" <
 
 resumeReplicaCmd :: Parser Command
 resumeReplicaCmd = CmdResumeReplica <$> strOption (long "host" <> metavar "HOST" <> help "Node to resume")
-
-eventsCmd :: Parser Command
-eventsCmd = CmdEvents
-  <$> optional (option auto
-        ( long "limit"
-        <> short 'n'
-        <> metavar "N"
-        <> help "Maximum number of events to show" ))
 
 setLogLevelCmd :: Parser Command
 setLogLevelCmd = CmdSetLogLevel
@@ -153,7 +142,6 @@ main = do
             CmdResumeReplica host -> ReqResumeReplica mCluster host
             CmdPauseFailover      -> ReqPauseFailover  mCluster
             CmdResumeFailover     -> ReqResumeFailover mCluster
-            CmdEvents mLimit      -> ReqEventHistory   mCluster mLimit
             CmdSetLogLevel lvl    -> ReqSetLogLevel lvl
 
       eResp <- sendRequest socketPath req
@@ -166,7 +154,6 @@ main = do
           RespTopology views         -> printTopology json views
           RespOperation result       -> printOperationResult json result
           RespErrantGtids gtids      -> printErrantGtids json gtids
-          RespEventHistory evs       -> printEventHistory json evs
           RespError msg              -> do
             hPutStrLn stderr $ "Daemon error: " <> T.unpack msg
             exitFailure

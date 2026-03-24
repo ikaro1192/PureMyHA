@@ -7,7 +7,6 @@ import Control.Exception (try, SomeException)
 import Control.Monad (void, when, forM_)
 import Data.List (find)
 import Data.Maybe (fromMaybe)
-import Data.Time (getCurrentTime)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Text (Text)
@@ -19,14 +18,13 @@ import System.Posix.Signals (installHandler, sigTERM, sigINT, sigHUP, sigUSR1, H
 
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
-import PureMyHA.Event (EventBuffer, newEventBuffer, recordEvent)
 import PureMyHA.HTTP.Server (startHTTPServer)
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction)
 import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, setLogLevel, logInfo, logWarn)
 import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
-import PureMyHA.Types (ClusterTopology(..), Event(..), EventType(..))
+import PureMyHA.Types (ClusterTopology(..))
 
 data DaemonOptions = DaemonOptions
   { optConfigPath :: FilePath
@@ -54,19 +52,18 @@ main = do
   cfg       <- loadAndValidateConfig (optConfigPath opts)
   let logCfg = cfgLogging cfg
   loggerVar <- newTVarIO =<< initLogger (lcLogFile logCfg) (lcLogLevel logCfg)
-  eventBuf  <- newEventBuffer (lcMaxEvents logCfg)
 
   tvar        <- newDaemonState
   shutdownVar <- installShutdownHandlers
 
   clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
-  clusterEnvs      <- mapM (initCluster tvar loggerVar eventBuf) clusterPasswords
+  clusterEnvs      <- mapM (initCluster tvar loggerVar) clusterPasswords
 
   httpAsyncVar <- newTVarIO Nothing
-  installHUPHandler (optConfigPath opts) clusterEnvs loggerVar httpAsyncVar tvar eventBuf
+  installHUPHandler (optConfigPath opts) clusterEnvs loggerVar httpAsyncVar tvar
   installUSR1Handler (lcLogFile (cfgLogging cfg)) loggerVar
 
-  allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar eventBuf loggerVar
+  allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar loggerVar
   when (hcEnabled (cfgHttp cfg)) $ do
     a <- async (startHTTPServer (cfgHttp cfg) tvar)
     atomically $ writeTVar httpAsyncVar (Just a)
@@ -90,8 +87,8 @@ installShutdownHandlers = do
   _ <- installHandler sigINT  h Nothing
   pure shutdownVar
 
-installHUPHandler :: FilePath -> [ClusterEnv] -> TVar Logger -> TVar (Maybe (Async ())) -> TVarDaemonState -> EventBuffer -> IO ()
-installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar eventBuf = do
+installHUPHandler :: FilePath -> [ClusterEnv] -> TVar Logger -> TVar (Maybe (Async ())) -> TVarDaemonState -> IO ()
+installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar = do
   _ <- installHandler sigHUP (Catch $ do
     logger <- readTVarIO loggerVar
     eCfg' <- loadConfig configPath
@@ -114,9 +111,6 @@ installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar eventBuf = 
           else atomically $ writeTVar httpAsyncVar Nothing
         setLogLevel logger (lcLogLevel (cfgLogging cfg'))
         logInfo logger "SIGHUP: config reloaded"
-        now <- getCurrentTime
-        forM_ clusterEnvs $ \env ->
-          recordEvent eventBuf (Event now (ccName (envCluster env)) EvConfigReloaded Nothing "Config reloaded via SIGHUP")
         ) Nothing
   pure ()
 
@@ -129,8 +123,8 @@ installUSR1Handler logFile loggerVar = do
     logInfo new "SIGUSR1: log file reopened") Nothing
   pure ()
 
-startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> EventBuffer -> TVar Logger -> IO [Async ()]
-startAllWorkers clusterEnvs socketPath tvar eventBuf loggerVar = do
+startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> TVar Logger -> IO [Async ()]
+startAllWorkers clusterEnvs socketPath tvar loggerVar = do
   let clusterMap = Map.fromList
         [ (ccName (envCluster env), env)
         | env <- clusterEnvs
@@ -150,7 +144,7 @@ startAllWorkers clusterEnvs socketPath tvar eventBuf loggerVar = do
         | (env, reg) <- zip clusterEnvs registries
         ]
 
-  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap eventBuf socketPath loggerVar
+  ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap socketPath loggerVar
 
   pure $ ipcAsync : monitorWorkers <> refreshWorkers
 
@@ -169,10 +163,9 @@ awaitShutdownAndCleanup loggerVar shutdownVar allWorkers httpAsyncVar = do
 initCluster
   :: TVarDaemonState
   -> TVar Logger
-  -> EventBuffer
   -> (ClusterConfig, ClusterPasswords)
   -> IO ClusterEnv
-initCluster tvar loggerVar eventBuf (cc, pws) = do
+initCluster tvar loggerVar (cc, pws) = do
   let initTopo = buildInitialTopology cc
   atomically $ updateClusterTopology tvar initTopo
   lock     <- newFailoverLock
@@ -188,7 +181,6 @@ initCluster tvar loggerVar eventBuf (cc, pws) = do
         , envHooks       = hooksVar
         , envLock        = lock
         , envLogger      = loggerVar
-        , envEventBuffer = eventBuf
         }
   topo <- runApp env discoverTopology
   logger <- readTVarIO loggerVar

@@ -62,12 +62,11 @@ parseLogLevel t = lookup t [(logLevelToText l, l) | l <- [minBound .. maxBound]]
 
 data LoggingConfig = LoggingConfig
   { lcLogFile   :: FilePath
-  , lcMaxEvents :: Int      -- ^ In-memory event history buffer size (default 1000)
   , lcLogLevel  :: LogLevel -- ^ Minimum log level (default: info)
   } deriving (Show)
 
 defaultLoggingConfig :: LoggingConfig
-defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log" 1000 LogLevelInfo
+defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log" LogLevelInfo
 
 -- | Global defaults applied to all clusters unless overridden per-cluster.
 data GlobalConfig = GlobalConfig
@@ -210,13 +209,12 @@ instance FromJSON Config where
 instance FromJSON LoggingConfig where
   parseJSON = withObject "LoggingConfig" $ \o -> do
     logFile   <- o .:? "log_file"   .!= "/var/log/puremyha.log"
-    maxEvents <- o .:? "max_events" .!= 1000
     lvlText   <- o .:? "log_level"  .!= ("info" :: Text)
     logLevel  <- case parseLogLevel lvlText of
       Just l  -> pure l
       Nothing -> fail $ "Invalid log_level: " <> T.unpack lvlText
                       <> " (expected: debug, info, warn, error)"
-    pure $ LoggingConfig logFile maxEvents logLevel
+    pure $ LoggingConfig logFile logLevel
 
 instance FromJSON GlobalConfig where
   parseJSON = withObject "GlobalConfig" $ \o ->

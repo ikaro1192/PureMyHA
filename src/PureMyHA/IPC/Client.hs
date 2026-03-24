@@ -4,7 +4,6 @@ module PureMyHA.IPC.Client
   , printTopology
   , printOperationResult
   , printErrantGtids
-  , printEventHistory
   ) where
 
 import Control.Exception (bracket, try, SomeException)
@@ -126,33 +125,6 @@ printErrantGtidInfo :: ErrantGtidInfo -> IO ()
 printErrantGtidInfo eg =
   TIO.putStrLn $ "  " <> nodeHost (egiNodeId eg) <> ":" <>
     T.pack (show (nodePort (egiNodeId eg))) <> " -> " <> egiErrantGtid eg
-
--- | Print event history in tabular or JSON format
-printEventHistory :: Bool -> [Event] -> IO ()
-printEventHistory True  evs = BLC.putStrLn (encode evs)
-printEventHistory False [] = putStrLn "No events recorded."
-printEventHistory False evs = do
-  putStrLn $ padR 22 "TIME" <> padR 16 "CLUSTER" <> padR 22 "TYPE" <> padR 16 "NODE" <> "DETAILS"
-  putStrLn (replicate 88 '-')
-  mapM_ printEvent evs
-
-printEvent :: Event -> IO ()
-printEvent ev =
-  putStrLn $ padR 22 (showTime (evTimestamp ev))
-           <> padR 16 (T.unpack (evCluster ev))
-           <> padR 22 (showEventType (evType ev))
-           <> padR 16 (maybe "-" T.unpack (evNode ev))
-           <> T.unpack (evDetails ev)
-
-showEventType :: EventType -> String
-showEventType EvHealthChange      = "HealthChange"
-showEventType EvClusterHealth     = "ClusterHealth"
-showEventType EvFailoverStarted   = "FailoverStarted"
-showEventType EvFailoverCompleted = "FailoverCompleted"
-showEventType EvFailoverFailed    = "FailoverFailed"
-showEventType EvSwitchoverCompleted = "SwitchoverCompleted"
-showEventType EvConfigReloaded    = "ConfigReloaded"
-showEventType EvPauseChanged      = "PauseChanged"
 
 showHealth :: NodeHealth -> String
 showHealth Healthy                  = "Healthy"

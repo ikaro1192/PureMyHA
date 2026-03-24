@@ -22,7 +22,6 @@ import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
-import PureMyHA.Event (EventBuffer, getRecentEvents)
 import PureMyHA.Logger (Logger, setLogLevel)
 import PureMyHA.Failover.Demote (runDemote)
 import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica)
@@ -45,16 +44,15 @@ startIPCServer
   :: TVarDaemonState
   -> ClusterMap
   -> DiscoveryMap
-  -> EventBuffer
   -> FilePath    -- ^ socket path
   -> TVar Logger -- ^ for set-log-level
   -> IO ()
-startIPCServer tvar clusterMap discoveryMap eventBuf socketPath loggerVar =
+startIPCServer tvar clusterMap discoveryMap socketPath loggerVar =
   bracket (openListenSocket socketPath)
           (\sock -> close sock >> removeLink socketPath `catch` \(_ :: SomeException) -> pure ())
           $ \sock -> do
     listen sock 5
-    acceptLoop sock tvar clusterMap discoveryMap eventBuf loggerVar
+    acceptLoop sock tvar clusterMap discoveryMap loggerVar
 
 openListenSocket :: FilePath -> IO Socket
 openListenSocket path = do
@@ -63,20 +61,20 @@ openListenSocket path = do
   bind sock (SockAddrUnix path)
   pure sock
 
-acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> EventBuffer -> TVar Logger -> IO ()
-acceptLoop listenSock tvar clusterMap discoveryMap eventBuf loggerVar = do
+acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> TVar Logger -> IO ()
+acceptLoop listenSock tvar clusterMap discoveryMap loggerVar = do
   (clientSock, _) <- accept listenSock
-  _ <- async $ handleClient clientSock tvar clusterMap discoveryMap eventBuf loggerVar `finally` close clientSock
-  acceptLoop listenSock tvar clusterMap discoveryMap eventBuf loggerVar
+  _ <- async $ handleClient clientSock tvar clusterMap discoveryMap loggerVar `finally` close clientSock
+  acceptLoop listenSock tvar clusterMap discoveryMap loggerVar
 
-handleClient :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> EventBuffer -> TVar Logger -> IO ()
-handleClient sock tvar clusterMap discoveryMap eventBuf loggerVar = do
+handleClient :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> TVar Logger -> IO ()
+handleClient sock tvar clusterMap discoveryMap loggerVar = do
   result <- try @SomeException $ do
     msg <- recvLine sock
     case eitherDecode (BLC.pack msg) of
       Left err  -> sendResponse sock (RespError (T.pack err))
       Right req -> do
-        resp <- handleRequest tvar clusterMap discoveryMap eventBuf loggerVar req
+        resp <- handleRequest tvar clusterMap discoveryMap loggerVar req
         sendResponse sock resp
   case result of
     Left _ -> pure ()
@@ -101,8 +99,8 @@ sendResponse sock resp = do
   let bytes = BL.toStrict (encode resp <> BLC.singleton '\n')
   NSB.sendAll sock bytes
 
-handleRequest :: TVarDaemonState -> ClusterMap -> DiscoveryMap -> EventBuffer -> TVar Logger -> Request -> IO Response
-handleRequest tvar clusterMap discoveryMap eventBuf loggerVar req = case req of
+handleRequest :: TVarDaemonState -> ClusterMap -> DiscoveryMap -> TVar Logger -> Request -> IO Response
+handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
   ReqStatus mCluster -> do
     ds <- readDaemonState tvar
     let topos = filterClusters mCluster (dsClusters ds)
@@ -172,10 +170,6 @@ handleRequest tvar clusterMap discoveryMap eventBuf loggerVar req = case req of
     withClusterEnv mCluster clusterMap $ \env -> do
       atomically $ clearClusterPause (envDaemonState env) (ccName (envCluster env))
       pure $ RespOperation (OperationSuccess "Failover resumed")
-
-  ReqEventHistory mCluster mLimit -> do
-    evs <- getRecentEvents eventBuf mCluster mLimit
-    pure (RespEventHistory evs)
 
   ReqSetLogLevel lvlText ->
     case parseLogLevel lvlText of
