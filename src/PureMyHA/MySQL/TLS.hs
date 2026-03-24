@@ -19,7 +19,7 @@ import qualified Network.TLS                     as TLS
 import qualified Network.TLS.Extra.Cipher        as TLS
 import qualified System.IO.Streams               as Streams
 import           System.IO.Streams               (InputStream)
-import           PureMyHA.Config                 (TLSConfig (..), TLSMode (..))
+import           PureMyHA.Config                 (TLSConfig (..), TLSMode (..), TLSMinVersion (..))
 
 -- | Build 'TLS.ClientParams' from a 'TLSConfig' and the server hostname.
 -- The hostname is used for SNI and certificate hostname verification.
@@ -32,9 +32,14 @@ buildClientParams cfg hostname = do
         { TLS.sharedCAStore      = store
         , TLS.sharedCredentials  = creds
         }
-      hooks  = buildHooks (tlsMode cfg)
+      hooks    = buildHooks (tlsMode cfg)
+      versions = case tlsMinVersion cfg of
+        Just TLSVersion13 -> [TLS.TLS13]
+        _                 -> [TLS.TLS13, TLS.TLS12]
       supp   = (TLS.clientSupported base)
-        { TLS.supportedCiphers = TLS.ciphersuite_default }
+        { TLS.supportedCiphers   = TLS.ciphersuite_default
+        , TLS.supportedVersions  = versions
+        }
   return base
     { TLS.clientShared    = shared
     , TLS.clientHooks     = hooks

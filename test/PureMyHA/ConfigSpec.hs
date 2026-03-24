@@ -12,7 +12,7 @@ import PureMyHA.Config
   , LoggingConfig (..), LogLevel (..), parseLogLevel
   , parseDuration
   , validateConfig
-  , TLSMode (..), TLSConfig (..)
+  , TLSMode (..), TLSMinVersion (..), TLSConfig (..)
   )
 
 spec :: Spec
@@ -431,6 +431,74 @@ spec = do
             , "      password_file: /dev/null"
             , "    tls:"
             , "      mode: full-verify"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
+
+    it "parses tls.min_version: \"1.2\"" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: skip-verify"
+            , "      min_version: \"1.2\""
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg ->
+          (ccTLS (head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Just TLSVersion12
+
+    it "parses tls.min_version: \"1.3\"" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: skip-verify"
+            , "      min_version: \"1.3\""
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg ->
+          (ccTLS (head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Just TLSVersion13
+
+    it "tls.min_version defaults to Nothing when absent" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: skip-verify"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err  -> expectationFailure err
+        Right cfg ->
+          (ccTLS (head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Nothing
+
+    it "rejects unknown tls.min_version" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    tls:"
+            , "      mode: skip-verify"
+            , "      min_version: \"1.1\""
             , globalBlock
             ]
       decodeConfig yaml `shouldSatisfy` isLeft
