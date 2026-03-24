@@ -44,3 +44,26 @@ See [`config/config.yaml.example`](../config/config.yaml.example) for the comple
 `monitoring`, `failure_detection`, `failover`, and `hooks` can be set per-cluster or defined as defaults in the `global` section. Per-cluster settings take precedence over `global` on a section-by-section basis. `monitoring`, `failure_detection`, and `failover` are required in at least one of the two.
 
 The `logging` section is optional and global (defaults to `/var/log/puremyha.log` and `log_level: info` when omitted).
+
+## TLS
+
+PureMyHA supports optional TLS for MySQL connections on a per-cluster basis via the `tls:` key.
+
+```yaml
+tls:
+  mode: verify-ca                              # disabled | skip-verify | verify-ca | verify-full
+  min_version: "1.2"                           # optional; "1.2" (default) | "1.3"
+  ca_cert: /etc/puremyha/tls/ca-cert.pem      # required for verify-ca / verify-full
+  client_cert: /etc/puremyha/tls/client.pem   # optional (mutual TLS)
+  client_key: /etc/puremyha/tls/client-key.pem
+```
+
+| Field | Values | Default |
+|---|---|---|
+| `mode` | `disabled` / `skip-verify` / `verify-ca` / `verify-full` | `disabled` |
+| `min_version` | `"1.2"` / `"1.3"` | `"1.2"` (allows TLS 1.2 and 1.3) |
+| `ca_cert` | File path | — (required for `verify-ca` / `verify-full`) |
+| `client_cert` | File path | — (optional, mutual TLS) |
+| `client_key` | File path | — (optional, mutual TLS) |
+
+When `mode` is not `disabled`, PureMyHA sends a MySQL SSL_REQUEST packet before the authentication handshake, compatible with `require_secure_transport=ON`.
