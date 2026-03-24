@@ -95,6 +95,6 @@ priorityRank priorities host =
     (rank:_) -> rank
     []       -> maxBound
 
--- | GTID セット中のトランザクション総数をスコアとして返す。
+-- | Returns the total number of transactions in a GTID set as a score.
 gtidScore :: CandidateInfo -> Integer
 gtidScore = gtidTransactionCount . ciExecutedGtid
