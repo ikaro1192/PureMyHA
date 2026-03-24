@@ -96,7 +96,7 @@ runTopologyRefresh reg = do
   let discovered = Map.keysSet (ctNodes mergedTopo)
       newNodes   = Set.toList (Set.difference discovered knownNodes)
   unless (null newNodes) $
-    appLogInfo $ "[" <> ccName cc <> "] Topology refresh: "
+    appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: "
       <> T.pack (show (length newNodes)) <> " new node(s) found"
   liftIO $ forM_ newNodes $ \nid -> do
     a <- async (runApp env (runWorker nid))
@@ -126,7 +126,7 @@ monitorNode nid = do
       backoff   = mcConnectRetryBackoff mc
       cap       = mcConnectTimeout mc
       logRetry msg = readTVarIO (envLogger env) >>= \l ->
-        logDebug l ("[" <> ccName cc <> "] Node " <> nodeHost nid <> ": " <> msg)
+        logDebug l ("[" <> unClusterName (ccName cc) <> "] Node " <> nodeHost nid <> ": " <> msg)
   -- Read old state before connecting for prevFailures count
   mOldNs <- liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
@@ -167,7 +167,7 @@ monitorNode nid = do
   liftIO $ when (newFailures > 0 && newFailures < threshold) $ do
     logger <- readTVarIO (envLogger env)
     case result of
-      Left err -> logInfo logger $ "[" <> ccName cc <> "] Node " <> nodeHost nid
+      Left err -> logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Node " <> nodeHost nid
                     <> " probe failed (" <> T.pack (show newFailures) <> "/"
                     <> T.pack (show threshold) <> "): " <> err
       Right _  -> pure ()
@@ -187,11 +187,11 @@ logHealthChange nid mOld new = do
     then pure ()
     else case (fmap nsHealth mOld, nsHealth new) of
       (Just Healthy, NeedsAttention err) ->
-        liftIO $ logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " unreachable: " <> err
+        liftIO $ logWarn logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " unreachable: " <> err
       (Just (NeedsAttention _), Healthy) ->
-        liftIO $ logInfo logger $ "[" <> clusterName <> "] Node " <> host <> " recovered"
+        liftIO $ logInfo logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " recovered"
       (Nothing, NeedsAttention err) ->
-        liftIO $ logWarn logger $ "[" <> clusterName <> "] Node " <> host <> " initial connect failed: " <> err
+        liftIO $ logWarn logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " initial connect failed: " <> err
       _ -> pure ()
   where
     host = nodeHost nid
@@ -256,7 +256,7 @@ recomputeClusterHealth = do
       -- Log all health transitions for observability
       when transitioned $ liftIO $ do
         logger <- readTVarIO (envLogger env)
-        logInfo logger $ "[" <> ccName cc <> "] Cluster health: "
+        logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Cluster health: "
           <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
       liftIO $ atomically $ updateClusterHealthFields tvar (ccName cc) newHealth newSrcId observedHealthy
       -- Trigger auto-failover when DeadSource (not just on transition, so resume-failover works)
@@ -276,7 +276,7 @@ emergencyReplicaCheck = do
   tvar <- asks envDaemonState
   cc   <- asks envCluster
   env  <- ask
-  appLogInfo $ "[" <> ccName cc <> "] UnreachableSource detected: emergency replica re-check"
+  appLogInfo $ "[" <> unClusterName (ccName cc) <> "] UnreachableSource detected: emergency replica re-check"
   mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   case mTopo of
     Nothing   -> pure ()

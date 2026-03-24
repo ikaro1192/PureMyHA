@@ -72,7 +72,7 @@ printClusterStatus cs = do
       nodes       = show (csNodeCount cs)
       paused      = if csPaused cs then "yes" else "no"
       blocked     = maybe "-" showTime (csRecoveryBlockedUntil cs)
-  putStrLn $ padR 20 (T.unpack (csClusterName cs))
+  putStrLn $ padR 20 (T.unpack (unClusterName (csClusterName cs)))
            <> padR 25 health
            <> padR 20 source
            <> padR 6  nodes
@@ -86,7 +86,7 @@ printTopology False views = mapM_ printClusterTopology views
 
 printClusterTopology :: ClusterTopologyView -> IO ()
 printClusterTopology ctv = do
-  TIO.putStrLn $ "Cluster: " <> ctvClusterName ctv
+  TIO.putStrLn $ "Cluster: " <> unClusterName (ctvClusterName ctv)
   let nodes = ctvNodes ctv
       source = filter nsvIsSource nodes
       replicas = filter (not . nsvIsSource) nodes

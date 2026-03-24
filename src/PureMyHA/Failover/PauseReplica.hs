@@ -45,15 +45,15 @@ withTargetNode actionName targetHost mysqlAction stateUpdate = do
         Nothing -> pure (Left $ "Node not found: " <> targetHost)
         Just targetNs -> do
           let ci = makeConnectInfo (nsNodeId targetNs) creds
-          appLogInfo $ "[" <> ccName cc <> "] " <> actionName <> " replication on " <> targetHost
+          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replication on " <> targetHost
           result <- liftIO $ withNodeConn ci $ \conn -> mysqlAction conn
           case result of
             Left err -> do
-              appLogError $ "[" <> ccName cc <> "] " <> actionName <> " failed: " <> err
+              appLogError $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " failed: " <> err
               pure (Left err)
             Right () -> do
               liftIO $ atomically $ updateNodeState tvar (ccName cc) (stateUpdate targetNs)
-              appLogInfo $ "[" <> ccName cc <> "] Replication " <> actionResult <> " on " <> targetHost
+              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Replication " <> actionResult <> " on " <> targetHost
               pure (Right ())
   where
     actionResult = case actionName of

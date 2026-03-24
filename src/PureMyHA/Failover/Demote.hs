@@ -33,7 +33,7 @@ runDemote demoteHost srcHost = do
           let demoteId = nsNodeId demoteNs
               srcId    = nsNodeId srcNs
               ci       = makeConnectInfo demoteId monCreds
-          appLogInfo $ "[" <> ccName cc <> "] Demoting " <> demoteHost
+          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Demoting " <> demoteHost
                     <> " to replica under " <> srcHost
           result <- liftIO $ withNodeConn ci $ \conn -> do
             stopReplica conn
@@ -42,11 +42,11 @@ runDemote demoteHost srcHost = do
             startReplica conn
           case result of
             Left err -> do
-              appLogError $ "[" <> ccName cc <> "] Demote failed: " <> err
+              appLogError $ "[" <> unClusterName (ccName cc) <> "] Demote failed: " <> err
               pure (Left err)
             Right () -> do
               liftIO $ atomically $ updateNodeState tvar (ccName cc)
                 (demoteNs { nsRole = Replica })
-              appLogInfo $ "[" <> ccName cc <> "] Demote completed: "
+              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Demote completed: "
                         <> demoteHost <> " is now a replica"
               pure (Right ())

@@ -1,6 +1,7 @@
 module PureMyHA.Types
   ( NodeId (..)
-  , ClusterName
+  , ClusterName (..)
+  , unClusterName
   , IORunning (..)
   , SQLThreadState (..)
   , ReplicaStatus (..)
@@ -20,13 +21,26 @@ module PureMyHA.Types
   , ErrantGtidInfo (..)
   ) where
 
+import Data.Aeson (FromJSON (..), ToJSON (..))
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
+import Data.String (IsString (..))
 import Data.Text (Text)
+import qualified Data.Text as T
 import Data.Time (UTCTime)
 import GHC.Generics (Generic)
 
-type ClusterName = Text
+newtype ClusterName = ClusterName { unClusterName :: Text }
+  deriving (Eq, Ord, Show, Generic)
+
+instance IsString ClusterName where
+  fromString = ClusterName . T.pack
+
+instance FromJSON ClusterName where
+  parseJSON v = ClusterName <$> parseJSON v
+
+instance ToJSON ClusterName where
+  toJSON (ClusterName t) = toJSON t
 
 data NodeId = NodeId
   { nodeHost :: Text

@@ -24,7 +24,7 @@ import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, setLogLev
 import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
-import PureMyHA.Types (ClusterTopology(..))
+import PureMyHA.Types (ClusterTopology(..), unClusterName)
 
 data DaemonOptions = DaemonOptions
   { optConfigPath :: FilePath
@@ -98,7 +98,7 @@ installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar = do
         forM_ clusterEnvs $ \env -> do
           let name = ccName (envCluster env)
           case find (\cc -> ccName cc == name) (cfgClusters cfg') of
-            Nothing -> logWarn logger $ "SIGHUP: cluster " <> name <> " not found in new config"
+            Nothing -> logWarn logger $ "SIGHUP: cluster " <> unClusterName name <> " not found in new config"
             Just cc -> atomically $ do
               writeTVar (envMonitoring env) (ccMonitoring cc)
               writeTVar (envHooks env)      (ccHooks cc)
@@ -184,7 +184,7 @@ initCluster tvar loggerVar (cc, pws) = do
         }
   topo <- runApp env discoverTopology
   logger <- readTVarIO loggerVar
-  logInfo logger $ "[" <> ccName cc <> "] Initial discovery found "
+  logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Initial discovery found "
     <> T.pack (show (Map.size (ctNodes topo))) <> " node(s)"
   atomically $ updateClusterTopology tvar topo
   pure env

@@ -55,14 +55,14 @@ handleHealth tvar = do
 handleStatus :: TVarDaemonState -> Text -> IO Response
 handleStatus tvar name = do
   ds <- readDaemonState tvar
-  case Map.lookup name (dsClusters ds) of
+  case Map.lookup (ClusterName name) (dsClusters ds) of
     Nothing -> pure $ responseLBS status404 [jsonCT] (encode (object ["error" .= ("cluster not found" :: Text)]))
     Just ct -> pure $ responseLBS status200 [jsonCT] (encode (toClusterStatus ct))
 
 handleTopology :: TVarDaemonState -> Text -> IO Response
 handleTopology tvar name = do
   ds <- readDaemonState tvar
-  case Map.lookup name (dsClusters ds) of
+  case Map.lookup (ClusterName name) (dsClusters ds) of
     Nothing -> pure $ responseLBS status404 [jsonCT] (encode (object ["error" .= ("cluster not found" :: Text)]))
     Just ct -> pure $ responseLBS status200 [jsonCT] (encode (toClusterTopologyView ct))
 
@@ -117,12 +117,12 @@ metricBlock name typ help samples =
   , "# TYPE " <> name <> " " <> typ
   ] ++ [ name <> "{" <> labels <> "} " <> val | (labels, val) <- samples ]
 
-clusterLabels :: Text -> Text
-clusterLabels name = "cluster=" <> quoted name
+clusterLabels :: ClusterName -> Text
+clusterLabels name = "cluster=" <> quoted (unClusterName name)
 
-nodeLabels :: Text -> NodeState -> Text
+nodeLabels :: ClusterName -> NodeState -> Text
 nodeLabels clusterName ns =
-  "cluster=" <> quoted clusterName
+  "cluster=" <> quoted (unClusterName clusterName)
   <> ",host=" <> quoted (nodeHost (nsNodeId ns))
   <> ",port=" <> quoted (T.pack (show (nodePort (nsNodeId ns))))
 
