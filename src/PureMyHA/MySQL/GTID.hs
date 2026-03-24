@@ -87,8 +87,8 @@ renderGtidEntry (GtidEntry uuid ivs) =
 renderGtidSet :: [GtidEntry] -> Text
 renderGtidSet = T.intercalate "," . map renderGtidEntry
 
--- | GTID セット文字列中のトランザクション総数を返す。
--- パースエラーまたは空文字列の場合は 0 を返す。
+-- | Returns the total number of transactions in a GTID set string.
+-- Returns 0 on parse error or empty string.
 gtidTransactionCount :: Text -> Integer
 gtidTransactionCount t =
   case parseGtidIntervals t of
