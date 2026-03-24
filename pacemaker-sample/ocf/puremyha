@@ -10,6 +10,7 @@
 #   pcs resource create puremyhad ocf:puremyha:puremyhad \
 #       config=/etc/puremyha/config.yaml \
 #       socket=/run/puremyhad.sock \
+#       http_port=8080 \
 #       op monitor interval=15s timeout=15s \
 #       op start  timeout=30s \
 #       op stop   timeout=60s
@@ -33,11 +34,13 @@ OCF_RESKEY_binary_default="/usr/sbin/puremyhad"
 OCF_RESKEY_config_default="/etc/puremyha/config.yaml"
 OCF_RESKEY_socket_default="/run/puremyhad.sock"
 OCF_RESKEY_pidfile_default="/run/puremyhad.pid"
+OCF_RESKEY_http_port_default=""
 
 : ${OCF_RESKEY_binary=${OCF_RESKEY_binary_default}}
 : ${OCF_RESKEY_config=${OCF_RESKEY_config_default}}
 : ${OCF_RESKEY_socket=${OCF_RESKEY_socket_default}}
 : ${OCF_RESKEY_pidfile=${OCF_RESKEY_pidfile_default}}
+: ${OCF_RESKEY_http_port=${OCF_RESKEY_http_port_default}}
 
 # --- Metadata ---
 
@@ -72,6 +75,15 @@ puremyha_meta_data() {
       <longdesc lang="en">Path to the PID file written by this RA.</longdesc>
       <shortdesc lang="en">PID file path</shortdesc>
       <content type="string" default="${OCF_RESKEY_pidfile_default}"/>
+    </parameter>
+    <parameter name="http_port" unique="0" required="0">
+      <longdesc lang="en">
+        TCP port of the puremyhad HTTP health endpoint (http.port in config.yaml).
+        When set, the monitor operation calls GET /health via curl and fails if the
+        HTTP server does not respond. Leave empty to skip the HTTP check.
+      </longdesc>
+      <shortdesc lang="en">HTTP health check port (optional)</shortdesc>
+      <content type="string" default="${OCF_RESKEY_http_port_default}"/>
     </parameter>
   </parameters>
   <actions>
@@ -181,6 +193,19 @@ puremyha_monitor() {
     if [ ! -S "${OCF_RESKEY_socket}" ]; then
         ocf_log warn "puremyhad process is running but socket ${OCF_RESKEY_socket} does not exist"
         return ${OCF_ERR_GENERIC}
+    fi
+    # If http_port is configured, verify the HTTP health endpoint is responsive.
+    # Both 200 (healthy) and 503 (degraded) mean puremyhad is serving requests.
+    # Any other result (connection refused, timeout) means the HTTP layer is down.
+    if [ -n "${OCF_RESKEY_http_port}" ]; then
+        local http_status
+        http_status=$(curl -s -o /dev/null -w "%{http_code}" \
+            --max-time 5 \
+            "http://127.0.0.1:${OCF_RESKEY_http_port}/health" 2>/dev/null)
+        if [ "${http_status}" != "200" ] && [ "${http_status}" != "503" ]; then
+            ocf_log warn "puremyhad /health did not respond (HTTP ${http_status})"
+            return ${OCF_ERR_GENERIC}
+        fi
     fi
     return ${OCF_SUCCESS}
 }

@@ -17,8 +17,21 @@ global:
     connect_timeout: 2s
     replication_lag_warning: 10s
     replication_lag_critical: 30s
+    connect_retries: 2
+    connect_retry_backoff: 1s
   failure_detection:
     recovery_block_period: 3600s
+    consecutive_failures_for_dead: 3
   failover:
     auto_failover: true
     min_replicas_for_failover: 1
+    wait_for_relay_log_apply_timeout: 60s
+
+logging:
+  log_file: /var/log/puremyha.log
+  log_level: info
+
+http:
+  enabled: true
+  listen_address: "127.0.0.1"
+  port: 8080

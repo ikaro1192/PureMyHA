@@ -146,9 +146,12 @@ pcs resource create puremyha-vip IPaddr2 \
 
 # --- SECTION 10: Create the puremyhad resource ---
 # Uses the OCF RA installed in Section 5.
+# Set http_port only if http.enabled=true in config.yaml (port must match http.port).
+# The monitor operation will then verify the /health endpoint on every check interval.
 pcs resource create puremyhad ocf:puremyha:puremyhad \
     config=/etc/puremyha/config.yaml \
     socket=/run/puremyhad.sock \
+    http_port=8080 \
     op start   timeout=30s \
     op stop    timeout=30s \
     op monitor interval=15s timeout=15s
