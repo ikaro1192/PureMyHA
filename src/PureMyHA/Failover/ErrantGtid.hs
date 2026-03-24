@@ -13,7 +13,7 @@ import qualified Data.Text as T
 import PureMyHA.Config (ClusterConfig (..))
 import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
-import PureMyHA.MySQL.GTID (GtidEntry (..), GtidInterval (..), parseGtidIntervals)
+import PureMyHA.MySQL.GTID (GtidEntry (..), GtidInterval (..), GtidUUID (..), TransactionId (..), parseGtidIntervals)
 import PureMyHA.MySQL.Query (injectEmptyTransaction)
 import PureMyHA.Topology.State (getClusterTopology)
 import PureMyHA.Types
@@ -21,7 +21,7 @@ import PureMyHA.Types
 -- | Expand one GtidEntry to individual "uuid:N" strings
 expandGtidEntry :: GtidEntry -> [Text]
 expandGtidEntry GtidEntry{..} =
-  [ geUuid <> ":" <> T.pack (show n)
+  [ getGtidUUID geUuid <> ":" <> T.pack (show (getTransactionId n))
   | GtidInterval{..} <- geIntervals
   , n <- [giStart .. giEnd]
   ]
