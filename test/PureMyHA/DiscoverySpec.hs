@@ -31,7 +31,7 @@ testCC = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig 3 5 30 60 300 1 1
   , ccFailureDetection       = FailureDetectionConfig 3600 3
-  , ccFailover               = FailoverConfig True 1 [] 60 False
+  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }

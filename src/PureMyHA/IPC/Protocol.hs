@@ -8,6 +8,7 @@ module PureMyHA.IPC.Protocol
   , ErrantGtidInfo (..)
   ) where
 
+import Control.Applicative ((<|>))
 import Data.Aeson
 import Data.Aeson.Types (Parser)
 import Data.Text (Text)
@@ -38,6 +39,7 @@ instance ToJSON NodeHealth where
   toJSON DeadSourceAndAllReplicas   = String "DeadSourceAndAllReplicas"
   toJSON SplitBrainSuspected        = String "SplitBrainSuspected"
   toJSON (NeedsAttention msg)       = object ["NeedsAttention" .= msg]
+  toJSON (Lagging s)                = object ["Lagging" .= s]
 
 instance FromJSON NodeHealth where
   parseJSON (String "Healthy")                  = pure Healthy
@@ -45,7 +47,8 @@ instance FromJSON NodeHealth where
   parseJSON (String "UnreachableSource")        = pure UnreachableSource
   parseJSON (String "DeadSourceAndAllReplicas") = pure DeadSourceAndAllReplicas
   parseJSON (String "SplitBrainSuspected")      = pure SplitBrainSuspected
-  parseJSON (Object o)                          = NeedsAttention <$> o .: "NeedsAttention"
+  parseJSON (Object o)                          = (Lagging <$> o .: "Lagging")
+                                              <|> (NeedsAttention <$> o .: "NeedsAttention")
   parseJSON _                                   = fail "Invalid NodeHealth"
 
 instance ToJSON ClusterStatus where

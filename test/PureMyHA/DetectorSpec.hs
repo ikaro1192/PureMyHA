@@ -73,49 +73,93 @@ spec = do
   describe "detectNodeHealth" $ do
     it "returns NeedsAttention when connect error is present" $ do
       let ns = healthySource { nsProbeResult = ProbeFailure "refused" }
-      detectNodeHealth ns `shouldBe` NeedsAttention "refused"
+      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "refused"
 
     it "returns NeedsAttention when errant GTIDs are present" $ do
       let ns = healthySource { nsErrantGtids = "uuid3:1" }
-      detectNodeHealth ns `shouldBe` NeedsAttention "Errant GTIDs: uuid3:1"
+      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "Errant GTIDs: uuid3:1"
 
     it "returns Healthy for a source node with no errors" $
-      detectNodeHealth healthySource `shouldBe` Healthy
+      detectNodeHealth Nothing healthySource `shouldBe` Healthy
 
     it "returns NeedsAttention IO error when replica IO=No with error message" $ do
       let rs = (mkReplicaStatus "db1" 3306 IONo "") { rsLastIOError = "Access denied" }
           ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
-      detectNodeHealth ns `shouldBe` NeedsAttention "IO error: Access denied"
+      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "IO error: Access denied"
 
     it "returns NeedsAttention 'Replica IO not running' when IO=No with no error" $ do
       let rs = mkReplicaStatus "db1" 3306 IONo ""
           ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
-      detectNodeHealth ns `shouldBe` NeedsAttention "Replica IO not running"
+      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "Replica IO not running"
 
     it "returns NeedsAttention SQL error when SQL thread is stopped" $ do
       let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsReplicaSQLRunning = SQLStopped, rsLastSQLError = "err" }
           ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
-      detectNodeHealth ns `shouldBe` NeedsAttention "SQL error: err"
+      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "SQL error: err"
 
     it "returns Healthy for a normal replica" $
-      detectNodeHealth healthyReplica `shouldBe` Healthy
+      detectNodeHealth Nothing healthyReplica `shouldBe` Healthy
+
+    it "returns Lagging when lag meets threshold" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 30 }
+          ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
+      detectNodeHealth (Just 30) ns `shouldBe` Lagging 30
+
+    it "returns Healthy when lag is below threshold" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 29 }
+          ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
+      detectNodeHealth (Just 30) ns `shouldBe` Healthy
+
+    it "returns Healthy when no lag threshold is set" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 3600 }
+          ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
+      detectNodeHealth Nothing ns `shouldBe` Healthy
 
   describe "detectReplicaHealth" $ do
     it "returns NeedsAttention IO error when IO=No with error message" $ do
       let rs = (mkReplicaStatus "db1" 3306 IONo "") { rsLastIOError = "Access denied" }
-      detectReplicaHealth rs `shouldBe` NeedsAttention "IO error: Access denied"
+      detectReplicaHealth Nothing rs `shouldBe` NeedsAttention "IO error: Access denied"
 
     it "returns NeedsAttention 'Replica IO not running' when IO=No with no error" $ do
       let rs = mkReplicaStatus "db1" 3306 IONo ""
-      detectReplicaHealth rs `shouldBe` NeedsAttention "Replica IO not running"
+      detectReplicaHealth Nothing rs `shouldBe` NeedsAttention "Replica IO not running"
 
     it "returns NeedsAttention SQL error when SQL thread is stopped" $ do
       let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsReplicaSQLRunning = SQLStopped, rsLastSQLError = "sql-err" }
-      detectReplicaHealth rs `shouldBe` NeedsAttention "SQL error: sql-err"
+      detectReplicaHealth Nothing rs `shouldBe` NeedsAttention "SQL error: sql-err"
 
     it "returns Healthy for a healthy replica status" $ do
       let rs = mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100"
-      detectReplicaHealth rs `shouldBe` Healthy
+      detectReplicaHealth Nothing rs `shouldBe` Healthy
+
+  describe "detectReplicaHealth lag threshold" $ do
+    it "returns Lagging when lag equals threshold" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 30 }
+      detectReplicaHealth (Just 30) rs `shouldBe` Lagging 30
+
+    it "returns Lagging when lag exceeds threshold" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 31 }
+      detectReplicaHealth (Just 30) rs `shouldBe` Lagging 31
+
+    it "returns Healthy when lag is one below threshold" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 29 }
+      detectReplicaHealth (Just 30) rs `shouldBe` Healthy
+
+    it "returns Healthy when lag is zero and threshold is set" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 0 }
+      detectReplicaHealth (Just 30) rs `shouldBe` Healthy
+
+    it "returns Healthy when no threshold is set regardless of lag" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 3600 }
+      detectReplicaHealth Nothing rs `shouldBe` Healthy
+
+    it "returns Healthy when lag is unknown (Nothing) even with threshold" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Nothing }
+      detectReplicaHealth (Just 30) rs `shouldBe` Healthy
+
+    it "IO error takes precedence over lag threshold" $ do
+      let rs = (mkReplicaStatus "db1" 3306 IONo "") { rsLastIOError = "err", rsSecondsBehindSource = Just 100 }
+      detectReplicaHealth (Just 30) rs `shouldBe` NeedsAttention "IO error: err"
 
   describe "identifySource" $ do
     it "identifies the source node" $

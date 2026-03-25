@@ -163,7 +163,8 @@ monitorNode nid = do
             }
   -- Update errant GTIDs by querying MySQL
   ns' <- enrichErrantGtids ns
-  let ns''  = ns' { nsHealth = detectNodeHealth ns' }
+  let lagThreshold = Just (round (realToFrac (mcReplicationLagCritical mc) :: Double) :: Int)
+      ns''  = ns' { nsHealth = detectNodeHealth lagThreshold ns' }
   -- Apply consecutive failure threshold: suppress NeedsAttention until N consecutive failures
   let ns''' = suppressBelowThreshold threshold newFailures mOldNs ns''
   -- Log below-threshold failures for observability
@@ -175,6 +176,21 @@ monitorNode nid = do
                     <> T.pack (show threshold) <> "): " <> err
       Right _  -> pure ()
   logHealthChange nid mOldNs ns'''
+  -- Fire lag threshold hooks on Lagging health transitions
+  liftIO $ do
+    mHooks <- readTVarIO (envHooks env)
+    ts     <- getCurrentTimestamp
+    let oldHealth = fmap nsHealth mOldNs
+        newHealth = nsHealth ns'''
+        baseEnv   = HookEnv (ccName cc) Nothing Nothing Nothing ts Nothing
+    case (oldHealth, newHealth) of
+      (Just (Lagging _), Lagging _) -> pure ()  -- already lagging, no transition
+      (_, Lagging lag) ->
+        runHookFireForget mHooks hcOnLagThresholdExceeded
+          baseEnv { hookLagSeconds = Just lag }
+      (Just (Lagging _), _) ->
+        runHookFireForget mHooks hcOnLagThresholdRecovered baseEnv
+      _ -> pure ()
   -- Use atomic read-modify-write to preserve nsRole/nsPaused from the current
   -- topology. This prevents race conditions where failover or pause/resume
   -- commands change these fields between the worker's read and write.
@@ -249,12 +265,12 @@ recomputeClusterHealth = do
           DeadSource -> do
             mHooks <- readTVarIO (envHooks env)
             ts <- getCurrentTimestamp
-            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSource") ts
+            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSource") ts Nothing
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           DeadSourceAndAllReplicas -> do
             mHooks <- readTVarIO (envHooks env)
             ts <- getCurrentTimestamp
-            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSourceAndAllReplicas") ts
+            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSourceAndAllReplicas") ts Nothing
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           _ -> pure ()
       -- Log all health transitions for observability

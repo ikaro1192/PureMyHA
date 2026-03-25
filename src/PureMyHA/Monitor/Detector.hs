@@ -66,17 +66,17 @@ hasIoConnecting = any $ \ns -> case nsProbeResult ns of
   _ -> False
 
 -- | Detect health for a single node
-detectNodeHealth :: NodeState -> NodeHealth
-detectNodeHealth ns = case nsProbeResult ns of
+detectNodeHealth :: Maybe Int -> NodeState -> NodeHealth
+detectNodeHealth mLagThreshold ns = case nsProbeResult ns of
   ProbeFailure{prConnectError = e} -> NeedsAttention e
   ProbeSuccess{prReplicaStatus = mrs}
     | not (T.null (nsErrantGtids ns)) ->
         NeedsAttention ("Errant GTIDs: " <> nsErrantGtids ns)
-    | Just rs <- mrs -> detectReplicaHealth rs
+    | Just rs <- mrs -> detectReplicaHealth mLagThreshold rs
     | otherwise      -> Healthy  -- source or standalone
 
-detectReplicaHealth :: ReplicaStatus -> NodeHealth
-detectReplicaHealth rs
+detectReplicaHealth :: Maybe Int -> ReplicaStatus -> NodeHealth
+detectReplicaHealth mLagThreshold rs
   | rsReplicaIORunning rs == IONo && not (T.null (rsLastIOError rs)) =
       NeedsAttention ("IO error: " <> rsLastIOError rs)
   | rsReplicaIORunning rs == IONo =
@@ -85,6 +85,10 @@ detectReplicaHealth rs
       NeedsAttention "Replica IO thread not connected (Connecting)"
   | rsReplicaSQLRunning rs == SQLStopped =
       NeedsAttention ("SQL error: " <> rsLastSQLError rs)
+  | Just lag <- rsSecondsBehindSource rs
+  , Just threshold <- mLagThreshold
+  , lag >= threshold =
+      Lagging lag
   | otherwise = Healthy
 
 -- | Identify which node is the source based on topology

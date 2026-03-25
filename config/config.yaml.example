@@ -41,6 +41,10 @@ global:
                                    # When enabled, on SplitBrainSuspected the node with the highest GTID count
                                    # is kept writable; all other sources get SET GLOBAL super_read_only = ON.
                                    # Use `puremyha unfence --host <host>` to clear super_read_only manually.
+    max_replica_lag_for_candidate: 30  # optional; replicas with lag > this value (seconds) are excluded from
+                                       # failover candidate selection. Default: no limit.
+                                       # Note: replicas reaching monitoring.replication_lag_critical also become
+                                       # Lagging and are automatically excluded regardless of this setting.
     candidate_priority:            # optional promotion priority (auto-selected by GTID if omitted)
       - host: db2
   hooks:
@@ -52,6 +56,10 @@ global:
     post_unsuccessful_failover: /etc/puremyha/hooks/post_unsuccessful_failover.sh  # optional
     on_fence: /etc/puremyha/hooks/on_fence.sh                                      # optional; fired after a node is auto-fenced
                                                                                     # Env: PUREMYHA_CLUSTER, PUREMYHA_OLD_SOURCE (fenced host), PUREMYHA_NEW_SOURCE (survivor host)
+    on_lag_threshold_exceeded: /etc/puremyha/hooks/on_lag_threshold_exceeded.sh    # optional; fired when a replica transitions to Lagging health
+                                                                                    # Env: PUREMYHA_CLUSTER, PUREMYHA_LAG_SECONDS, PUREMYHA_TIMESTAMP
+    on_lag_threshold_recovered: /etc/puremyha/hooks/on_lag_threshold_recovered.sh  # optional; fired when a replica recovers from Lagging health
+                                                                                    # Env: PUREMYHA_CLUSTER, PUREMYHA_TIMESTAMP
 
 logging:                               # optional logging configuration
   log_file: /var/log/puremyha.log    # default: /var/log/puremyha.log

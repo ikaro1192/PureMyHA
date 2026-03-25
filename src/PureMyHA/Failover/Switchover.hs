@@ -48,7 +48,7 @@ runSwitchover mToHost = do
       appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: Cluster not found"
       pure (Left "Cluster not found")
     Just topo ->
-      case selectCandidate (ctNodes topo) (fcCandidatePriority fc) mToHost of
+      case selectCandidate (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) mToHost of
         Left err -> do
           appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: " <> err
           pure (Left err)
@@ -61,7 +61,7 @@ runSwitchover mToHost = do
           -- Pre-switchover hook (blocking: non-zero exit aborts)
           mHooks <- getHooksConfig
           ts <- liftIO getCurrentTimestamp
-          let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts
+          let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts Nothing
           preResult <- liftIO $ runHookOrAbort mHooks hcPreSwitchover preEnv
           case preResult of
             Left err -> do
@@ -139,7 +139,7 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
               -- Post-switchover hook (fire-and-forget)
               mHooks <- getHooksConfig
               ts <- liftIO getCurrentTimestamp
-              let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts
+              let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts Nothing
               liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
 
               appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover completed: new source is " <> nodeHost candidateId
@@ -190,7 +190,7 @@ dryRunSwitchover mToHost = do
   case mTopo of
     Nothing   -> pure (Left "Cluster not found")
     Just topo ->
-      case selectCandidate (ctNodes topo) (fcCandidatePriority fc) mToHost of
+      case selectCandidate (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) mToHost of
         Left  err         -> pure (Left err)
         Right candidateId ->
           pure (Right ("Dry run: would promote " <> nodeHost candidateId <> " to source"))

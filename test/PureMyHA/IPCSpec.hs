@@ -79,6 +79,12 @@ spec = do
       roundTripHealth (NeedsAttention "test msg")
         `shouldBe` Just (NeedsAttention "test msg")
 
+    it "round-trips Lagging" $
+      roundTripHealth (Lagging 42) `shouldBe` Just (Lagging 42)
+
+    it "round-trips Lagging with large lag value" $
+      roundTripHealth (Lagging 3600) `shouldBe` Just (Lagging 3600)
+
   describe "Request FromJSON error paths" $ do
     it "rejects unknown request type" $
       (decode (BLC.pack "{\"type\":\"foobar\"}") :: Maybe Request) `shouldBe` Nothing
