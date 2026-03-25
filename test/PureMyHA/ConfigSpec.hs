@@ -659,6 +659,65 @@ spec = do
       let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 8080)
       validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "http.port"))
 
+    it "accepts node port 1 (minimum valid)" $ do
+      let cc  = minimalCluster { ccNodes = [NodeConfig "db1" 1] }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "port"))
+
+    it "accepts node port 65535 (maximum valid)" $ do
+      let cc  = minimalCluster { ccNodes = [NodeConfig "db1" 65535] }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "port"))
+
+    it "reports error for node port 0" $ do
+      let cc  = minimalCluster { ccNodes = [NodeConfig "db1" 0] }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "port")
+
+    it "reports error for node port 65536" $ do
+      let cc  = minimalCluster { ccNodes = [NodeConfig "db1" 65536] }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "port")
+
+    it "reports error when replication_lag_warning equals replication_lag_critical" $ do
+      let mc  = (ccMonitoring minimalCluster) { mcReplicationLagWarning = 30, mcReplicationLagCritical = 30 }
+          cc  = minimalCluster { ccMonitoring = mc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "replication_lag_warning")
+
+    it "reports error for negative monitoring.interval" $ do
+      let mc  = (ccMonitoring minimalCluster) { mcInterval = -1 }
+          cc  = minimalCluster { ccMonitoring = mc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "monitoring.interval must be > 0")
+
+    it "reports error for negative monitoring.connect_timeout" $ do
+      let mc  = (ccMonitoring minimalCluster) { mcConnectTimeout = -1 }
+          cc  = minimalCluster { ccMonitoring = mc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "connect_timeout")
+
+    it "accumulates multiple monitoring errors at once" $ do
+      let mc  = (ccMonitoring minimalCluster) { mcInterval = 0, mcConnectTimeout = 0 }
+          cc  = minimalCluster { ccMonitoring = mc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+          errs = validateConfig cfg
+      errs `shouldSatisfy` any (isInfixOf "monitoring.interval must be > 0")
+      errs `shouldSatisfy` any (isInfixOf "connect_timeout")
+
+    it "returns no errors for two valid clusters" $ do
+      let cc2 = minimalCluster { ccName = "test2", ccNodes = [NodeConfig "db2" 3306] }
+          cfg = Config [minimalCluster, cc2] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldBe` []
+
+    it "reports error for HTTP port 0 when enabled" $ do
+      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 0)
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "http.port")
+
+    it "reports error for HTTP port 65536 when enabled" $ do
+      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 65536)
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "http.port")
+
   describe "loadConfig" $ do
     it "returns Right for a valid YAML file" $ do
       let yaml = unlines
