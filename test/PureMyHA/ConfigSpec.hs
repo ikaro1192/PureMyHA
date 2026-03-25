@@ -8,11 +8,13 @@ import Test.Hspec
 import PureMyHA.Config
   ( Config (..), ClusterConfig (..), MonitoringConfig (..)
   , FailureDetectionConfig (..), FailoverConfig (..)
-  , HooksConfig (..)
-  , LoggingConfig (..), LogLevel (..), parseLogLevel
+  , HooksConfig (..), HttpConfig (..)
+  , LoggingConfig (..), LogLevel (..), parseLogLevel, logLevelToText
   , parseDuration
-  , validateConfig
+  , validateConfig, loadConfig
+  , defaultLoggingConfig, defaultHttpConfig
   , TLSMode (..), TLSMinVersion (..), TLSConfig (..)
+  , NodeConfig (..), Credentials (..)
   )
 
 spec :: Spec
@@ -600,6 +602,106 @@ spec = do
         Left err  -> expectationFailure err
         Right cfg -> validateConfig cfg `shouldSatisfy` any (isInfixOf "duplicate node host")
 
+  describe "logLevelToText" $ do
+    it "round-trips LogLevelDebug" $
+      parseLogLevel (logLevelToText LogLevelDebug) `shouldBe` Just LogLevelDebug
+    it "round-trips LogLevelInfo" $
+      parseLogLevel (logLevelToText LogLevelInfo) `shouldBe` Just LogLevelInfo
+    it "round-trips LogLevelWarn" $
+      parseLogLevel (logLevelToText LogLevelWarn) `shouldBe` Just LogLevelWarn
+    it "round-trips LogLevelError" $
+      parseLogLevel (logLevelToText LogLevelError) `shouldBe` Just LogLevelError
+
+  describe "validateConfig extra edge cases" $ do
+    it "reports error when no clusters defined" $ do
+      let cfg = Config [] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "no clusters defined")
+
+    it "reports error for HTTP port out of range when enabled" $ do
+      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 99999)
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "http.port")
+
+    it "no HTTP error when HTTP is disabled even with bad port" $ do
+      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig False "127.0.0.1" 99999)
+      validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "http.port"))
+
+    it "reports error when no nodes defined in cluster" $ do
+      let cc = minimalCluster { ccNodes = [] }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "no nodes defined")
+
+    it "reports error for monitoring.interval <= 0" $ do
+      let mc = (ccMonitoring minimalCluster) { mcInterval = 0 }
+          cc = minimalCluster { ccMonitoring = mc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "monitoring.interval must be > 0")
+
+    it "reports error for consecutive_failures_for_dead < 1" $ do
+      let fdc = (ccFailureDetection minimalCluster) { fdcConsecutiveFailuresForDead = 0 }
+          cc = minimalCluster { ccFailureDetection = fdc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "consecutive_failures_for_dead")
+
+    it "reports error for connect_retries < 1" $ do
+      let mc = (ccMonitoring minimalCluster) { mcConnectRetries = 0 }
+          cc = minimalCluster { ccMonitoring = mc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "connect_retries")
+
+    it "reports error for monitoring.connect_timeout <= 0" $ do
+      let mc = (ccMonitoring minimalCluster) { mcConnectTimeout = 0 }
+          cc = minimalCluster { ccMonitoring = mc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "connect_timeout")
+
+    it "returns no HTTP errors when HTTP is enabled with a valid port" $ do
+      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 8080)
+      validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "http.port"))
+
+  describe "loadConfig" $ do
+    it "returns Right for a valid YAML file" $ do
+      let yaml = unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "        port: 3306"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "global:"
+            , "  monitoring:"
+            , "    interval: 5s"
+            , "    connect_timeout: 2s"
+            , "    replication_lag_warning: 10s"
+            , "    replication_lag_critical: 30s"
+            , "  failure_detection:"
+            , "    recovery_block_period: 3600s"
+            , "  failover:"
+            , "    auto_failover: true"
+            ]
+      writeFile "/tmp/puremyha-loadconfig-test.yaml" yaml
+      result <- loadConfig "/tmp/puremyha-loadconfig-test.yaml"
+      result `shouldSatisfy` isRight
+
+    it "returns Left for a non-existent file" $ do
+      result <- loadConfig "/nonexistent/path/puremyha-test.yaml"
+      result `shouldSatisfy` isLeft
+
+-- | A minimal valid ClusterConfig for direct validateConfig testing
+minimalCluster :: ClusterConfig
+minimalCluster = ClusterConfig
+  { ccName                   = "test"
+  , ccNodes                  = [NodeConfig "db1" 3306]
+  , ccCredentials            = Credentials "u" "/dev/null"
+  , ccReplicationCredentials = Nothing
+  , ccMonitoring             = MonitoringConfig 5 2 10 30 300 1 1
+  , ccFailureDetection       = FailureDetectionConfig 3600 3
+  , ccFailover               = FailoverConfig True 1 [] 60
+  , ccHooks                  = Nothing
+  , ccTLS                    = Nothing
+  }
+
 -- | Shared global block (without hooks) used across test cases.
 -- Note: appended lines after this block extend the global section.
 globalBlock :: String
@@ -623,6 +725,10 @@ decodeConfig = either (Left . Yaml.prettyPrintParseException) Right . Yaml.decod
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True
 isLeft _        = False
+
+isRight :: Either a b -> Bool
+isRight (Right _) = True
+isRight _         = False
 
 isNothing :: Maybe a -> Bool
 isNothing Nothing = True

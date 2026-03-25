@@ -122,12 +122,21 @@ test-suite puremyha-test
     PureMyHA.ConnectionSpec
     PureMyHA.WorkerSpec
     PureMyHA.HTTPSpec
+    PureMyHA.StateSpec
   build-depends:
     puremyha,
     hspec            >= 2.9,
     QuickCheck       >= 2.14,
     hspec-discover   >= 0.8,
     yaml             >= 0.11,
-    bytestring
+    bytestring,
+    aeson            >= 2.1,
+    containers       >= 0.6,
+    stm              >= 2.5,
+    text             >= 1.2,
+    time             >= 1.9,
+    wai              >= 3.2,
+    http-types       >= 0.12,
+    mysql-haskell    >= 0.8.4
   build-tool-depends:
     hspec-discover:hspec-discover

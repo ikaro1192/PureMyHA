@@ -1,0 +1,12 @@
+# CI overlay: run coverage-instrumented prebuilt binary and collect .tix
+# Usage: docker compose -f docker-compose.yml -f docker-compose.coverage-prebuilt.yml up -d
+# Requires dist-bins/ to contain binaries built with --enable-coverage (STAGING=prebuilt via env).
+services:
+  puremyhad:
+    volumes:
+      - coverage-data:/coverage
+    environment:
+      - HPCTIXFILE=/coverage/puremyhad.tix
+
+volumes:
+  coverage-data:
