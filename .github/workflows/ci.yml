@@ -157,7 +157,8 @@ jobs:
         if: matrix.arch == 'x86_64'
         run: |
           cabal update
-          cabal install 'hpc-lcov >= 1.0.0 && < 1.2.0' \
+          cabal install hpc-lcov \
+            --constraint 'hpc-lcov < 1.2.0' \
             --installdir=$HOME/.local/bin --overwrite-policy=always
           mkdir -p coverage-artifacts/.hpc
           cp -r coverage-artifacts/hpc-mix/. coverage-artifacts/.hpc/
