@@ -29,7 +29,8 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Consecutive Failure Threshold** — Requires N consecutive probe failures before marking a node dead, preventing failover on transient TCP timeouts or momentary MySQL unresponsiveness (configurable `consecutive_failures_for_dead`, default 3)
 - **Anti-Flap Protection** — Blocks repeated automatic failovers via configurable `recovery_block_period`
 - **Auto-Fence Split-Brain** — On `SplitBrainSuspected`, automatically sets `super_read_only=ON` on all non-survivor sources (opt-in via `failover.auto_fence: true`); use `puremyha unfence --host <host>` to recover
-- **Hook Support** — Pre/post hooks for failover and switchover events
+- **Replica Lag Threshold** — Replicas exceeding `monitoring.replication_lag_critical` transition to `Lagging` health and are excluded from failover candidates; `failover.max_replica_lag_for_candidate` provides a separate (stricter) exclusion threshold for candidate selection only
+- **Hook Support** — Pre/post hooks for failover and switchover events, plus `on_lag_threshold_exceeded` / `on_lag_threshold_recovered` for replica lag alerting
 - **Optional TLS** — Per-cluster TLS for MySQL connections (`disabled` / `skip-verify` / `verify-ca` / `verify-full`), supports `require_secure_transport=ON`; minimum TLS version configurable (`"1.2"` / `"1.3"`)
 - **MySQL 8.4 Native** — Uses only modern syntax (`SHOW REPLICA STATUS`, `CHANGE REPLICATION SOURCE TO`, etc.)
 - **Graceful Shutdown** — Cleans up the socket file and exits on SIGTERM/SIGINT

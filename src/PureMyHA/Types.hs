@@ -72,6 +72,7 @@ data NodeHealth
   | DeadSourceAndAllReplicas
   | SplitBrainSuspected
   | NeedsAttention Text
+  | Lagging Int
   deriving (Eq, Show, Generic)
 
 data NodeRole = Source | Replica

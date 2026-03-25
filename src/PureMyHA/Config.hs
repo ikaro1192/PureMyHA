@@ -162,11 +162,12 @@ data FailureDetectionConfig = FailureDetectionConfig
   } deriving (Show, Generic)
 
 data FailoverConfig = FailoverConfig
-  { fcAutoFailover           :: Bool
-  , fcMinReplicasForFailover :: Int
-  , fcCandidatePriority      :: [CandidatePriority]
-  , fcWaitRelayLogTimeout    :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
-  , fcAutoFence              :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
+  { fcAutoFailover                :: Bool
+  , fcMinReplicasForFailover      :: Int
+  , fcCandidatePriority           :: [CandidatePriority]
+  , fcWaitRelayLogTimeout         :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
+  , fcAutoFence                   :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
+  , fcMaxReplicaLagForCandidate   :: Maybe Int        -- ^ Max lag in seconds for failover candidates; lagging nodes are excluded (default Nothing)
   } deriving (Show, Generic)
 
 data CandidatePriority = CandidatePriority
@@ -174,13 +175,15 @@ data CandidatePriority = CandidatePriority
   } deriving (Show, Generic)
 
 data HooksConfig = HooksConfig
-  { hcPreFailover              :: Maybe FilePath
-  , hcPostFailover             :: Maybe FilePath
-  , hcPreSwitchover            :: Maybe FilePath
-  , hcPostSwitchover           :: Maybe FilePath
-  , hcOnFailureDetection       :: Maybe FilePath
-  , hcPostUnsuccessfulFailover :: Maybe FilePath
-  , hcOnFence                  :: Maybe FilePath
+  { hcPreFailover                 :: Maybe FilePath
+  , hcPostFailover                :: Maybe FilePath
+  , hcPreSwitchover               :: Maybe FilePath
+  , hcPostSwitchover              :: Maybe FilePath
+  , hcOnFailureDetection          :: Maybe FilePath
+  , hcPostUnsuccessfulFailover    :: Maybe FilePath
+  , hcOnFence                     :: Maybe FilePath
+  , hcOnLagThresholdExceeded      :: Maybe FilePath  -- ^ Fired when a replica transitions to Lagging health
+  , hcOnLagThresholdRecovered     :: Maybe FilePath  -- ^ Fired when a replica recovers from Lagging health
   } deriving (Show, Generic)
 
 -- | Parse duration strings like "3s", "10s", "3600s"
@@ -329,6 +332,7 @@ instance FromJSON FailoverConfig where
       <*> o .:? "candidate_priority" .!= []
       <*> (unDuration <$> o .:? "wait_for_relay_log_apply_timeout" .!= DurationField 60)
       <*> o .:? "auto_fence" .!= False
+      <*> o .:? "max_replica_lag_for_candidate"
 
 instance FromJSON CandidatePriority where
   parseJSON = withObject "CandidatePriority" $ \o ->
@@ -351,6 +355,8 @@ instance FromJSON HooksConfig where
       <*> o .:? "on_failure_detection"
       <*> o .:? "post_unsuccessful_failover"
       <*> o .:? "on_fence"
+      <*> o .:? "on_lag_threshold_exceeded"
+      <*> o .:? "on_lag_threshold_recovered"
 
 loadConfig :: FilePath -> IO (Either String Config)
 loadConfig path = do
@@ -376,7 +382,7 @@ validateConfig cfg = clusterErrors ++ httpErrors
       | n <- duplicates clusterNames ]
 
     validateCluster :: ClusterConfig -> [String]
-    validateCluster cc = nodeErrors ++ monErrors ++ fdErrors
+    validateCluster cc = nodeErrors ++ monErrors ++ fdErrors ++ fcErrors
       where
         cname  = T.unpack (unClusterName (ccName cc))
         prefix = "cluster '" <> cname <> "': "
@@ -412,6 +418,11 @@ validateConfig cfg = clusterErrors ++ httpErrors
         fdErrors =
           [ prefix <> "failure_detection.consecutive_failures_for_dead must be >= 1"
           | fdcConsecutiveFailuresForDead fdc < 1 ]
+
+        fc = ccFailover cc
+        fcErrors =
+          [ prefix <> "failover.max_replica_lag_for_candidate must be > 0"
+          | Just n <- [fcMaxReplicaLagForCandidate fc], n <= 0 ]
 
     httpErrors
       | not (hcEnabled (cfgHttp cfg)) = []

@@ -85,7 +85,7 @@ executeFailover topo = runExceptT $ do
   fc <- lift $ asks envFailover
   let prefix = "[" <> unClusterName (ccName cc) <> "] "
   candidateId <- ExceptT $ do
-    case selectCandidate (ctNodes topo) (fcCandidatePriority fc) Nothing of
+    case selectCandidate (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) Nothing of
       Left err -> do
         appLogError (prefix <> "Auto-failover failed: " <> err)
         pure (Left err)
@@ -100,7 +100,7 @@ executeFailover topo = runExceptT $ do
   lift $ commitFailoverState candidateId topo now
   ts <- liftIO getCurrentTimestamp
   mHooks <- lift getHooksConfig
-  let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts
+  let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts Nothing
   liftIO $ runHookFireForget mHooks hcPostFailover postEnv
   lift $ appLogInfo $ prefix <> "Auto-failover completed: new source is " <> nodeHost candidateId
 
@@ -109,7 +109,7 @@ runPreFailoverHook candidateId oldSourceHost = do
   cc     <- asks envCluster
   mHooks <- getHooksConfig
   ts <- liftIO getCurrentTimestamp
-  let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts
+  let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts Nothing
   preResult <- liftIO $ runHookOrAbort mHooks hcPreFailover preEnv
   case preResult of
     Left err -> do
@@ -126,7 +126,7 @@ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
       appLogError $ "[" <> unClusterName clusterName <> "] Auto-failover failed: Promote failed: " <> err
       ts <- liftIO getCurrentTimestamp
       mHooks <- getHooksConfig
-      let failEnv = HookEnv clusterName (Just (nodeHost candidateId)) oldSourceHost (Just "PromoteFailed") ts
+      let failEnv = HookEnv clusterName (Just (nodeHost candidateId)) oldSourceHost (Just "PromoteFailed") ts Nothing
       liftIO $ runHookFireForget mHooks hcPostUnsuccessfulFailover failEnv
       pure (Left $ "Promote failed: " <> err)
     Right () -> pure (Right ())
@@ -250,7 +250,7 @@ fenceNode clusterName survivorHost ns = do
       liftIO $ atomically $ updateNodeState tvar clusterName (ns { nsFenced = True })
       appLogInfo $ prefix <> "Auto-fence: " <> nodeHost nid <> " fenced (super_read_only=ON)"
       ts <- liftIO getCurrentTimestamp
-      let hookEnv = HookEnv clusterName (Just survivorHost) (Just (nodeHost nid)) Nothing ts
+      let hookEnv = HookEnv clusterName (Just survivorHost) (Just (nodeHost nid)) Nothing ts Nothing
       liftIO $ runHookFireForget mHooks hcOnFence hookEnv
 
 -- | Unfence a node: clear super_read_only and reset fenced state in STM.
