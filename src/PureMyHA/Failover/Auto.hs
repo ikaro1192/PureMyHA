@@ -182,7 +182,7 @@ reconnectReplica newSourceId ns = do
   liftIO $ do
     _ <- withNodeConn mTls ci $ \conn -> do
       stopReplica conn
-      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replCreds
+      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replCreds mTls
       setReadOnly conn
       startReplica conn
     pure ()
