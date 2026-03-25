@@ -85,7 +85,7 @@ testCC = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig 3 5 30 60 300 1 1
   , ccFailureDetection       = FailureDetectionConfig 3600 3
-  , ccFailover               = FailoverConfig True 1 [] 60
+  , ccFailover               = FailoverConfig True 1 [] 60 False
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }
@@ -96,6 +96,7 @@ testFC = FailoverConfig
   , fcMinReplicasForFailover = 1
   , fcCandidatePriority      = []
   , fcWaitRelayLogTimeout    = 60
+  , fcAutoFence              = False
   }
 
 isRight :: Either a b -> Bool

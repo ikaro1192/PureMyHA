@@ -36,6 +36,7 @@ data Command
   | CmdResumeFailover
   | CmdSetLogLevel Text
   | CmdValidateConfig FilePath
+  | CmdUnfence Text
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -82,6 +83,8 @@ cliOptions = CLIOptions
             (info setLogLevelCmd (progDesc "Set daemon log level (debug|info|warn|error)"))
         <> command "validate-config"
             (info validateConfigCmd (progDesc "Validate configuration file without connecting to daemon"))
+        <> command "unfence"
+            (info unfenceCmd (progDesc "Clear super_read_only on a fenced node (verify data consistency first)"))
         )
 
 demoteCmd :: Parser Command
@@ -98,6 +101,10 @@ resumeReplicaCmd = CmdResumeReplica <$> strOption (long "host" <> metavar "HOST"
 setLogLevelCmd :: Parser Command
 setLogLevelCmd = CmdSetLogLevel
   <$> argument str (metavar "LEVEL" <> help "Log level: debug, info, warn, error")
+
+unfenceCmd :: Parser Command
+unfenceCmd = CmdUnfence
+  <$> strOption (long "host" <> metavar "HOST" <> help "Host to unfence (clears super_read_only)")
 
 validateConfigCmd :: Parser Command
 validateConfigCmd = CmdValidateConfig
@@ -144,6 +151,7 @@ main = do
             CmdPauseFailover      -> ReqPauseFailover  mCluster
             CmdResumeFailover     -> ReqResumeFailover mCluster
             CmdSetLogLevel lvl    -> ReqSetLogLevel lvl
+            CmdUnfence host       -> ReqUnfence mCluster host
 
       eResp <- sendRequest socketPath req
       case eResp of

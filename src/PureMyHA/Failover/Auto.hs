@@ -1,10 +1,13 @@
 module PureMyHA.Failover.Auto
   ( runAutoFailover
+  , runAutoFence
+  , doUnfence
   , checkAutoFailoverPreconditions
   ) where
 
+import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM
-import Control.Monad (when)
+import Control.Monad (forM_, when)
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -15,11 +18,11 @@ import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import PureMyHA.Config
 import PureMyHA.Env
-import PureMyHA.Failover.Candidate (selectCandidate)
+import PureMyHA.Failover.Candidate (selectCandidate, selectSurvivor)
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
 import PureMyHA.Logger (logInfo, logError)
-import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
+import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
 import PureMyHA.Types
@@ -183,3 +186,96 @@ reconnectReplica newSourceId ns = do
       setReadOnly conn
       startReplica conn
     pure ()
+
+-- | Entry point for auto-fence on SplitBrainSuspected.
+-- Reuses envLock to prevent concurrent fence/failover operations.
+runAutoFence :: App ()
+runAutoFence = do
+  lock <- asks envLock
+  acquired <- liftIO $ atomically $ tryTakeTMVar lock
+  case acquired of
+    Nothing -> appLogInfo "Auto-fence skipped: failover/fence operation already in progress"
+    Just () -> do
+      doAutoFence
+      liftIO $ atomically $ putTMVar lock ()
+
+-- | Fence all source-role nodes except the one with the highest GTID count.
+doAutoFence :: App ()
+doAutoFence = do
+  -- Wait 2 probe cycles for GTID data to settle before comparing.
+  -- The probe that triggered the SplitBrainSuspected transition may have captured
+  -- GTID counts before recent writes landed; a short wait ensures fresh data.
+  mc <- liftIO . readTVarIO =<< asks envMonitoring
+  liftIO $ threadDelay (round (mcInterval mc * 2 * 1_000_000))
+  clusterName <- getClusterName
+  fc          <- asks envFailover
+  let prefix = "[" <> unClusterName clusterName <> "] "
+  mTopo <- asks envDaemonState >>= \tv -> liftIO (getClusterTopology tv clusterName)
+  case mTopo of
+    Nothing -> appLogError $ prefix <> "Auto-fence: cluster not found"
+    Just topo -> do
+      let sources = filter isSource (Map.elems (ctNodes topo))
+          unfenced = filter (not . nsFenced) sources
+      case unfenced of
+        []  -> pure ()  -- all already fenced or no sources
+        _   -> do
+          let priorities = fcCandidatePriority fc
+              mSurvivorId = selectSurvivor priorities sources
+          case mSurvivorId of
+            Nothing -> appLogError $ prefix <> "Auto-fence: no survivor could be selected"
+            Just survivorId -> do
+              let toFence = filter (\ns -> nsNodeId ns /= survivorId) unfenced
+                  survivorHost = nodeHost survivorId
+              appLogInfo $ prefix <> "Auto-fence: split-brain detected, survivor=" <> survivorHost
+                        <> ", fencing " <> T.pack (show (length toFence)) <> " node(s)"
+              forM_ toFence $ \ns -> fenceNode clusterName survivorHost ns
+
+-- | Apply super_read_only to a single node and record fenced state.
+fenceNode :: ClusterName -> Text -> NodeState -> App ()
+fenceNode clusterName survivorHost ns = do
+  creds  <- getMonCredentials
+  mTls   <- getTLSConfig
+  tvar   <- asks envDaemonState
+  mHooks <- getHooksConfig
+  mc     <- liftIO . readTVarIO =<< asks envMonitoring
+  let nid    = nsNodeId ns
+      ci     = makeConnectInfo nid creds
+      prefix = "[" <> unClusterName clusterName <> "] "
+      cap    = mcConnectTimeout mc
+  result <- liftIO $ withNodeConnRetry 1 0 cap (const (pure ())) mTls ci setSuperReadOnly
+  case result of
+    Left err ->
+      appLogError $ prefix <> "Auto-fence failed on " <> nodeHost nid <> ": " <> err
+    Right () -> do
+      liftIO $ atomically $ updateNodeState tvar clusterName (ns { nsFenced = True })
+      appLogInfo $ prefix <> "Auto-fence: " <> nodeHost nid <> " fenced (super_read_only=ON)"
+      ts <- liftIO getCurrentTimestamp
+      let hookEnv = HookEnv clusterName (Just survivorHost) (Just (nodeHost nid)) Nothing ts
+      liftIO $ runHookFireForget mHooks hcOnFence hookEnv
+
+-- | Unfence a node: clear super_read_only and reset fenced state in STM.
+doUnfence :: Text -> App (Either Text ())
+doUnfence host = do
+  clusterName <- getClusterName
+  tvar        <- asks envDaemonState
+  mTopo <- liftIO $ getClusterTopology tvar clusterName
+  let prefix = "[" <> unClusterName clusterName <> "] "
+  case mTopo of
+    Nothing -> pure (Left "Cluster not found")
+    Just topo ->
+      case findNodeByHost host (ctNodes topo) of
+        Nothing -> pure (Left $ "Host not found in cluster: " <> host)
+        Just ns -> do
+          creds <- getMonCredentials
+          mTls  <- getTLSConfig
+          let ci = makeConnectInfo (nsNodeId ns) creds
+          result <- liftIO $ withNodeConn mTls ci clearSuperReadOnly
+          case result of
+            Left err -> do
+              appLogError $ prefix <> "Unfence failed on " <> host <> ": " <> err
+              pure (Left $ "Unfence failed: " <> err)
+            Right () -> do
+              liftIO $ atomically $ updateNodeState tvar clusterName (ns { nsFenced = False })
+              appLogInfo $ prefix <> "Unfenced " <> host
+                        <> " (super_read_only cleared). WARNING: verify data consistency before resuming writes."
+              pure (Right ())

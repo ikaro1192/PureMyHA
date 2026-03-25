@@ -96,12 +96,20 @@ spec = do
     it "round-trips ReqSetLogLevel" $
       roundTrip (ReqSetLogLevel "debug") `shouldBe` Just (ReqSetLogLevel "debug")
 
+    it "round-trips ReqUnfence" $
+      roundTrip (ReqUnfence (Just "main") "db2")
+        `shouldBe` Just (ReqUnfence (Just "main") "db2")
+
+    it "round-trips ReqUnfence without cluster" $
+      roundTrip (ReqUnfence Nothing "db2")
+        `shouldBe` Just (ReqUnfence Nothing "db2")
+
   describe "Response FromJSON error paths" $ do
     it "rejects unknown response type" $
       (decode (BLC.pack "{\"type\":\"foobar\",\"data\":[]}") :: Maybe Response) `shouldBe` Nothing
 
     it "round-trips RespTopology" $ do
-      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False]
+      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False False]
       roundTripResp (RespTopology [view]) `shouldBe` Just (RespTopology [view])
 
   describe "NodeHealth FromJSON edge cases" $ do

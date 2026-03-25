@@ -166,6 +166,7 @@ data FailoverConfig = FailoverConfig
   , fcMinReplicasForFailover :: Int
   , fcCandidatePriority      :: [CandidatePriority]
   , fcWaitRelayLogTimeout    :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
+  , fcAutoFence              :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
   } deriving (Show, Generic)
 
 data CandidatePriority = CandidatePriority
@@ -179,6 +180,7 @@ data HooksConfig = HooksConfig
   , hcPostSwitchover           :: Maybe FilePath
   , hcOnFailureDetection       :: Maybe FilePath
   , hcPostUnsuccessfulFailover :: Maybe FilePath
+  , hcOnFence                  :: Maybe FilePath
   } deriving (Show, Generic)
 
 -- | Parse duration strings like "3s", "10s", "3600s"
@@ -326,6 +328,7 @@ instance FromJSON FailoverConfig where
       <*> o .:? "min_replicas_for_failover" .!= 1
       <*> o .:? "candidate_priority" .!= []
       <*> (unDuration <$> o .:? "wait_for_relay_log_apply_timeout" .!= DurationField 60)
+      <*> o .:? "auto_fence" .!= False
 
 instance FromJSON CandidatePriority where
   parseJSON = withObject "CandidatePriority" $ \o ->
@@ -347,6 +350,7 @@ instance FromJSON HooksConfig where
       <*> o .:? "post_switchover"
       <*> o .:? "on_failure_detection"
       <*> o .:? "post_unsuccessful_failover"
+      <*> o .:? "on_fence"
 
 loadConfig :: FilePath -> IO (Either String Config)
 loadConfig path = do

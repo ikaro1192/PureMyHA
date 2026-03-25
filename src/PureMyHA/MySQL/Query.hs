@@ -8,6 +8,8 @@ module PureMyHA.MySQL.Query
   , resetReplicaAll
   , setReadOnly
   , setReadWrite
+  , setSuperReadOnly
+  , clearSuperReadOnly
   , gtidSubtract
   , gtidSubset
   , injectEmptyTransaction
@@ -157,9 +159,26 @@ setReadOnly conn = do
   _ <- execute_ conn "SET GLOBAL read_only = ON"
   pure ()
 
--- | SET GLOBAL read_only = OFF
+-- | SET GLOBAL super_read_only = OFF; SET GLOBAL read_only = OFF
+-- Clears super_read_only first because in MySQL 8, SET GLOBAL read_only=OFF
+-- fails silently when super_read_only=ON (e.g. when promoting a fenced node).
 setReadWrite :: MySQLConn -> IO ()
 setReadWrite conn = do
+  _ <- execute_ conn "SET GLOBAL super_read_only = OFF"
+  _ <- execute_ conn "SET GLOBAL read_only = OFF"
+  pure ()
+
+-- | SET GLOBAL super_read_only = ON
+-- Blocks writes from all connections including SUPER-privileged ones.
+setSuperReadOnly :: MySQLConn -> IO ()
+setSuperReadOnly conn = do
+  _ <- execute_ conn "SET GLOBAL super_read_only = ON"
+  pure ()
+
+-- | Clear super_read_only and read_only.
+clearSuperReadOnly :: MySQLConn -> IO ()
+clearSuperReadOnly conn = do
+  _ <- execute_ conn "SET GLOBAL super_read_only = OFF"
   _ <- execute_ conn "SET GLOBAL read_only = OFF"
   pure ()
 

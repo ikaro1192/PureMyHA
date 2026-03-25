@@ -117,6 +117,7 @@ spec = do
           mcInterval (ccMonitoring cc) `shouldBe` 5
           fdcRecoveryBlockPeriod (ccFailureDetection cc) `shouldBe` 3600
           fcAutoFailover (ccFailover cc) `shouldBe` True
+          fcAutoFence   (ccFailover cc) `shouldBe` False
 
     it "cluster-level monitoring overrides global" $ do
       let yaml = BC.pack $ unlines
@@ -697,7 +698,7 @@ minimalCluster = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig 5 2 10 30 300 1 1
   , ccFailureDetection       = FailureDetectionConfig 3600 3
-  , ccFailover               = FailoverConfig True 1 [] 60
+  , ccFailover               = FailoverConfig True 1 [] 60 False
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }
