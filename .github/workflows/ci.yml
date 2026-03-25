@@ -43,19 +43,42 @@ jobs:
             -v "$HOME/.cabal/store:/root/.cabal/store" \
             -w /workspace \
             haskell:9.6-bullseye \
-            bash -c "cabal update && cabal build all && cabal test --test-show-details=always && \
+            bash -c "cabal update && cabal build all --enable-coverage && cabal test --enable-coverage --test-show-details=always && \
               mkdir -p /workspace/dist-bins && \
               cp \"\$(cabal list-bin puremyhad)\" /workspace/dist-bins/puremyhad && \
               cp \"\$(cabal list-bin puremyha)\"  /workspace/dist-bins/puremyha"
 
       - name: Fix Cabal store permissions
-        run: sudo chown -R "$USER" "$HOME/.cabal/store" || true
+        run: |
+          sudo chown -R "$USER" "$HOME/.cabal/store" || true
+          sudo chown -R "$USER" dist-newstyle || true
 
       - name: Upload binaries
         uses: actions/upload-artifact@v4
         with:
           name: binaries-${{ matrix.arch }}
           path: dist-bins/
+          retention-days: 1
+
+      - name: Collect unit coverage artifacts
+        if: matrix.arch == 'x86_64'
+        run: |
+          mkdir -p coverage-artifacts/hpc-mix
+          find dist-newstyle -name "*.tix" -path "*/hpc/vanilla/tix/*" | head -1 | \
+            xargs -I{} cp {} coverage-artifacts/unit.tix
+          find dist-newstyle -name '*.mix' | \
+          while read f; do
+            pkg=$(basename "$(dirname "$f")")
+            mkdir -p "coverage-artifacts/hpc-mix/$pkg"
+            cp "$f" "coverage-artifacts/hpc-mix/$pkg/"
+          done
+
+      - name: Upload coverage artifacts
+        if: matrix.arch == 'x86_64'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-data-x86_64
+          path: coverage-artifacts/
           retention-days: 1
 
   e2e:
@@ -84,7 +107,25 @@ jobs:
       - name: Make binaries executable
         run: chmod +x dist-bins/puremyhad dist-bins/puremyha
 
+      - name: Download coverage artifacts
+        if: matrix.arch == 'x86_64'
+        uses: actions/download-artifact@v4
+        with:
+          name: coverage-data-x86_64
+          path: coverage-artifacts/
+
+      - name: Run E2E tests with coverage
+        if: matrix.arch == 'x86_64'
+        env:
+          STAGING: prebuilt
+        run: |
+          cd e2e
+          export COMPOSE="docker compose -f docker-compose.yml -f docker-compose.coverage-prebuilt.yml"
+          SKIP_TEARDOWN=1 bash run-all.sh
+        timeout-minutes: 30
+
       - name: Run E2E tests
+        if: matrix.arch != 'x86_64'
         env:
           STAGING: prebuilt
         run: |
@@ -92,11 +133,48 @@ jobs:
           bash run-all.sh
         timeout-minutes: 30
 
+      - name: Collect E2E coverage
+        if: matrix.arch == 'x86_64'
+        run: |
+          docker stop -t 30 e2e-puremyhad
+          docker cp e2e-puremyhad:/coverage/puremyhad.tix coverage-artifacts/e2e.tix
+
+      - name: Generate lcov coverage report
+        if: matrix.arch == 'x86_64'
+        run: |
+          python3 scripts/tix-to-lcov.py \
+            coverage-artifacts/e2e.tix \
+            coverage-artifacts/hpc-mix \
+            coverage-artifacts/coverage.lcov
+
+      - name: Upload coverage to Codecov
+        if: matrix.arch == 'x86_64'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage-artifacts/coverage.lcov
+          fail_ci_if_error: true
+
       - name: Dump logs on failure
         if: failure()
         run: |
           cd e2e
-          docker compose logs puremyhad
-          docker compose logs mysql-source
-          docker compose logs mysql-replica1
-          docker compose logs mysql-replica2
+          COMPOSE_FILES="-f docker-compose.yml"
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            COMPOSE_FILES="$COMPOSE_FILES -f docker-compose.coverage-prebuilt.yml"
+          fi
+          docker compose $COMPOSE_FILES logs puremyhad
+          docker compose $COMPOSE_FILES logs mysql-source
+          docker compose $COMPOSE_FILES logs mysql-replica1
+          docker compose $COMPOSE_FILES logs mysql-replica2
+
+      - name: Teardown E2E environment
+        if: always()
+        run: |
+          cd e2e
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            docker compose -f docker-compose.yml -f docker-compose.coverage-prebuilt.yml \
+              down -v --remove-orphans 2>/dev/null || true
+          else
+            docker compose down -v --remove-orphans 2>/dev/null || true
+          fi

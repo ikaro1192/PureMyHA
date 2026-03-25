@@ -1,0 +1,42 @@
+# Dockerfile for E2E tests with HPC coverage instrumentation
+# Usage: docker compose -f docker-compose.yml -f docker-compose.coverage.yml build
+
+FROM haskell:9.6 AS build
+
+WORKDIR /build
+
+COPY puremyha.cabal cabal.project ./
+RUN cabal update && cabal build --only-dependencies all
+
+COPY . .
+RUN cabal build all --enable-coverage
+
+RUN mkdir -p /staging/bin && \
+    cp "$(cabal list-bin puremyhad)" /staging/bin/puremyhad && \
+    cp "$(cabal list-bin puremyha)"  /staging/bin/puremyha
+
+# Copy .mix files for all components (library + executables) into a flat structure
+# needed for hpc report on the host
+RUN mkdir -p /staging/mix && \
+    find dist-newstyle -path '*/extra-compilation-artifacts/hpc/vanilla/mix/*' -name '*.mix' \
+    | while read f; do \
+        pkg=$(basename "$(dirname "$f")"); \
+        mkdir -p "/staging/mix/$pkg"; \
+        cp "$f" "/staging/mix/$pkg/"; \
+      done
+
+# Runtime
+FROM debian:bookworm-slim
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      libgmp10 zlib1g socat jq curl default-mysql-client procps && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /staging/bin/puremyhad /usr/sbin/puremyhad
+COPY --from=build /staging/bin/puremyha  /usr/bin/puremyha
+COPY --from=build /staging/mix /hpc-mix
+
+ENV HPCTIXFILE=/coverage/puremyhad.tix
+
+CMD ["puremyhad"]

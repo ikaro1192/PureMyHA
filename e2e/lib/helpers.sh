@@ -3,7 +3,7 @@
 set -euo pipefail
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-COMPOSE="docker compose -f ${E2E_DIR}/docker-compose.yml"
+COMPOSE="${COMPOSE:-docker compose -f ${E2E_DIR}/docker-compose.yml}"
 
 PASS_COUNT=0
 FAIL_COUNT=0

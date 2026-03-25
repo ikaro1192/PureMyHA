@@ -1,6 +1,7 @@
 module PureMyHA.HTTP.Server
   ( startHTTPServer
   , renderMetrics
+  , httpApp
   ) where
 
 import qualified Data.ByteString.Lazy as BSL

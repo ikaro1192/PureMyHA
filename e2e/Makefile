@@ -1,4 +1,4 @@
-.PHONY: e2e e2e-clean e2e-logs e2e-status
+.PHONY: e2e e2e-clean e2e-logs e2e-status e2e-coverage e2e-coverage-test e2e-coverage-clean
 
 # Run all E2E tests
 e2e:
@@ -19,3 +19,15 @@ e2e-logs:
 # Show status of all containers
 e2e-status:
 	docker compose ps
+
+# Run all E2E tests with HPC coverage collection
+e2e-coverage:
+	bash collect-coverage.sh
+
+# Run a specific E2E test with coverage (e.g., make e2e-coverage-test T=02)
+e2e-coverage-test:
+	bash collect-coverage.sh $(T)
+
+# Clean coverage artifacts
+e2e-coverage-clean:
+	rm -rf coverage-output

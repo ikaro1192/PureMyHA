@@ -11,6 +11,11 @@ cd "$SCRIPT_DIR"
 source lib/helpers.sh
 
 cleanup() {
+  if [ "${SKIP_TEARDOWN:-}" = "1" ]; then
+    echo ""
+    echo "=== Skipping teardown (SKIP_TEARDOWN=1) ==="
+    return
+  fi
   echo ""
   echo "=== Tearing down E2E environment ==="
   $COMPOSE down -v --remove-orphans 2>/dev/null || true

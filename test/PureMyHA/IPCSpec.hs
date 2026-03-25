@@ -1,6 +1,7 @@
 module PureMyHA.IPCSpec (spec) where
 
 import Data.Aeson (encode, decode)
+import qualified Data.ByteString.Lazy.Char8 as BLC
 import Test.Hspec
 import PureMyHA.IPC.Protocol
 import PureMyHA.Types
@@ -77,6 +78,48 @@ spec = do
     it "round-trips NeedsAttention" $
       roundTripHealth (NeedsAttention "test msg")
         `shouldBe` Just (NeedsAttention "test msg")
+
+  describe "Request FromJSON error paths" $ do
+    it "rejects unknown request type" $
+      (decode (BLC.pack "{\"type\":\"foobar\"}") :: Maybe Request) `shouldBe` Nothing
+
+    it "rejects missing type field" $
+      (decode (BLC.pack "{\"cluster\":\"x\"}") :: Maybe Request) `shouldBe` Nothing
+
+    it "round-trips ReqDemote" $
+      roundTrip (ReqDemote (Just "main") "db2" "db1")
+        `shouldBe` Just (ReqDemote (Just "main") "db2" "db1")
+
+    it "round-trips ReqDiscovery" $
+      roundTrip (ReqDiscovery (Just "main")) `shouldBe` Just (ReqDiscovery (Just "main"))
+
+    it "round-trips ReqSetLogLevel" $
+      roundTrip (ReqSetLogLevel "debug") `shouldBe` Just (ReqSetLogLevel "debug")
+
+  describe "Response FromJSON error paths" $ do
+    it "rejects unknown response type" $
+      (decode (BLC.pack "{\"type\":\"foobar\",\"data\":[]}") :: Maybe Response) `shouldBe` Nothing
+
+    it "round-trips RespTopology" $ do
+      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False]
+      roundTripResp (RespTopology [view]) `shouldBe` Just (RespTopology [view])
+
+  describe "NodeHealth FromJSON edge cases" $ do
+    it "round-trips UnreachableSource" $
+      roundTripHealth UnreachableSource `shouldBe` Just UnreachableSource
+
+    it "round-trips DeadSourceAndAllReplicas" $
+      roundTripHealth DeadSourceAndAllReplicas `shouldBe` Just DeadSourceAndAllReplicas
+
+    it "round-trips SplitBrainSuspected" $
+      roundTripHealth SplitBrainSuspected `shouldBe` Just SplitBrainSuspected
+
+    it "rejects invalid NodeHealth (Number)" $
+      (decode (BLC.pack "42") :: Maybe NodeHealth) `shouldBe` Nothing
+
+  describe "OperationResult FromJSON error path" $
+    it "rejects object with neither success nor failure" $
+      (decode (BLC.pack "{\"other\":\"x\"}") :: Maybe OperationResult) `shouldBe` Nothing
 
 roundTrip :: Request -> Maybe Request
 roundTrip = decode . encode

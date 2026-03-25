@@ -1,0 +1,16 @@
+# Docker Compose override for HPC coverage collection
+# Usage: docker compose -f docker-compose.yml -f docker-compose.coverage.yml up -d
+services:
+  puremyhad:
+    build:
+      context: ..
+      dockerfile: e2e/Dockerfile.e2e-coverage
+    volumes:
+      - ./config:/etc/puremyha:ro
+      - ipc-socket:/run
+      - coverage-data:/coverage
+    environment:
+      - HPCTIXFILE=/coverage/puremyhad.tix
+
+volumes:
+  coverage-data:

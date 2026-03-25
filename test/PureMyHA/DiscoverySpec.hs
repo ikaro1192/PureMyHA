@@ -108,6 +108,30 @@ spec = do
           res = nextDiscoveryTargets ns Set.empty Set.empty
       res `shouldBe` Set.empty
 
+  describe "buildClusterTopology edge cases" $ do
+
+    it "all unreachable nodes reports DeadSourceAndAllReplicas" $ do
+      let nodes = Map.fromList
+            [ (NodeId "db1" 3306, unreachableNode (NodeId "db1" 3306))
+            , (NodeId "db2" 3306, unreachableNode (NodeId "db2" 3306))
+            ]
+          topo = buildClusterTopology "prod" nodes
+      ctHealth topo `shouldBe` DeadSourceAndAllReplicas
+
+    it "single source only is Healthy" $ do
+      let nodes = Map.singleton (NodeId "db1" 3306) healthySource
+          topo = buildClusterTopology "prod" nodes
+      ctHealth topo `shouldBe` Healthy
+      ctSourceNodeId topo `shouldBe` Just (NodeId "db1" 3306)
+
+    it "cluster with errant GTIDs still reports Healthy (errant GTIDs are a warning)" $ do
+      let nodes = Map.fromList
+            [ (NodeId "db1" 3306, healthySource)
+            , (NodeId "db3" 3306, replicaWithErrantGtid)
+            ]
+          topo = buildClusterTopology "prod" nodes
+      ctHealth topo `shouldBe` Healthy
+
   describe "buildInitialTopology" $ do
 
     it "produces an empty topology with NeedsAttention Initializing" $ do
