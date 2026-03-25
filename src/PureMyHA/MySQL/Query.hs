@@ -14,6 +14,7 @@ module PureMyHA.MySQL.Query
   , gtidSubset
   , injectEmptyTransaction
   , waitForRelayLogApply
+  , needsPublicKeyRetrieval
   ) where
 
 import Data.Text (Text)
@@ -29,7 +30,7 @@ import Database.MySQL.Base
   , Query (..), ColumnDef (..)
   )
 import qualified System.IO.Streams as S
-import PureMyHA.Config (DbCredentials (..))
+import PureMyHA.Config (DbCredentials (..), TLSConfig (..), TLSMode (..))
 import PureMyHA.Types
 
 -- | Convert a lazy ByteString SQL to a Query
@@ -123,15 +124,25 @@ getGtidExecuted conn = do
     ((v:_):_) -> pure (textVal v)
     _         -> pure ""
 
+-- | Returns True when GET_SOURCE_PUBLIC_KEY=1 should be included in
+--   CHANGE REPLICATION SOURCE TO. This is needed when TLS is not in use;
+--   when TLS is active the public key is exchanged via the TLS handshake.
+needsPublicKeyRetrieval :: Maybe TLSConfig -> Bool
+needsPublicKeyRetrieval Nothing   = True
+needsPublicKeyRetrieval (Just tc) = tlsMode tc == TLSDisabled
+
 -- | CHANGE REPLICATION SOURCE TO ... SOURCE_AUTO_POSITION=1
-changeReplicationSourceTo :: MySQLConn -> Text -> Int -> DbCredentials -> IO ()
-changeReplicationSourceTo conn host port DbCredentials{..} = do
-  let sql = "CHANGE REPLICATION SOURCE TO SOURCE_HOST='" <> host
+changeReplicationSourceTo :: MySQLConn -> Text -> Int -> DbCredentials -> Maybe TLSConfig -> IO ()
+changeReplicationSourceTo conn host port DbCredentials{..} mTls = do
+  let pubKeyOpt = if needsPublicKeyRetrieval mTls
+                    then ", GET_SOURCE_PUBLIC_KEY=1"
+                    else ""
+      sql = "CHANGE REPLICATION SOURCE TO SOURCE_HOST='" <> host
             <> "', SOURCE_PORT=" <> T.pack (show port)
             <> ", SOURCE_USER='" <> dbUser <> "'"
             <> ", SOURCE_PASSWORD='" <> dbPassword <> "'"
             <> ", SOURCE_AUTO_POSITION=1"
-            <> ", GET_SOURCE_PUBLIC_KEY=1"
+            <> pubKeyOpt
   _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
   pure ()
 
