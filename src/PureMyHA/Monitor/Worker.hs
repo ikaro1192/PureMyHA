@@ -20,7 +20,7 @@ import qualified Data.Text as T
 import Data.Time (getCurrentTime)
 import PureMyHA.Config
 import PureMyHA.Env
-import PureMyHA.Failover.Auto (runAutoFailover)
+import PureMyHA.Failover.Auto (runAutoFailover, runAutoFence)
 import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
 import PureMyHA.Logger (logDebug, logInfo, logWarn)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
@@ -148,6 +148,7 @@ monitorNode nid = do
             , nsErrantGtids         = ""
             , nsPaused              = False    -- actual value read atomically at write time
             , nsConsecutiveFailures = newFailures
+            , nsFenced              = False    -- actual value read atomically at write time
             }
         Right (mRs, gtidExec) ->
           NodeState
@@ -158,6 +159,7 @@ monitorNode nid = do
             , nsErrantGtids         = ""
             , nsPaused              = False    -- actual value read atomically at write time
             , nsConsecutiveFailures = 0
+            , nsFenced              = False    -- actual value read atomically at write time
             }
   -- Update errant GTIDs by querying MySQL
   ns' <- enrichErrantGtids ns
@@ -265,6 +267,11 @@ recomputeClusterHealth = do
       -- The failover lock prevents concurrent execution; anti-flap block prevents repeated failovers
       liftIO $ when (newHealth == DeadSource && fcAutoFailover fc && observedHealthy) $ do
         _ <- async (runApp env runAutoFailover)
+        pure ()
+      -- Trigger auto-fence on first transition to SplitBrainSuspected only.
+      -- Firing only on transition prevents re-fencing after the operator runs `unfence`.
+      liftIO $ when (transitioned && newHealth == SplitBrainSuspected && fcAutoFence fc && observedHealthy) $ do
+        _ <- async (runApp env runAutoFence)
         pure ()
       -- Emergency re-check on first transition to UnreachableSource
       liftIO $ when (transitioned && newHealth == UnreachableSource) $ do

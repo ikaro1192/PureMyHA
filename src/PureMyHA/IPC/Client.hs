@@ -94,7 +94,8 @@ printNode isSource nsv = do
         Nothing -> ""
         Just s  -> " lag=" <> show s <> "s"
       errant = if nsvErrantGtids nsv == "" then "" else " ERRANT_GTID"
-  putStrLn $ prefix <> host <> " " <> status <> lag <> errant
+      fenced = if nsvFenced nsv then " FENCED" else ""
+  putStrLn $ prefix <> host <> " " <> status <> lag <> errant <> fenced
 
 -- | Print an operation result
 printOperationResult :: Bool -> OperationResult -> IO ()

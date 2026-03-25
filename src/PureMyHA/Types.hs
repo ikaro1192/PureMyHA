@@ -108,6 +108,7 @@ data NodeState = NodeState
   , nsErrantGtids         :: Text
   , nsPaused              :: Bool
   , nsConsecutiveFailures :: Int    -- ^ Number of consecutive probe failures; resets to 0 on success
+  , nsFenced              :: Bool   -- ^ True if super_read_only was set by auto-fence
   } deriving (Eq, Show, Generic)
 
 -- | True if the last probe succeeded
@@ -155,6 +156,7 @@ data NodeStateView = NodeStateView
   , nsvErrantGtids  :: Text
   , nsvConnectError :: Maybe Text
   , nsvPaused       :: Bool
+  , nsvFenced       :: Bool
   } deriving (Show, Eq, Generic)
 
 data OperationResult

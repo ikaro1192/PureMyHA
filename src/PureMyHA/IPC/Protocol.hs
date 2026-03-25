@@ -78,19 +78,21 @@ instance ToJSON NodeStateView where
     , "errantGtids"  .= nsvErrantGtids
     , "connectError" .= nsvConnectError
     , "paused"       .= nsvPaused
+    , "fenced"       .= nsvFenced
     ]
 
 instance FromJSON NodeStateView where
   parseJSON = withObject "NodeStateView" $ \o ->
     NodeStateView
-      <$> o .: "host"
-      <*> o .: "port"
-      <*> o .: "isSource"
-      <*> o .: "health"
-      <*> o .: "lagSeconds"
-      <*> o .: "errantGtids"
-      <*> o .: "connectError"
-      <*> o .: "paused"
+      <$> o .:  "host"
+      <*> o .:  "port"
+      <*> o .:  "isSource"
+      <*> o .:  "health"
+      <*> o .:  "lagSeconds"
+      <*> o .:  "errantGtids"
+      <*> o .:  "connectError"
+      <*> o .:  "paused"
+      <*> o .:? "fenced" .!= False
 
 instance ToJSON ClusterTopologyView where
   toJSON ClusterTopologyView{..} = object
@@ -142,6 +144,7 @@ data Request
   | ReqPauseFailover  { reqCluster :: Maybe ClusterName }
   | ReqResumeFailover { reqCluster :: Maybe ClusterName }
   | ReqSetLogLevel    { reqLogLevel :: Text }
+  | ReqUnfence { reqCluster :: Maybe ClusterName, reqUnfenceHost :: Text }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Request where
@@ -158,6 +161,7 @@ instance ToJSON Request where
   toJSON (ReqPauseFailover  mc)  = object ["type" .= ("pause-failover"   :: Text), "cluster" .= mc]
   toJSON (ReqResumeFailover mc)  = object ["type" .= ("resume-failover"  :: Text), "cluster" .= mc]
   toJSON (ReqSetLogLevel lvl)    = object ["type" .= ("set-log-level"   :: Text), "level" .= lvl]
+  toJSON (ReqUnfence mc h)       = object ["type" .= ("unfence" :: Text), "cluster" .= mc, "host" .= h]
 
 instance FromJSON Request where
   parseJSON = withObject "Request" $ \o -> do
@@ -176,6 +180,7 @@ instance FromJSON Request where
       "pause-failover"  -> ReqPauseFailover  <$> o .:? "cluster"
       "resume-failover" -> ReqResumeFailover <$> o .:? "cluster"
       "set-log-level"   -> ReqSetLogLevel    <$> o .:  "level"
+      "unfence"         -> ReqUnfence        <$> o .:? "cluster" <*> o .: "host"
       _                 -> fail $ "Unknown request type: " <> show t
 
 -- | IPC Response types

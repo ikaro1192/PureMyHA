@@ -96,13 +96,33 @@ spec = do
     it "round-trips ReqSetLogLevel" $
       roundTrip (ReqSetLogLevel "debug") `shouldBe` Just (ReqSetLogLevel "debug")
 
+    it "round-trips ReqUnfence" $
+      roundTrip (ReqUnfence (Just "main") "db2")
+        `shouldBe` Just (ReqUnfence (Just "main") "db2")
+
+    it "round-trips ReqUnfence without cluster" $
+      roundTrip (ReqUnfence Nothing "db2")
+        `shouldBe` Just (ReqUnfence Nothing "db2")
+
   describe "Response FromJSON error paths" $ do
     it "rejects unknown response type" $
       (decode (BLC.pack "{\"type\":\"foobar\",\"data\":[]}") :: Maybe Response) `shouldBe` Nothing
 
     it "round-trips RespTopology" $ do
-      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False]
+      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False False]
       roundTripResp (RespTopology [view]) `shouldBe` Just (RespTopology [view])
+
+  describe "NodeStateView fenced field" $ do
+    it "round-trips NodeStateView with fenced=True" $ do
+      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False True]
+      roundTripResp (RespTopology [view]) `shouldBe` Just (RespTopology [view])
+
+    it "defaults fenced to False when field is absent" $ do
+      let json = BLC.pack
+            "{\"type\":\"topology\",\"data\":[{\"clusterName\":\"test\",\"nodes\":[{\"host\":\"db1\",\"port\":3306,\"isSource\":true,\"health\":\"Healthy\",\"lagSeconds\":0,\"errantGtids\":\"\",\"connectError\":null,\"paused\":false}]}]}"
+      let expected = RespTopology [ClusterTopologyView "test"
+                       [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False False]]
+      (decode json :: Maybe Response) `shouldBe` Just expected
 
   describe "NodeHealth FromJSON edge cases" $ do
     it "round-trips UnreachableSource" $

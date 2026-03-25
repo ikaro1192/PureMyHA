@@ -43,6 +43,7 @@ spec = do
                 , nsErrantGtids         = ""
                 , nsPaused              = False
                 , nsConsecutiveFailures = 0
+                , nsFenced              = False
                 })
             ]
       detectClusterHealth cluster `shouldBe` DeadSource
@@ -58,6 +59,7 @@ spec = do
                 , nsErrantGtids         = ""
                 , nsPaused              = False
                 , nsConsecutiveFailures = 0
+                , nsFenced              = False
                 })
             ]
       detectClusterHealth cluster `shouldBe` UnreachableSource

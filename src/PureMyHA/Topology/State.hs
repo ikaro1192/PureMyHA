@@ -69,6 +69,7 @@ updateNodeStatePreserveRole tvar clusterName ns =
                                   then maybe (nsRole ns) nsRole current
                                   else nsRole ns
                    , nsPaused = maybe (nsPaused ns) nsPaused current
+                   , nsFenced = maybe (nsFenced ns) nsFenced current
                    }
       in ct { ctNodes = Map.insert (nsNodeId ns) ns' (ctNodes ct) }
 

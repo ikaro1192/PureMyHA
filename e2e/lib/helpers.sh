@@ -120,6 +120,11 @@ cli_fix_errant_gtid() {
   cli_exec fix-errant-gtid
 }
 
+cli_unfence() {
+  local host="$1"
+  cli_exec unfence --host "$host"
+}
+
 # ---------------------------------------------------------------------------
 # HTTP helpers (communicate with puremyhad via HTTP)
 # ---------------------------------------------------------------------------
@@ -332,9 +337,9 @@ reset_cluster() {
   mysql_exec mysql-source "SET GLOBAL read_only = OFF;" || true
   mysql_exec mysql-source "RESET BINARY LOGS AND GTIDS;" || true
 
-  # Ensure replicas are read_only
-  mysql_exec mysql-replica1 "SET GLOBAL read_only = ON;" || true
-  mysql_exec mysql-replica2 "SET GLOBAL read_only = ON;" || true
+  # Ensure replicas are read_only (clear any fence state first so CHANGE REPLICATION SOURCE TO succeeds)
+  mysql_exec mysql-replica1 "SET GLOBAL super_read_only = OFF; SET GLOBAL read_only = ON;" || true
+  mysql_exec mysql-replica2 "SET GLOBAL super_read_only = OFF; SET GLOBAL read_only = ON;" || true
 
   # Reconfigure replication on both replicas to point at mysql-source
   for replica in mysql-replica1 mysql-replica2; do

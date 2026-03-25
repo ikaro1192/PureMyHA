@@ -22,6 +22,7 @@ import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Logger (Logger, setLogLevel)
+import PureMyHA.Failover.Auto (doUnfence)
 import PureMyHA.Failover.Demote (runDemote)
 import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica)
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
@@ -172,6 +173,13 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
         setLogLevel logger lvl
         pure $ RespOperation (OperationSuccess ("Log level set to " <> logLevelToText lvl))
 
+  ReqUnfence mCluster host ->
+    withClusterEnv mCluster clusterMap $ \env -> do
+      result <- runApp env (doUnfence host)
+      pure $ RespOperation $ case result of
+        Left err -> OperationFailure err
+        Right () -> OperationSuccess ("Node unfenced: " <> host)
+
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m
 filterClusters (Just n) m = maybe [] pure (Map.lookup n m)
@@ -224,6 +232,7 @@ toNodeStateView ns = NodeStateView
       ProbeFailure{prConnectError = e} -> Just e
       ProbeSuccess{}                   -> Nothing
   , nsvPaused      = nsPaused ns
+  , nsvFenced      = nsFenced ns
   }
 
 clusterErrantGtids :: ClusterTopology -> [ErrantGtidInfo]

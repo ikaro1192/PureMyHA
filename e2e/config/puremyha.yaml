@@ -37,6 +37,7 @@ global:
     recovery_block_period: 30s
   failover:
     auto_failover: true
+    auto_fence: true
     min_replicas_for_failover: 1
     wait_for_relay_log_apply_timeout: 10s
     candidate_priority:

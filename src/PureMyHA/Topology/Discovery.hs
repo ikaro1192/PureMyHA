@@ -136,6 +136,7 @@ buildNodeStateFromProbe nid _ (Left err) = NodeState
   , nsErrantGtids         = ""
   , nsPaused              = False
   , nsConsecutiveFailures = 0
+  , nsFenced              = False
   }
 buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
   { nsNodeId              = nid
@@ -145,6 +146,7 @@ buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
   , nsErrantGtids         = ""
   , nsPaused              = False
   , nsConsecutiveFailures = 0
+  , nsFenced              = False
   }
 
 -- | Calculate next nodes to probe from a discovered node's replica status (pure)

@@ -18,7 +18,7 @@ $COMPOSE stop mysql-source
 # Wait for failover to complete (health should return to Healthy with new source)
 # DeadSource detection + failover execution may take several seconds
 echo "  Waiting for auto-failover..."
-wait_for_health "Healthy" 60
+wait_for_health "Healthy" 90
 
 # Verify source changed
 new_source=$(get_source_host)

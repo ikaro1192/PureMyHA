@@ -35,6 +35,9 @@ puremyha fix-errant-gtid [--cluster=<name>]
 # Demote a node to replica under a specified source (resolve split-brain)
 puremyha demote --host db1 --source db2 [--cluster=<name>]
 
+# Clear super_read_only on a fenced node (verify data consistency first)
+puremyha unfence --host <host> [--cluster=<name>]
+
 # Pause replication on a replica (STOP REPLICA + stop monitoring)
 puremyha pause-replica --host db2 [--cluster=<name>]
 

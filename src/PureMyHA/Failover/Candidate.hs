@@ -1,5 +1,6 @@
 module PureMyHA.Failover.Candidate
   ( selectCandidate
+  , selectSurvivor
   , rankCandidates
   , CandidateInfo (..)
   , isEligibleCandidate
@@ -98,3 +99,26 @@ priorityRank priorities host =
 -- | Returns the total number of transactions in a GTID set as a score.
 gtidScore :: CandidateInfo -> Integer
 gtidScore = gtidTransactionCount . ciExecutedGtid
+
+-- | Select the node to keep writable (highest GTID) among a list of source-role
+-- nodes during split-brain fencing.  Ranked solely by GTID transaction count —
+-- candidate_priority is intentionally ignored because those preferences apply to
+-- failover replica selection, not to split-brain survivor identification.
+selectSurvivor :: [CandidatePriority] -> [NodeState] -> Maybe NodeId
+selectSurvivor _priorities nodes =
+  let infos  = map (toSourceCandidateInfo []) nodes
+      ranked = sortBy (comparing (Down . gtidScore)) infos
+  in case ranked of
+       []    -> Nothing
+       (c:_) -> Just (ciNodeId c)
+
+-- | Like toCandidateInfo but uses prGtidExecuted so that source nodes
+-- (which have no replica status) are ranked correctly.
+toSourceCandidateInfo :: [CandidatePriority] -> NodeState -> CandidateInfo
+toSourceCandidateInfo priorities ns = CandidateInfo
+  { ciNodeId       = nsNodeId ns
+  , ciExecutedGtid = case nsProbeResult ns of
+      ProbeSuccess{prGtidExecuted = g} -> g
+      _                                -> ""
+  , ciPriorityRank = priorityRank priorities (nodeHost (nsNodeId ns))
+  }

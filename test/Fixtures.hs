@@ -52,6 +52,7 @@ mkNodeState nid role mRs health = NodeState
   , nsErrantGtids         = ""
   , nsPaused              = False
   , nsConsecutiveFailures = 0
+  , nsFenced              = False
   }
 
 -- | Build a test ClusterEnv with dummy values for fields not under test
@@ -105,6 +106,7 @@ unreachableNode nid = NodeState
   , nsErrantGtids         = ""
   , nsPaused              = False
   , nsConsecutiveFailures = 0
+  , nsFenced              = False
   }
 
 unreachableReplica :: NodeState
@@ -122,6 +124,7 @@ clusterWithDeadSource = Map.fromList
       , nsErrantGtids         = ""
       , nsPaused              = False
       , nsConsecutiveFailures = 0
+      , nsFenced              = False
       })
   ]
 

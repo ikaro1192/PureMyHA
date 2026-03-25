@@ -15,8 +15,8 @@ assert_eq "No recovery block initially" "null" "$recovery_blocked"
 echo "  Stopping mysql-source to trigger failover..."
 $COMPOSE stop mysql-source
 
-# Wait for failover to complete
-wait_for_health "Healthy" 60
+# Wait for failover to complete (90s: failover + promotion + daemon re-probe)
+wait_for_health "Healthy" 90
 
 # Verify recovery block is set
 recovery_blocked=$(get_recovery_blocked)

@@ -42,3 +42,28 @@ puremyha errant-gtid [--cluster=<name>]
 # Fix by injecting empty transactions on the source
 puremyha fix-errant-gtid [--cluster=<name>]
 ```
+
+## Auto-Fence Split-Brain
+
+When `SplitBrainSuspected` is detected (multiple nodes acting as source), enabling `failover.auto_fence: true` causes the daemon to:
+
+1. Wait 2× the monitoring interval so GTID data is fresh
+2. Select the **survivor** — the source with the highest executed GTID count
+3. Set `super_read_only=ON` on all other sources (fenced nodes)
+4. Fire the `on_fence` hook for each fenced node
+
+Auto-fence fires only on **transition** into `SplitBrainSuspected` to avoid re-fencing after an operator runs `unfence`.
+
+### Recovery
+
+After resolving data divergence and choosing which node's writes to keep:
+
+```bash
+# Re-enable writes on the recovered node
+puremyha unfence --host <host>
+
+# Then re-point replicas if needed
+puremyha demote --host <old-source> --source <survivor> [--cluster=<name>]
+```
+
+> **Warning:** Always verify data consistency between fenced and survivor nodes before unfencing.

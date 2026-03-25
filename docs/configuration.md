@@ -67,3 +67,26 @@ tls:
 | `client_key` | File path | — (optional, mutual TLS) |
 
 When `mode` is not `disabled`, PureMyHA sends a MySQL SSL_REQUEST packet before the authentication handshake, compatible with `require_secure_transport=ON`.
+
+## Auto-Fence Split-Brain
+
+When `failover.auto_fence: true` is set, PureMyHA automatically sets `super_read_only=ON` on all non-survivor source nodes when `SplitBrainSuspected` is detected. The survivor is the node with the highest executed GTID transaction count.
+
+```yaml
+failover:
+  auto_fence: false   # default: false
+```
+
+The `on_fence` hook fires fire-and-forget after each successful fence:
+
+```yaml
+hooks:
+  on_fence: /etc/puremyha/hooks/on_fence.sh
+  # Env: PUREMYHA_CLUSTER, PUREMYHA_OLD_SOURCE (fenced host), PUREMYHA_NEW_SOURCE (survivor host)
+```
+
+To clear `super_read_only` after verifying data consistency:
+
+```bash
+puremyha unfence --host <host>
+```

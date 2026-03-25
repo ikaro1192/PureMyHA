@@ -37,6 +37,10 @@ global:
     auto_failover: true
     min_replicas_for_failover: 1
     wait_for_relay_log_apply_timeout: 60s  # optional; default: 60s
+    auto_fence: false              # optional; set to true to automatically fence split-brain nodes. Default: false
+                                   # When enabled, on SplitBrainSuspected the node with the highest GTID count
+                                   # is kept writable; all other sources get SET GLOBAL super_read_only = ON.
+                                   # Use `puremyha unfence --host <host>` to clear super_read_only manually.
     candidate_priority:            # optional promotion priority (auto-selected by GTID if omitted)
       - host: db2
   hooks:
@@ -46,6 +50,8 @@ global:
     post_switchover: /etc/puremyha/hooks/post_switchover.sh
     on_failure_detection: /etc/puremyha/hooks/on_failure_detection.sh              # optional
     post_unsuccessful_failover: /etc/puremyha/hooks/post_unsuccessful_failover.sh  # optional
+    on_fence: /etc/puremyha/hooks/on_fence.sh                                      # optional; fired after a node is auto-fenced
+                                                                                    # Env: PUREMYHA_CLUSTER, PUREMYHA_OLD_SOURCE (fenced host), PUREMYHA_NEW_SOURCE (survivor host)
 
 logging:                               # optional logging configuration
   log_file: /var/log/puremyha.log    # default: /var/log/puremyha.log
