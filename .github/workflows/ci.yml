@@ -162,13 +162,10 @@ jobs:
             --output=coverage-artifacts/merged.tix \
             coverage-artifacts/unit.tix \
             coverage-artifacts/e2e.tix
-          MIX_FLAGS=""
-          for dir in coverage-artifacts/hpc-mix/*/; do
-            MIX_FLAGS="$MIX_FLAGS --mix=$dir"
-          done
-          $HOME/.local/bin/hpc-lcov $MIX_FLAGS \
-            coverage-artifacts/merged.tix \
-            --output=coverage-artifacts/coverage.lcov
+          cp -r coverage-artifacts/hpc-mix/. coverage-artifacts/.hpc/
+          $HOME/.local/bin/hpc-lcov \
+            -f coverage-artifacts/merged.tix \
+            -o coverage-artifacts/coverage.lcov
 
       - name: Upload coverage to Codecov
         if: matrix.arch == 'x86_64'
