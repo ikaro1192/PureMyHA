@@ -80,7 +80,7 @@ def parse_mix(path):
 
     # Extract all HpcPos entries
     positions = []
-    for m in re.finditer(r"HpcPos\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)", content):
+    for m in re.finditer(r"(\d+):(\d+)-(\d+):(\d+)", content):
         positions.append(
             (int(m.group(1)), int(m.group(2)), int(m.group(3)), int(m.group(4)))
         )
@@ -164,7 +164,11 @@ def main():
 
     with open(output_file, "w") as f:
         f.write(lcov)
-    print(f"Generated lcov report: {output_file}")
+
+    # Count source files and DA lines for diagnostics
+    sf_count = lcov.count("SF:")
+    da_count = lcov.count("\nDA:")
+    print(f"Generated lcov report: {output_file} ({sf_count} files, {da_count} lines)")
 
 
 if __name__ == "__main__":
