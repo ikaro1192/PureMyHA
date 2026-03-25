@@ -158,13 +158,9 @@ jobs:
         run: |
           cabal update
           cabal install hpc-lcov --installdir=$HOME/.local/bin --overwrite-policy=always
-          hpc sum --union \
-            --output=coverage-artifacts/merged.tix \
-            coverage-artifacts/unit.tix \
-            coverage-artifacts/e2e.tix
           mkdir -p coverage-artifacts/.hpc
           cp -r coverage-artifacts/hpc-mix/. coverage-artifacts/.hpc/
-          (cd coverage-artifacts && $HOME/.local/bin/hpc-lcov -f merged.tix -o coverage.lcov)
+          (cd coverage-artifacts && $HOME/.local/bin/hpc-lcov -f e2e.tix -o coverage.lcov)
 
       - name: Upload coverage to Codecov
         if: matrix.arch == 'x86_64'
