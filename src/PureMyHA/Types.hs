@@ -1,3 +1,4 @@
+{-# LANGUAGE StrictData #-}
 module PureMyHA.Types
   ( NodeId (..)
   , ClusterName (..)

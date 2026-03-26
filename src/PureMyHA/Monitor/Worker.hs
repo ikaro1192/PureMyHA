@@ -9,7 +9,7 @@ module PureMyHA.Monitor.Worker
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, wait, Async)
+import Control.Concurrent.Async (async, wait, cancel, Async)
 import Control.Concurrent.STM (atomically, TVar, newTVarIO, modifyTVar', readTVarIO)
 import Control.Exception (SomeException, catch)
 import Control.Monad (when, forM, forM_, unless)
@@ -88,7 +88,9 @@ runTopologyRefresh reg = do
       tvar = envDaemonState env
   newTopo <- discoverTopology
   mOldTopo <- liftIO $ getClusterTopology tvar (ccName cc)
-  let mergedTopo = case mOldTopo of
+  let configuredNodes = Set.fromList
+        (map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc))
+      mergedTopo = case mOldTopo of
         Nothing      -> newTopo
         Just oldTopo ->
           newTopo { ctNodes = Map.union (ctNodes newTopo) (ctNodes oldTopo) }
@@ -96,12 +98,24 @@ runTopologyRefresh reg = do
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes mergedTopo)
       newNodes   = Set.toList (Set.difference discovered knownNodes)
+      -- Prune workers for nodes that are neither in the current topology
+      -- nor in the configured seed list (truly decommissioned nodes)
+      staleNodes = Set.toList (Set.difference knownNodes (Set.union discovered configuredNodes))
   unless (null newNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: "
       <> T.pack (show (length newNodes)) <> " new node(s) found"
+  -- Start workers for newly discovered nodes
   liftIO $ forM_ newNodes $ \nid -> do
     a <- async (runApp env (runWorker nid))
     atomically $ modifyTVar' reg (Map.insert nid a)
+  -- Prune workers for truly decommissioned nodes
+  unless (null staleNodes) $ do
+    appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: pruning "
+      <> T.pack (show (length staleNodes)) <> " stale worker(s)"
+    liftIO $ forM_ staleNodes $ \nid -> do
+      mAsync <- Map.lookup nid <$> readTVarIO reg
+      forM_ mAsync cancel
+      atomically $ modifyTVar' reg (Map.delete nid)
 
 -- | Suppress NeedsAttention health state when consecutive failure count is below
 -- the configured threshold. Falls back to previous health (or Healthy if no prior state).
