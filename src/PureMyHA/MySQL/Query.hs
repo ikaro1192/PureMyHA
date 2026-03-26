@@ -15,6 +15,9 @@ module PureMyHA.MySQL.Query
   , injectEmptyTransaction
   , waitForRelayLogApply
   , needsPublicKeyRetrieval
+  , checkClonePlugin
+  , setCloneValidDonorList
+  , cloneInstanceFrom
   ) where
 
 import Data.Text (Text)
@@ -22,13 +25,15 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BL
 import Data.List (nubBy)
-import Control.Exception (try, SomeException)
+import Control.Exception (try, SomeException, fromException, throwIO)
 import Control.Concurrent (threadDelay)
 import Network.Socket (getAddrInfo, defaultHints, addrAddress, getNameInfo, NameInfoFlag(NI_NUMERICHOST))
 import Database.MySQL.Base
   ( MySQLConn, MySQLValue (..), query_, execute_
   , Query (..), ColumnDef (..)
+  , ERRException (..)
   )
+import Database.MySQL.Protocol.Packet (ERR (..))
 import qualified System.IO.Streams as S
 import PureMyHA.Config (DbCredentials (..), TLSConfig (..), TLSMode (..))
 import PureMyHA.Types
@@ -291,3 +296,42 @@ readMaybeInt :: Text -> Maybe Int
 readMaybeInt t = case reads (T.unpack t) of
   [(n, "")] -> Just n
   _         -> Nothing
+
+-- | Check if the CLONE plugin is installed and ACTIVE on the given node.
+checkClonePlugin :: MySQLConn -> IO Bool
+checkClonePlugin conn = do
+  (_, stream) <- query_ conn
+    "SELECT PLUGIN_NAME FROM INFORMATION_SCHEMA.PLUGINS \
+    \WHERE PLUGIN_NAME = 'clone' AND PLUGIN_STATUS = 'ACTIVE'"
+  rows <- consumeRows stream
+  pure (not (null rows))
+
+-- | Set the clone_valid_donor_list system variable on the recipient.
+-- MySQL requires the donor host:port to be in this list before CLONE will proceed.
+setCloneValidDonorList :: MySQLConn -> Text -> Int -> IO ()
+setCloneValidDonorList conn donorHost donorPort = do
+  let sql = "SET GLOBAL clone_valid_donor_list = '"
+            <> donorHost <> ":" <> T.pack (show donorPort) <> "'"
+  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+  pure ()
+
+-- | Execute CLONE INSTANCE FROM on a recipient node connection.
+-- The recipient MySQL instance clones data from the specified donor.
+-- NOTE: The MySQL process restarts after cloning; the connection will be dropped.
+cloneInstanceFrom :: MySQLConn -> Text -> Int -> DbCredentials -> IO ()
+cloneInstanceFrom conn donorHost donorPort DbCredentials{..} = do
+  let sql = "CLONE INSTANCE FROM '" <> dbUser <> "'@'" <> donorHost <> "':"
+            <> T.pack (show donorPort) <> " IDENTIFIED BY '" <> dbPassword <> "'"
+  -- After a successful CLONE, MySQL restarts and closes the TCP connection.
+  -- mysql-haskell throws NetworkException (not IOException) on EOF (io-streams
+  -- returns Nothing). MySQL may also send ER_SERVER_SHUTDOWN (code 1053) as an
+  -- ERRException before restarting. Both indicate success. Re-throw any other
+  -- ERRException (wrong credentials, donor unreachable, etc.).
+  result <- try @SomeException $ execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+  case result of
+    Right _ -> pure ()
+    Left e  ->
+      case fromException @ERRException e of
+        Just (ERRException err) | errCode err `elem` [1053, 3707] -> pure ()
+        Just _  -> throwIO e
+        Nothing -> pure ()

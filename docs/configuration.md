@@ -24,6 +24,17 @@ GRANT REPLICATION_APPLIER     ON *.* TO 'puremyha'@'%';  -- SET GTID_NEXT (erran
 -- GRANT REPLICATION CLIENT, SUPER ON *.* TO 'puremyha'@'%';
 ```
 
+#### Optional: CLONE plugin support
+
+To use `puremyha clone` for re-seeding replicas via the MySQL CLONE plugin, grant the following additional privileges to the monitoring user:
+
+```sql
+GRANT BACKUP_ADMIN ON *.* TO 'puremyha'@'%';  -- connect as clone user on the donor
+GRANT CLONE_ADMIN  ON *.* TO 'puremyha'@'%';  -- execute CLONE INSTANCE FROM on the recipient
+```
+
+These privileges are **not required** for normal HA operations and can be omitted if you do not use the `clone` command.
+
 ### Replication user
 
 Used as `SOURCE_USER` in `CHANGE REPLICATION SOURCE TO` when reconnecting replicas after a failover or switchover. This is the same user already configured on each replica's `CHANGE REPLICATION SOURCE TO` statement.

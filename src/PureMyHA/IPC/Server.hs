@@ -22,6 +22,7 @@ import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Logger (Logger, setLogLevel)
+import PureMyHA.Clone (runClone)
 import PureMyHA.Failover.Auto (doUnfence)
 import PureMyHA.Failover.Demote (runDemote)
 import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica)
@@ -179,6 +180,13 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
       pure $ RespOperation $ case result of
         Left err -> OperationFailure err
         Right () -> OperationSuccess ("Node unfenced: " <> host)
+
+  ReqClone mCluster recipient mDonor ->
+    withClusterEnv mCluster clusterMap $ \env -> do
+      result <- runApp env (runClone recipient mDonor)
+      pure $ RespOperation $ case result of
+        Left err -> OperationFailure err
+        Right () -> OperationSuccess ("Clone completed: " <> recipient <> " re-seeded successfully")
 
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m
