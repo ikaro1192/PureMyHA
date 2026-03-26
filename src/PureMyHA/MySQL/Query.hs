@@ -15,6 +15,8 @@ module PureMyHA.MySQL.Query
   , injectEmptyTransaction
   , waitForRelayLogApply
   , needsPublicKeyRetrieval
+  , checkClonePlugin
+  , cloneInstanceFrom
   ) where
 
 import Data.Text (Text)
@@ -291,3 +293,22 @@ readMaybeInt :: Text -> Maybe Int
 readMaybeInt t = case reads (T.unpack t) of
   [(n, "")] -> Just n
   _         -> Nothing
+
+-- | Check if the CLONE plugin is installed and ACTIVE on the given node.
+checkClonePlugin :: MySQLConn -> IO Bool
+checkClonePlugin conn = do
+  (_, stream) <- query_ conn
+    "SELECT PLUGIN_NAME FROM INFORMATION_SCHEMA.PLUGINS \
+    \WHERE PLUGIN_NAME = 'clone' AND PLUGIN_STATUS = 'ACTIVE'"
+  rows <- consumeRows stream
+  pure (not (null rows))
+
+-- | Execute CLONE INSTANCE FROM on a recipient node connection.
+-- The recipient MySQL instance clones data from the specified donor.
+-- NOTE: The MySQL process restarts after cloning; the connection will be dropped.
+cloneInstanceFrom :: MySQLConn -> Text -> Int -> DbCredentials -> IO ()
+cloneInstanceFrom conn donorHost donorPort DbCredentials{..} = do
+  let sql = "CLONE INSTANCE FROM '" <> dbUser <> "'@'" <> donorHost <> "':"
+            <> T.pack (show donorPort) <> " IDENTIFIED BY '" <> dbPassword <> "'"
+  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+  pure ()

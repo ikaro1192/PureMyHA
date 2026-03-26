@@ -37,6 +37,7 @@ data Command
   | CmdSetLogLevel Text
   | CmdValidateConfig FilePath
   | CmdUnfence Text
+  | CmdClone Text (Maybe Text)   -- recipient, donor?
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -85,6 +86,8 @@ cliOptions = CLIOptions
             (info validateConfigCmd (progDesc "Validate configuration file without connecting to daemon"))
         <> command "unfence"
             (info unfenceCmd (progDesc "Clear super_read_only on a fenced node (verify data consistency first)"))
+        <> command "clone"
+            (info cloneCmd (progDesc "Re-seed a replica using MySQL CLONE plugin"))
         )
 
 demoteCmd :: Parser Command
@@ -105,6 +108,13 @@ setLogLevelCmd = CmdSetLogLevel
 unfenceCmd :: Parser Command
 unfenceCmd = CmdUnfence
   <$> strOption (long "host" <> metavar "HOST" <> help "Host to unfence (clears super_read_only)")
+
+cloneCmd :: Parser Command
+cloneCmd = CmdClone
+  <$> strOption (long "recipient" <> metavar "HOST[:PORT]"
+        <> help "Replica node to re-seed")
+  <*> optional (strOption (long "donor" <> metavar "HOST[:PORT]"
+        <> help "Donor node (default: replica with most advanced GTID)"))
 
 validateConfigCmd :: Parser Command
 validateConfigCmd = CmdValidateConfig
@@ -152,6 +162,7 @@ main = do
             CmdResumeFailover     -> ReqResumeFailover mCluster
             CmdSetLogLevel lvl    -> ReqSetLogLevel lvl
             CmdUnfence host       -> ReqUnfence mCluster host
+            CmdClone rcpt mDonor  -> ReqClone mCluster rcpt mDonor
 
       eResp <- sendRequest socketPath req
       case eResp of

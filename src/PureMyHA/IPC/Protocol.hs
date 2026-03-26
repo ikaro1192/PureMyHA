@@ -148,6 +148,11 @@ data Request
   | ReqResumeFailover { reqCluster :: Maybe ClusterName }
   | ReqSetLogLevel    { reqLogLevel :: Text }
   | ReqUnfence { reqCluster :: Maybe ClusterName, reqUnfenceHost :: Text }
+  | ReqClone
+      { reqCloneCluster   :: Maybe ClusterName
+      , reqCloneRecipient :: Text
+      , reqCloneDonor     :: Maybe Text
+      }
   deriving (Show, Eq, Generic)
 
 instance ToJSON Request where
@@ -165,6 +170,7 @@ instance ToJSON Request where
   toJSON (ReqResumeFailover mc)  = object ["type" .= ("resume-failover"  :: Text), "cluster" .= mc]
   toJSON (ReqSetLogLevel lvl)    = object ["type" .= ("set-log-level"   :: Text), "level" .= lvl]
   toJSON (ReqUnfence mc h)       = object ["type" .= ("unfence" :: Text), "cluster" .= mc, "host" .= h]
+  toJSON (ReqClone mc r md)      = object ["type" .= ("clone" :: Text), "cluster" .= mc, "recipient" .= r, "donor" .= md]
 
 instance FromJSON Request where
   parseJSON = withObject "Request" $ \o -> do
@@ -184,6 +190,7 @@ instance FromJSON Request where
       "resume-failover" -> ReqResumeFailover <$> o .:? "cluster"
       "set-log-level"   -> ReqSetLogLevel    <$> o .:  "level"
       "unfence"         -> ReqUnfence        <$> o .:? "cluster" <*> o .: "host"
+      "clone"           -> ReqClone          <$> o .:? "cluster" <*> o .: "recipient" <*> o .:? "donor"
       _                 -> fail $ "Unknown request type: " <> show t
 
 -- | IPC Response types

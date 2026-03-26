@@ -40,6 +40,7 @@ library
     PureMyHA.Logger
     PureMyHA.Env
     PureMyHA.Hook
+    PureMyHA.Clone
     PureMyHA.MySQL.Auth
     PureMyHA.MySQL.Connection
     PureMyHA.MySQL.Query
@@ -124,6 +125,7 @@ test-suite puremyha-test
     PureMyHA.HTTPSpec
     PureMyHA.StateSpec
     PureMyHA.QuerySpec
+    PureMyHA.CloneSpec
   build-depends:
     puremyha,
     hspec            >= 2.9,

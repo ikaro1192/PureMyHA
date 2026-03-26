@@ -110,6 +110,18 @@ spec = do
       roundTrip (ReqUnfence Nothing "db2")
         `shouldBe` Just (ReqUnfence Nothing "db2")
 
+    it "round-trips ReqClone with explicit donor" $
+      roundTrip (ReqClone (Just "main") "db3" (Just "db2"))
+        `shouldBe` Just (ReqClone (Just "main") "db3" (Just "db2"))
+
+    it "round-trips ReqClone without donor (auto-select)" $
+      roundTrip (ReqClone (Just "main") "db3" Nothing)
+        `shouldBe` Just (ReqClone (Just "main") "db3" Nothing)
+
+    it "round-trips ReqClone without cluster" $
+      roundTrip (ReqClone Nothing "db3" (Just "db2"))
+        `shouldBe` Just (ReqClone Nothing "db3" (Just "db2"))
+
   describe "Response FromJSON error paths" $ do
     it "rejects unknown response type" $
       (decode (BLC.pack "{\"type\":\"foobar\",\"data\":[]}") :: Maybe Response) `shouldBe` Nothing
