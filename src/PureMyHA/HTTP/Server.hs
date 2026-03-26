@@ -11,7 +11,7 @@ import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Network.HTTP.Types (status200, status404, status503, status405, methodGet, Header)
+import Network.HTTP.Types (status200, status404, status405, methodGet, Header)
 import Network.Wai (Application, Request (..), Response, responseLBS)
 import Network.Wai.Handler.Warp (defaultSettings, runSettings, setHost, setPort)
 
@@ -39,19 +39,15 @@ httpApp tvar req respond
   | requestMethod req /= methodGet =
       respond $ responseLBS status405 [jsonCT] (encode (object ["error" .= ("method not allowed" :: Text)]))
   | otherwise = case pathInfo req of
-      ["health"]                    -> handleHealth tvar >>= respond
+      ["health"]                    -> handleHealth >>= respond
       ["cluster", name, "status"]   -> handleStatus tvar name >>= respond
       ["cluster", name, "topology"] -> handleTopology tvar name >>= respond
       ["metrics"]                   -> handleMetrics tvar >>= respond
       _ -> respond $ responseLBS status404 [jsonCT] (encode (object ["error" .= ("not found" :: Text)]))
 
-handleHealth :: TVarDaemonState -> IO Response
-handleHealth tvar = do
-  ds <- readDaemonState tvar
-  let anyHealthy = any (\ct -> ctHealth ct == Healthy) (Map.elems (dsClusters ds))
-  if anyHealthy
-    then pure $ responseLBS status200 [jsonCT] (encode (object ["status" .= ("ok" :: Text)]))
-    else pure $ responseLBS status503 [jsonCT] (encode (object ["status" .= ("degraded" :: Text)]))
+handleHealth :: IO Response
+handleHealth =
+  pure $ responseLBS status200 [jsonCT] (encode (object ["status" .= ("ok" :: Text)]))
 
 handleStatus :: TVarDaemonState -> Text -> IO Response
 handleStatus tvar name = do

@@ -56,18 +56,23 @@ assert_eq "Unknown route returns 404" "404" "$status"
 status=$($COMPOSE exec -T puremyhad curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8080/health")
 assert_eq "POST /health returns 405" "405" "$status"
 
-# GET /health returns 503 when source is dead
+# GET /health returns 200 even when source is dead (liveness probe — daemon is still running)
 # Pause auto-failover so health stays degraded long enough to observe
 cli_pause_failover >/dev/null 2>&1
 $COMPOSE stop mysql-source
 wait_for_health_not "Healthy" 30
 
 status=$(http_get "/health")
-assert_eq "GET /health returns 503 when cluster degraded" "503" "$status"
+assert_eq "GET /health returns 200 even when cluster degraded" "200" "$status"
 
 body=$(http_get_body "/health")
 degraded_status=$(echo "$body" | jq -r '.status')
-assert_eq "/health body has status=degraded" "degraded" "$degraded_status"
+assert_eq "/health body has status=ok even when cluster degraded" "ok" "$degraded_status"
+
+# Cluster status reflects the degraded state
+cluster_status=$(http_get_body "/cluster/e2e/status")
+cluster_health=$(echo "$cluster_status" | jq -r '.health')
+assert_eq "Cluster status reflects DeadSource" "DeadSource" "$cluster_health"
 
 # Restore for cleanup
 $COMPOSE start mysql-source
