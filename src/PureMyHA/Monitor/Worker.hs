@@ -7,6 +7,8 @@ module PureMyHA.Monitor.Worker
   , suppressBelowThreshold
   , enrichErrantGtids
   , computeStaleNodes
+  , pruneStaleWorkers
+  , detectAndPruneStaleWorkers
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -89,9 +91,7 @@ runTopologyRefresh reg = do
       tvar = envDaemonState env
   newTopo <- discoverTopology
   mOldTopo <- liftIO $ getClusterTopology tvar (ccName cc)
-  let configuredNodes = Set.fromList
-        (map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc))
-      mergedTopo = case mOldTopo of
+  let mergedTopo = case mOldTopo of
         Nothing      -> newTopo
         Just oldTopo ->
           newTopo { ctNodes = Map.union (ctNodes newTopo) (ctNodes oldTopo) }
@@ -99,7 +99,6 @@ runTopologyRefresh reg = do
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes mergedTopo)
       newNodes   = Set.toList (Set.difference discovered knownNodes)
-      staleNodes = Set.toList (computeStaleNodes knownNodes discovered configuredNodes)
   unless (null newNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: "
       <> T.pack (show (length newNodes)) <> " new node(s) found"
@@ -108,19 +107,34 @@ runTopologyRefresh reg = do
     a <- async (runApp env (runWorker nid))
     atomically $ modifyTVar' reg (Map.insert nid a)
   -- Prune workers for truly decommissioned nodes
-  unless (null staleNodes) $ do
+  staleNodes <- liftIO $ detectAndPruneStaleWorkers reg cc discovered
+  unless (null staleNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: pruning "
       <> T.pack (show (length staleNodes)) <> " stale worker(s)"
-    liftIO $ forM_ staleNodes $ \nid -> do
-      mAsync <- Map.lookup nid <$> readTVarIO reg
-      forM_ mAsync cancel
-      atomically $ modifyTVar' reg (Map.delete nid)
 
 -- | Compute nodes to prune: those in the registry but absent from both
 -- the merged topology and the configured seed list.
 computeStaleNodes :: Set.Set NodeId -> Set.Set NodeId -> Set.Set NodeId -> Set.Set NodeId
 computeStaleNodes knownNodes discoveredNodes configuredNodes =
   Set.difference knownNodes (Set.union discoveredNodes configuredNodes)
+
+-- | Cancel and remove stale workers from the registry.
+pruneStaleWorkers :: WorkerRegistry -> [NodeId] -> IO ()
+pruneStaleWorkers reg staleNodes =
+  forM_ staleNodes $ \nid -> do
+    mAsync <- Map.lookup nid <$> readTVarIO reg
+    forM_ mAsync cancel
+    atomically $ modifyTVar' reg (Map.delete nid)
+
+-- | Detect and prune stale workers given current registry and topology state.
+detectAndPruneStaleWorkers :: WorkerRegistry -> ClusterConfig -> Set.Set NodeId -> IO [NodeId]
+detectAndPruneStaleWorkers reg cc discovered = do
+  knownNodes <- Map.keysSet <$> readTVarIO reg
+  let configuredNodes = Set.fromList
+        (map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc))
+      staleNodes = Set.toList (computeStaleNodes knownNodes discovered configuredNodes)
+  pruneStaleWorkers reg staleNodes
+  pure staleNodes
 
 -- | Suppress NeedsAttention health state when consecutive failure count is below
 -- the configured threshold. Falls back to previous health (or Healthy if no prior state).

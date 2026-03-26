@@ -127,6 +127,7 @@ test-suite puremyha-test
     PureMyHA.CloneSpec
   build-depends:
     puremyha,
+    async            >= 2.2,
     hspec            >= 2.9,
     QuickCheck       >= 2.14,
     hspec-discover   >= 0.8,
