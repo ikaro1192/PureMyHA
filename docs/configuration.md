@@ -101,3 +101,27 @@ To clear `super_read_only` after verifying data consistency:
 ```bash
 puremyha unfence --host <host>
 ```
+
+## Permanent Promotion Exclusion (never_promote)
+
+`failover.never_promote` permanently excludes specific hosts from being selected as failover or switchover candidates. These nodes continue to be monitored and replicate normally but are never promoted to source.
+
+```yaml
+failover:
+  never_promote:
+    - db3-analytics   # analytics replica, backup node, or delayed replication target
+```
+
+**Behavior:**
+
+- Excluded from automatic failover candidate selection (`selectCandidate`)
+- `switchover --to <host>` is rejected with a clear error message if the target is in `never_promote`
+- The node continues to replicate and appears in `status` / `topology` output
+- Hot-reloadable via SIGHUP (same as other `failover` settings)
+- If all eligible candidates are excluded or unavailable, failover fails with a clear log message
+
+**Difference from `candidate_priority`:** `candidate_priority` controls promotion *ordering*; `never_promote` provides hard *exclusion* regardless of priority or availability.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `never_promote` | list of strings | `[]` | Host names permanently excluded from promotion |

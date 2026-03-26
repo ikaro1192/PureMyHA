@@ -85,7 +85,7 @@ executeFailover topo = runExceptT $ do
   fc <- lift $ asks envFailover
   let prefix = "[" <> unClusterName (ccName cc) <> "] "
   candidateId <- ExceptT $ do
-    case selectCandidate (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) Nothing of
+    case selectCandidate (fcNeverPromote fc) (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) Nothing of
       Left err -> do
         appLogError (prefix <> "Auto-failover failed: " <> err)
         pure (Left err)
@@ -220,7 +220,7 @@ doAutoFence = do
         []  -> pure ()  -- all already fenced or no sources
         _   -> do
           let priorities = fcCandidatePriority fc
-              mSurvivorId = selectSurvivor priorities sources
+              mSurvivorId = selectSurvivor (fcNeverPromote fc) priorities sources
           case mSurvivorId of
             Nothing -> appLogError $ prefix <> "Auto-fence: no survivor could be selected"
             Just survivorId -> do

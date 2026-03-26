@@ -36,13 +36,13 @@ spec = do
 
     it "selects the node with the higher GTID count" $ do
       let sources = [splitBrainSource1, splitBrainSource2]
-      selectSurvivor [] sources `shouldBe` Just (NodeId "db2" 3306)
+      selectSurvivor [] [] sources `shouldBe` Just (NodeId "db2" 3306)
 
     it "selects the only node when given a single source" $ do
-      selectSurvivor [] [splitBrainSource1] `shouldBe` Just (NodeId "db1" 3306)
+      selectSurvivor [] [] [splitBrainSource1] `shouldBe` Just (NodeId "db1" 3306)
 
     it "returns Nothing for empty list" $
-      selectSurvivor [] [] `shouldBe` Nothing
+      selectSurvivor [] [] [] `shouldBe` Nothing
 
   describe "checkAutoFailoverPreconditions" $ do
 

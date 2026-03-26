@@ -718,6 +718,57 @@ spec = do
       let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 65536)
       validateConfig cfg `shouldSatisfy` any (isInfixOf "http.port")
 
+    it "reports error when never_promote host is not in nodes" $ do
+      let fc  = (ccFailover minimalCluster) { fcNeverPromote = ["db99"] }
+          cc  = minimalCluster { ccFailover = fc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldSatisfy` any (isInfixOf "never_promote host 'db99'")
+
+    it "returns no errors when never_promote host is in nodes" $ do
+      let fc  = (ccFailover minimalCluster) { fcNeverPromote = ["db1"] }
+          cc  = minimalCluster { ccFailover = fc }
+          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldBe` []
+
+    it "returns no errors for empty never_promote list" $ do
+      let cfg = Config [minimalCluster] defaultLoggingConfig defaultHttpConfig
+      validateConfig cfg `shouldBe` []
+
+  describe "never_promote YAML parsing" $ do
+    it "parses never_promote list from failover config" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "      - host: db2"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    failover:"
+            , "      never_promote:"
+            , "        - db2"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg -> fcNeverPromote (ccFailover (head (cfgClusters cfg))) `shouldBe` ["db2"]
+
+    it "defaults never_promote to empty list when not specified" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg -> fcNeverPromote (ccFailover (head (cfgClusters cfg))) `shouldBe` []
+
   describe "loadConfig" $ do
     it "returns Right for a valid YAML file" $ do
       let yaml = unlines
@@ -757,7 +808,7 @@ minimalCluster = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig 5 2 10 30 300 1 1
   , ccFailureDetection       = FailureDetectionConfig 3600 3
-  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing
+  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing []
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }

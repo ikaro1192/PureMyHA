@@ -15,7 +15,7 @@ spec = do
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db2" 3306, healthyReplica)
             ]
-      selectCandidate Nothing nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
+      selectCandidate [] Nothing nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
 
     it "excludes replicas with errant GTIDs" $ do
       let nodes = Map.fromList
@@ -23,7 +23,7 @@ spec = do
             , (NodeId "db2" 3306, healthyReplica)
             , (NodeId "db3" 3306, replicaWithErrantGtid)
             ]
-      selectCandidate Nothing nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
+      selectCandidate [] Nothing nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
 
     it "respects candidate_priority order" $ do
       let replica3 = healthyReplica { nsNodeId = NodeId "db3" 3306 }
@@ -33,55 +33,55 @@ spec = do
             , (NodeId "db3" 3306, replica3)
             ]
           priorities = [CandidatePriority "db3"]
-      selectCandidate Nothing nodes priorities Nothing `shouldBe` Right (NodeId "db3" 3306)
+      selectCandidate [] Nothing nodes priorities Nothing `shouldBe` Right (NodeId "db3" 3306)
 
     it "validates explicit --to host" $ do
       let nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db2" 3306, healthyReplica)
             ]
-      selectCandidate Nothing nodes [] (Just "db2") `shouldBe` Right (NodeId "db2" 3306)
+      selectCandidate [] Nothing nodes [] (Just "db2") `shouldBe` Right (NodeId "db2" 3306)
 
     it "rejects --to host not found" $ do
       let nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db2" 3306, healthyReplica)
             ]
-      selectCandidate Nothing nodes [] (Just "db99") `shouldSatisfy` isLeft
+      selectCandidate [] Nothing nodes [] (Just "db99") `shouldSatisfy` isLeft
 
     it "rejects --to host with errant GTIDs" $ do
       let nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db3" 3306, replicaWithErrantGtid)
             ]
-      selectCandidate Nothing nodes [] (Just "db3") `shouldSatisfy` isLeft
+      selectCandidate [] Nothing nodes [] (Just "db3") `shouldSatisfy` isLeft
 
     it "returns Left when no eligible candidates" $ do
       let nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             ]
-      selectCandidate Nothing nodes [] Nothing `shouldSatisfy` isLeft
+      selectCandidate [] Nothing nodes [] Nothing `shouldSatisfy` isLeft
 
     it "rejects --to when target is the source node" $ do
       let nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db2" 3306, healthyReplica)
             ]
-      selectCandidate Nothing nodes [] (Just "db1") `shouldSatisfy` isLeft
+      selectCandidate [] Nothing nodes [] (Just "db1") `shouldSatisfy` isLeft
 
     it "returns Left when only unreachable replicas exist" $ do
       let nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db5" 3306, unreachableReplica)
             ]
-      selectCandidate Nothing nodes [] Nothing `shouldBe` Left "No suitable failover candidate found"
+      selectCandidate [] Nothing nodes [] Nothing `shouldBe` Left "No suitable failover candidate found"
 
     it "rejects --to when target is unreachable" $ do
       let nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db4" 3306, unreachableNode (NodeId "db4" 3306))
             ]
-      selectCandidate Nothing nodes [] (Just "db4") `shouldSatisfy` isLeft
+      selectCandidate [] Nothing nodes [] (Just "db4") `shouldSatisfy` isLeft
 
     it "selects replica with higher GTID score when no priority set" $ do
       let replicaLongGtid = healthyReplica
@@ -93,7 +93,7 @@ spec = do
             , (NodeId "db2" 3306, healthyReplica)
             , (NodeId "db3" 3306, replicaLongGtid)
             ]
-      selectCandidate Nothing nodes [] Nothing `shouldBe` Right (NodeId "db3" 3306)
+      selectCandidate [] Nothing nodes [] Nothing `shouldBe` Right (NodeId "db3" 3306)
 
     it "excludes Lagging replica from auto-select" $ do
       let laggingReplica = healthyReplica
@@ -105,7 +105,7 @@ spec = do
             , (NodeId "db2" 3306, healthyReplica)
             , (NodeId "db3" 3306, laggingReplica)
             ]
-      selectCandidate Nothing nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
+      selectCandidate [] Nothing nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
 
     it "excludes replica exceeding maxLag from auto-select" $ do
       let slowReplica = healthyReplica
@@ -118,7 +118,7 @@ spec = do
             , (NodeId "db2" 3306, healthyReplica)
             , (NodeId "db3" 3306, slowReplica)
             ]
-      selectCandidate (Just 30) nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
+      selectCandidate [] (Just 30) nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
 
     it "returns Left when all replicas exceed maxLag" $ do
       let slowReplica = healthyReplica
@@ -129,21 +129,21 @@ spec = do
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db2" 3306, slowReplica)
             ]
-      selectCandidate (Just 30) nodes [] Nothing `shouldSatisfy` isLeft
+      selectCandidate [] (Just 30) nodes [] Nothing `shouldSatisfy` isLeft
 
   describe "rankCandidates" $ do
     it "returns empty list for no eligible nodes" $
-      rankCandidates Nothing [healthySource] [] `shouldBe` []
+      rankCandidates [] Nothing [healthySource] [] `shouldBe` []
 
     it "excludes errant GTID nodes" $
-      rankCandidates Nothing [healthyReplica, replicaWithErrantGtid] []
+      rankCandidates [] Nothing [healthyReplica, replicaWithErrantGtid] []
         `shouldSatisfy` (\cs -> all (\c -> ciNodeId c /= NodeId "db3" 3306) cs)
 
     it "returns single-element list for one eligible replica" $
-      length (rankCandidates Nothing [healthyReplica] []) `shouldBe` 1
+      length (rankCandidates [] Nothing [healthyReplica] []) `shouldBe` 1
 
     it "excludes unreachable replicas" $ do
-      let result = rankCandidates Nothing [healthyReplica, unreachableReplica] []
+      let result = rankCandidates [] Nothing [healthyReplica, unreachableReplica] []
       map ciNodeId result `shouldBe` [NodeId "db2" 3306]
 
     it "orders by GTID score descending when no priority" $ do
@@ -151,7 +151,7 @@ spec = do
             { nsNodeId = NodeId "db3" 3306
             , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) ""
             }
-      let result = rankCandidates Nothing [healthyReplica, replicaLongGtid] []
+      let result = rankCandidates [] Nothing [healthyReplica, replicaLongGtid] []
       ciNodeId (head result) `shouldBe` NodeId "db3" 3306
 
     it "priority order takes precedence over GTID score" $ do
@@ -161,7 +161,7 @@ spec = do
             }
           -- db2 has lower GTID but appears first in priority
           priorities = [CandidatePriority "db2"]
-      let result = rankCandidates Nothing [healthyReplica, replicaLongGtid] priorities
+      let result = rankCandidates [] Nothing [healthyReplica, replicaLongGtid] priorities
       ciNodeId (head result) `shouldBe` NodeId "db2" 3306
 
     it "excludes Lagging nodes from candidates" $ do
@@ -169,39 +169,88 @@ spec = do
             { nsNodeId = NodeId "db3" 3306
             , nsHealth  = Lagging 90
             }
-      let result = rankCandidates Nothing [healthyReplica, laggingReplica] []
+      let result = rankCandidates [] Nothing [healthyReplica, laggingReplica] []
       map ciNodeId result `shouldBe` [NodeId "db2" 3306]
 
   describe "isEligibleCandidate" $ do
     it "returns True for a normal replica" $
-      isEligibleCandidate Nothing healthyReplica `shouldBe` True
+      isEligibleCandidate [] Nothing healthyReplica `shouldBe` True
 
     it "returns False for the source node" $
-      isEligibleCandidate Nothing healthySource `shouldBe` False
+      isEligibleCandidate [] Nothing healthySource `shouldBe` False
 
     it "returns False for a replica with errant GTIDs" $
-      isEligibleCandidate Nothing replicaWithErrantGtid `shouldBe` False
+      isEligibleCandidate [] Nothing replicaWithErrantGtid `shouldBe` False
 
     it "returns False for an unreachable node" $
-      isEligibleCandidate Nothing unreachableReplica `shouldBe` False
+      isEligibleCandidate [] Nothing unreachableReplica `shouldBe` False
 
     it "returns False for a Lagging replica" $ do
       let lagging = healthyReplica { nsHealth = Lagging 45 }
-      isEligibleCandidate Nothing lagging `shouldBe` False
+      isEligibleCandidate [] Nothing lagging `shouldBe` False
 
     it "returns False when lag exceeds maxLag" $ do
       let slowReplica = healthyReplica
             { nsProbeResult = ProbeSuccess fixedTime
                 (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 60 }) ""
             }
-      isEligibleCandidate (Just 30) slowReplica `shouldBe` False
+      isEligibleCandidate [] (Just 30) slowReplica `shouldBe` False
 
     it "returns True when lag is exactly at maxLag" $ do
       let replicaAtLimit = healthyReplica
             { nsProbeResult = ProbeSuccess fixedTime
                 (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 30 }) ""
             }
-      isEligibleCandidate (Just 30) replicaAtLimit `shouldBe` True
+      isEligibleCandidate [] (Just 30) replicaAtLimit `shouldBe` True
+
+  describe "never_promote" $ do
+    it "excludes never_promote host from auto-select" $ do
+      let analyticsReplica = healthyReplica { nsNodeId = NodeId "db3" 3306 }
+          nodes = Map.fromList
+            [ (NodeId "db1" 3306, healthySource)
+            , (NodeId "db2" 3306, healthyReplica)
+            , (NodeId "db3" 3306, analyticsReplica)
+            ]
+      selectCandidate ["db3"] Nothing nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
+
+    it "rejects --to for never_promote host" $ do
+      let nodes = Map.fromList
+            [ (NodeId "db1" 3306, healthySource)
+            , (NodeId "db2" 3306, healthyReplica)
+            ]
+      selectCandidate ["db2"] Nothing nodes [] (Just "db2") `shouldSatisfy` isLeft
+
+    it "returns Left when all replicas are in never_promote" $ do
+      let nodes = Map.fromList
+            [ (NodeId "db1" 3306, healthySource)
+            , (NodeId "db2" 3306, healthyReplica)
+            ]
+      selectCandidate ["db2"] Nothing nodes [] Nothing `shouldSatisfy` isLeft
+
+    it "never_promote error message contains host name" $ do
+      let nodes = Map.fromList
+            [ (NodeId "db1" 3306, healthySource)
+            , (NodeId "db2" 3306, healthyReplica)
+            ]
+          result = selectCandidate ["db2"] Nothing nodes [] (Just "db2")
+      result `shouldBe` Left "Cannot promote: host is in never_promote list: db2"
+
+  describe "isNeverPromote" $ do
+    it "returns True when host is in never_promote list" $
+      isNeverPromote ["db2"] healthyReplica `shouldBe` True
+
+    it "returns False when host is not in never_promote list" $
+      isNeverPromote ["db3"] healthyReplica `shouldBe` False
+
+    it "returns False for empty never_promote list" $
+      isNeverPromote [] healthyReplica `shouldBe` False
+
+  describe "isEligibleCandidate (never_promote)" $ do
+    it "returns False for never_promote host" $
+      isEligibleCandidate ["db2"] Nothing healthyReplica `shouldBe` False
+
+    it "returns True when never_promote list is empty" $
+      isEligibleCandidate [] Nothing healthyReplica `shouldBe` True
 
   describe "hasErrantGtid" $ do
     it "returns False when errant GTIDs are empty" $
