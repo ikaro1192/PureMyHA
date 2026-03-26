@@ -22,27 +22,34 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 
 ## Features
 
-- **Topology Discovery** — Recursively maps replication trees from seed hosts via `SHOW REPLICA STATUS`
+### Topology & Discovery
+- **Topology Discovery** — Recursively maps replication trees from seed hosts; new nodes are detected automatically at a configurable interval
+- **MySQL 8.4 Native** — Uses only modern syntax (`SHOW REPLICA STATUS`, `CHANGE REPLICATION SOURCE TO`); no legacy compatibility layers
+
+### Failover & Safety
 - **Automatic Failover** — Detects dead sources and promotes the best replica (GTID-aware, errant-GTID-safe, waits for relay log apply)
-- **Manual Switchover** — Planned maintenance with zero-data-loss semantics
+- **Manual Switchover** — Planned maintenance with zero-data-loss semantics; supports `--dry-run` preview
 - **Errant GTID Detection & Repair** — Identifies and fixes errant GTIDs via empty transactions
-- **Consecutive Failure Threshold** — Requires N consecutive probe failures before marking a node dead, preventing failover on transient TCP timeouts or momentary MySQL unresponsiveness (configurable `consecutive_failures_for_dead`, default 3)
-- **Anti-Flap Protection** — Blocks repeated automatic failovers via configurable `recovery_block_period`
-- **Auto-Fence Split-Brain** — On `SplitBrainSuspected`, automatically sets `super_read_only=ON` on all non-survivor sources (opt-in via `failover.auto_fence: true`); use `puremyha unfence --host <host>` to recover
-- **Replica Lag Threshold** — Replicas exceeding `monitoring.replication_lag_critical` transition to `Lagging` health and are excluded from failover candidates; `failover.max_replica_lag_for_candidate` provides a separate (stricter) exclusion threshold for candidate selection only
-- **Hook Support** — Pre/post hooks for failover and switchover events, plus `on_lag_threshold_exceeded` / `on_lag_threshold_recovered` for replica lag alerting
-- **Optional TLS** — Per-cluster TLS for MySQL connections (`disabled` / `skip-verify` / `verify-ca` / `verify-full`), supports `require_secure_transport=ON`; minimum TLS version configurable (`"1.2"` / `"1.3"`)
-- **MySQL 8.4 Native** — Uses only modern syntax (`SHOW REPLICA STATUS`, `CHANGE REPLICATION SOURCE TO`, etc.)
-- **Graceful Shutdown** — Cleans up the socket file and exits on SIGTERM/SIGINT
-- **Config Hot-Reload** — Reloads `monitoring` and `hooks` config per cluster on SIGHUP without restart
-- **Topology Auto-Discovery** — Automatically detects and begins monitoring new nodes at a configurable interval
-- **Dry-run Mode** — Run `switchover --dry-run` to preview the candidate selection without executing any SQL
+- **Failure Thresholds & Anti-Flap** — Requires N consecutive probe failures before marking a node dead; blocks repeated failovers via `recovery_block_period`
+- **Auto-Fence Split-Brain** — Automatically sets `super_read_only=ON` on non-survivor sources when split-brain is suspected (opt-in)
+
+### Replica Health
+- **Replica Lag Monitoring** — Transitions lagging replicas to `Lagging` health and excludes them from failover candidates; separate stricter threshold for candidate selection
+- **Replica Re-seeding** — Re-seed a replica from a donor using the MySQL CLONE plugin (`puremyha clone`)
+
+### Observability & Integrations
+- **HTTP Endpoints** — Optional read-only HTTP listener: `/health`, `/cluster/:name/status`, `/cluster/:name/topology` for load balancers and Kubernetes probes
+- **Prometheus Metrics** — `GET /metrics` exposes cluster health, replication lag, consecutive failures, and node role
+- **Hooks** — Pre/post hooks for failover and switchover; `on_lag_threshold_exceeded` / `on_lag_threshold_recovered` for alerting
+- **Optional TLS** — Per-cluster TLS for MySQL connections with configurable verification mode and minimum TLS version
+
+### Operator Controls
+- **Config Hot-Reload** — Reloads `monitoring` and `hooks` config on SIGHUP without restart
 - **Pause/Resume Auto-Failover** — Temporarily disable automatic failover for maintenance windows
-- **HTTP Health Check Endpoint** — Optional read-only HTTP listener for load balancer probes and Kubernetes liveness/readiness checks (`GET /health`, `/cluster/:name/status`, `/cluster/:name/topology`)
-- **Prometheus Metrics Endpoint** — `GET /metrics` exposes cluster health, replication lag, consecutive failures, and node role in Prometheus text exposition format for Grafana and other monitoring stacks
-- **Runtime Log Level Control** — Change log verbosity without restarting the daemon via `puremyha set-log-level debug|info|warn|error`
-- **Config Validation** — `puremyha validate-config` validates the config file offline (no daemon required)
-- **Replica Re-seeding via CLONE Plugin** — Re-seed a replica from a donor using the MySQL CLONE plugin; auto-selects the donor with the highest GTID transaction count when `--donor` is omitted (`puremyha clone`)
+- **Runtime Log Level** — Change verbosity without restarting via `puremyha set-log-level`
+- **Config Validation** — `puremyha validate-config` validates offline, no daemon required
+
+See [docs/features.md](docs/features.md) for the full feature reference including all configuration keys, thresholds, and recovery procedures.
 
 ## Requirements
 
@@ -202,6 +209,7 @@ See [docs/cli.md](docs/cli.md) for the full CLI reference including all commands
 
 ## Documentation
 
+- [docs/features.md](docs/features.md) — Full feature reference with configuration keys and examples
 - [docs/configuration.md](docs/configuration.md) — Full configuration reference and MySQL user setup
 - [docs/cli.md](docs/cli.md) — CLI commands and global flags
 - [docs/http-api.md](docs/http-api.md) — HTTP health check and Prometheus metrics endpoints
