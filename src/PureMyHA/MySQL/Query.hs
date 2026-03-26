@@ -24,7 +24,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BL
 import Data.List (nubBy)
-import Control.Exception (try, SomeException)
+import Control.Exception (try, SomeException, IOException)
 import Control.Concurrent (threadDelay)
 import Network.Socket (getAddrInfo, defaultHints, addrAddress, getNameInfo, NameInfoFlag(NI_NUMERICHOST))
 import Database.MySQL.Base
@@ -310,5 +310,9 @@ cloneInstanceFrom :: MySQLConn -> Text -> Int -> DbCredentials -> IO ()
 cloneInstanceFrom conn donorHost donorPort DbCredentials{..} = do
   let sql = "CLONE INSTANCE FROM '" <> dbUser <> "'@'" <> donorHost <> "':"
             <> T.pack (show donorPort) <> " IDENTIFIED BY '" <> dbPassword <> "'"
-  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+  -- MySQL restarts after a successful clone, dropping the connection before
+  -- sending the OK packet. Catch the resulting IOException and treat it as
+  -- success; real MySQL protocol errors (ERRException) are not IOExceptions
+  -- and still propagate to the caller.
+  _ <- try @IOException $ execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
   pure ()
