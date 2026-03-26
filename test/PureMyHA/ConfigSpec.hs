@@ -544,21 +544,8 @@ spec = do
         Left err  -> expectationFailure err
         Right cfg -> validateConfig cfg `shouldSatisfy` any (isInfixOf "duplicate cluster name")
 
-    it "reports error for port out of range" $ do
-      let yaml = BC.pack $ unlines
-            [ "clusters:"
-            , "  - name: test"
-            , "    nodes:"
-            , "      - host: db1"
-            , "        port: 99999"
-            , "    credentials:"
-            , "      user: u"
-            , "      password_file: /dev/null"
-            , globalBlock
-            ]
-      case decodeConfig yaml of
-        Left err  -> expectationFailure err
-        Right cfg -> validateConfig cfg `shouldSatisfy` any (isInfixOf "port")
+    -- port out of range is tested by boundary value tests in "validateConfig extra edge cases"
+    -- (port 0, port 65536)
 
     it "reports error when replication_lag_warning >= replication_lag_critical" $ do
       let yaml = BC.pack $ unlines
@@ -685,17 +672,7 @@ spec = do
           cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
       validateConfig cfg `shouldSatisfy` any (isInfixOf "replication_lag_warning")
 
-    it "reports error for negative monitoring.interval" $ do
-      let mc  = (ccMonitoring minimalCluster) { mcInterval = -1 }
-          cc  = minimalCluster { ccMonitoring = mc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "monitoring.interval must be > 0")
-
-    it "reports error for negative monitoring.connect_timeout" $ do
-      let mc  = (ccMonitoring minimalCluster) { mcConnectTimeout = -1 }
-          cc  = minimalCluster { ccMonitoring = mc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "connect_timeout")
+    -- negative interval/connect_timeout tests removed: same code path as the <= 0 tests above
 
     it "accumulates multiple monitoring errors at once" $ do
       let mc  = (ccMonitoring minimalCluster) { mcInterval = 0, mcConnectTimeout = 0 }

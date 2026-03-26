@@ -13,7 +13,7 @@ switch_result=$(cli_switchover "mysql-replica1" "false")
 echo "  Switchover response: $switch_result"
 
 switch_success=$(echo "$switch_result" | jq -r '.success // empty')
-assert_not_empty "Switchover returns success" "$switch_success"
+assert_contains "Switchover returns success" "Switchover completed" "$switch_success"
 
 # Wait for topology to settle
 sleep 3
@@ -35,7 +35,7 @@ demote_result=$(cli_demote "mysql-replica2" "mysql-replica1")
 echo "  Demote response: $demote_result"
 
 demote_success=$(echo "$demote_result" | jq -r '.success // empty')
-assert_not_empty "Demote returns success message" "$demote_success"
+assert_contains "Demote returns success" "replica" "$demote_success"
 
 # Wait for replication to re-establish
 sleep 5

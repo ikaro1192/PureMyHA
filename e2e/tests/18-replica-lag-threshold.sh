@@ -21,17 +21,34 @@ for i in $(seq 1 5); do
   sleep 2
 done
 
-# --- Step 2: Wait for Lagging health state ---
-# Note: this requires monitoring.replication_lag_critical to be set low enough
-# (e.g. 5s) in the e2e config. The default config.yaml.example uses 60s.
-# For this test we check that lag is reported, not that Lagging state triggers
-# (which depends on the configured threshold).
-echo "  Verifying lag is reported in topology..."
-lag_value=$(cli_exec topology | jq -r '.[0].nodes[].lagSeconds // -1' 2>/dev/null | grep -v "^-1$" | head -1 || echo "")
-if [ -n "$lag_value" ] && [ "$lag_value" != "null" ]; then
-  echo "  Replica lag reported: ${lag_value}s"
-else
-  echo "  NOTE: lag is null (replica may not yet have accumulated lag in this environment)"
+# --- Step 2: Wait for node health to transition away from Healthy ---
+# The e2e config has replication_lag_critical: 10s, so after ~10s of lag
+# the replica should show a non-Healthy state (Lagging or NeedsAttention).
+echo "  Waiting for mysql-replica1 health to change..."
+replica1_health=""
+for i in $(seq 1 30); do
+  topo_json=$(cli_topology 2>/dev/null || echo "[]")
+  replica1_health=$(echo "$topo_json" | jq -r '.[0].nodes[] | select(.host=="mysql-replica1") | .health' 2>/dev/null || echo "")
+  if [ -n "$replica1_health" ] && [ "$replica1_health" != "Healthy" ]; then
+    echo "  mysql-replica1 health changed to: $replica1_health (${i}s)"
+    break
+  fi
+  sleep 1
+done
+
+assert_neq "mysql-replica1 is not Healthy while SQL thread stopped" "Healthy" "$replica1_health"
+
+# Verify lag is reported in topology
+lag_value=$(cli_topology 2>/dev/null | jq -r '.[0].nodes[] | select(.host=="mysql-replica1") | .lagSeconds // -1' 2>/dev/null || echo "-1")
+echo "  Replica lag reported: ${lag_value}s"
+if [ "$lag_value" != "-1" ] && [ "$lag_value" != "null" ]; then
+  # Lag should be >= the critical threshold (10s)
+  if [ "$lag_value" -ge 10 ]; then
+    echo "  PASS: Lag ($lag_value) >= critical threshold (10s)"
+    ((PASS_COUNT++)) || true
+  else
+    echo "  NOTE: Lag ($lag_value) below threshold, may not have accumulated enough"
+  fi
 fi
 
 # --- Step 3: Restart SQL thread ---

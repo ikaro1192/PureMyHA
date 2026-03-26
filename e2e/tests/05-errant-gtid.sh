@@ -43,7 +43,7 @@ echo "  Fixing errant GTIDs..."
 fix_result=$(cli_fix_errant_gtid)
 echo "  Fix response: $fix_result"
 fix_success=$(echo "$fix_result" | jq -r '.success // empty')
-assert_not_empty "Fix errant GTID returns success" "$fix_success"
+assert_contains "Fix errant GTID returns success" "fixed" "$fix_success"
 
 # Wait for the fix to propagate
 echo "  Waiting for fix to propagate..."

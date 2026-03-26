@@ -115,22 +115,8 @@ spec = do
           ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
       detectNodeHealth Nothing ns `shouldBe` Healthy
 
-  describe "detectReplicaHealth" $ do
-    it "returns NeedsAttention IO error when IO=No with error message" $ do
-      let rs = (mkReplicaStatus "db1" 3306 IONo "") { rsLastIOError = "Access denied" }
-      detectReplicaHealth Nothing rs `shouldBe` NeedsAttention "IO error: Access denied"
-
-    it "returns NeedsAttention 'Replica IO not running' when IO=No with no error" $ do
-      let rs = mkReplicaStatus "db1" 3306 IONo ""
-      detectReplicaHealth Nothing rs `shouldBe` NeedsAttention "Replica IO not running"
-
-    it "returns NeedsAttention SQL error when SQL thread is stopped" $ do
-      let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsReplicaSQLRunning = SQLStopped, rsLastSQLError = "sql-err" }
-      detectReplicaHealth Nothing rs `shouldBe` NeedsAttention "SQL error: sql-err"
-
-    it "returns Healthy for a healthy replica status" $ do
-      let rs = mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100"
-      detectReplicaHealth Nothing rs `shouldBe` Healthy
+  -- detectReplicaHealth basic cases are covered by detectNodeHealth tests above
+  -- (detectNodeHealth delegates to detectReplicaHealth internally)
 
   describe "detectReplicaHealth lag threshold" $ do
     it "returns Lagging when lag equals threshold" $ do
@@ -182,6 +168,12 @@ spec = do
           r2 = mkNodeState (NodeId "db2" 3306) Replica
                  (Just (mkReplicaStatus "db3" 3306 IOYes "")) Healthy
       identifySource [r1, r2] `shouldBe` Nothing
+
+    it "identifies source from replica's rsSourceHost when no explicit Source role" $ do
+      let src = healthySource { nsRole = Replica }
+          rep = healthyReplica
+      -- db2's replica status points to db1, so db1 should still be identified
+      identifySource [src, rep] `shouldNotBe` Nothing
 
 isNeedsAttention :: NodeHealth -> Bool
 isNeedsAttention (NeedsAttention _) = True
