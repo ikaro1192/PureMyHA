@@ -15,7 +15,7 @@ import qualified Data.Text as T
 import PureMyHA.Env
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.GTID (gtidTransactionCount)
-import PureMyHA.MySQL.Query (checkClonePlugin, cloneInstanceFrom)
+import PureMyHA.MySQL.Query (checkClonePlugin, setCloneValidDonorList, cloneInstanceFrom)
 import PureMyHA.Topology.State (getClusterTopology)
 import PureMyHA.Types
 
@@ -110,7 +110,9 @@ runClone recipientSpec mDonorSpec = do
                           appLogInfo $ "[" <> clName <> "] Cloning " <> recipientHost
                                      <> " from donor " <> donorHost
                           cloneResult <- liftIO $ withNodeConn mTls recipientCi $
-                            \conn -> cloneInstanceFrom conn donorHost donorPort creds
+                            \conn -> do
+                              setCloneValidDonorList conn donorHost donorPort
+                              cloneInstanceFrom conn donorHost donorPort creds
                           case cloneResult of
                             Left err -> do
                               appLogError $ "[" <> clName <> "] CLONE failed: " <> err

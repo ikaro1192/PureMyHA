@@ -16,6 +16,7 @@ module PureMyHA.MySQL.Query
   , waitForRelayLogApply
   , needsPublicKeyRetrieval
   , checkClonePlugin
+  , setCloneValidDonorList
   , cloneInstanceFrom
   ) where
 
@@ -302,6 +303,15 @@ checkClonePlugin conn = do
     \WHERE PLUGIN_NAME = 'clone' AND PLUGIN_STATUS = 'ACTIVE'"
   rows <- consumeRows stream
   pure (not (null rows))
+
+-- | Set the clone_valid_donor_list system variable on the recipient.
+-- MySQL requires the donor host:port to be in this list before CLONE will proceed.
+setCloneValidDonorList :: MySQLConn -> Text -> Int -> IO ()
+setCloneValidDonorList conn donorHost donorPort = do
+  let sql = "SET GLOBAL clone_valid_donor_list = '"
+            <> donorHost <> ":" <> T.pack (show donorPort) <> "'"
+  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+  pure ()
 
 -- | Execute CLONE INSTANCE FROM on a recipient node connection.
 -- The recipient MySQL instance clones data from the specified donor.
