@@ -143,6 +143,7 @@ jobs:
         if: matrix.arch == 'x86_64'
         run: |
           python3 scripts/tix-to-lcov.py \
+            coverage-artifacts/unit.tix \
             coverage-artifacts/e2e.tix \
             coverage-artifacts/hpc-mix \
             coverage-artifacts/coverage.lcov

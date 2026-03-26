@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Convert HPC .tix + .mix files to lcov format.
 
-Usage: tix-to-lcov.py <tix_file> <mix_dir> <output_lcov>
+Usage: tix-to-lcov.py <tix_file>... <mix_dir> <output_lcov>
 
 Parses GHC HPC coverage data (.tix tick counts and .mix source positions)
-and generates an lcov-compatible coverage report.
+and generates an lcov-compatible coverage report.  When multiple .tix files
+are given, their tick counts are merged (element-wise max per module).
 
 This replaces hpc-lcov for Cabal projects (hpc-lcov requires Stack).
 """
@@ -88,6 +89,23 @@ def parse_mix(path):
     return source_path, positions
 
 
+def merge_tix_modules(all_modules_list):
+    """Merge multiple lists of (module_name, ticks) by taking element-wise max."""
+    merged = {}
+    for modules in all_modules_list:
+        for name, ticks in modules:
+            if name not in merged:
+                merged[name] = list(ticks)
+            else:
+                existing = merged[name]
+                # Extend to the longer length if needed
+                if len(ticks) > len(existing):
+                    existing.extend([0] * (len(ticks) - len(existing)))
+                for i in range(len(ticks)):
+                    existing[i] = max(existing[i], ticks[i])
+    return list(merged.items())
+
+
 def generate_lcov(tix_modules, mix_dir):
     """Generate lcov content from parsed tix modules and mix directory."""
     # Collect per-file, per-line coverage data
@@ -144,21 +162,30 @@ def generate_lcov(tix_modules, mix_dir):
 
 
 def main():
-    if len(sys.argv) != 4:
-        print(f"Usage: {sys.argv[0]} <tix_file> <mix_dir> <output_lcov>")
+    if len(sys.argv) < 4:
+        print(f"Usage: {sys.argv[0]} <tix_file>... <mix_dir> <output_lcov>")
         sys.exit(1)
 
-    tix_file, mix_dir, output_file = sys.argv[1], sys.argv[2], sys.argv[3]
+    # Last two args are mix_dir and output_file; everything before is tix files
+    output_file = sys.argv[-1]
+    mix_dir = sys.argv[-2]
+    tix_files = sys.argv[1:-2]
 
-    if not os.path.isfile(tix_file):
-        print(f"ERROR: .tix file not found: {tix_file}", file=sys.stderr)
-        sys.exit(1)
+    for tix_file in tix_files:
+        if not os.path.isfile(tix_file):
+            print(f"ERROR: .tix file not found: {tix_file}", file=sys.stderr)
+            sys.exit(1)
     if not os.path.isdir(mix_dir):
         print(f"ERROR: .mix directory not found: {mix_dir}", file=sys.stderr)
         sys.exit(1)
 
-    tix_modules = parse_tix(tix_file)
-    print(f"Parsed {len(tix_modules)} modules from {tix_file}")
+    all_modules = []
+    for tix_file in tix_files:
+        modules = parse_tix(tix_file)
+        print(f"Parsed {len(modules)} modules from {tix_file}")
+        all_modules.append(modules)
+
+    tix_modules = merge_tix_modules(all_modules) if len(all_modules) > 1 else all_modules[0]
 
     lcov = generate_lcov(tix_modules, mix_dir)
 
