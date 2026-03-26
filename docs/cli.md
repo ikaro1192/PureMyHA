@@ -60,6 +60,9 @@ puremyha set-log-level debug|info|warn|error
 # Validate config file without connecting to the daemon
 # Checks YAML syntax, required fields, and semantic constraints (port ranges, threshold ordering, etc.)
 puremyha validate-config [--config /etc/puremyha/config.yaml]
+
+# Re-seed a replica using MySQL CLONE plugin (auto-selects donor if omitted)
+puremyha clone --recipient HOST[:PORT] [--donor HOST[:PORT]] [--cluster=<name>]
 ```
 
 ## JSON Output
