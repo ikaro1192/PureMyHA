@@ -19,12 +19,16 @@ spec = do
       roundTrip (ReqTopology (Just "main")) `shouldBe` Just (ReqTopology (Just "main"))
 
     it "round-trips ReqSwitchover with dryRun=false" $
-      roundTrip (ReqSwitchover (Just "main") (Just "db2") False)
-        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") False)
+      roundTrip (ReqSwitchover (Just "main") (Just "db2") False Nothing)
+        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") False Nothing)
 
     it "round-trips ReqSwitchover with dryRun=true" $
-      roundTrip (ReqSwitchover (Just "main") (Just "db2") True)
-        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") True)
+      roundTrip (ReqSwitchover (Just "main") (Just "db2") True Nothing)
+        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") True Nothing)
+
+    it "round-trips ReqSwitchover with drain-timeout" $
+      roundTrip (ReqSwitchover (Just "main") Nothing False (Just 30))
+        `shouldBe` Just (ReqSwitchover (Just "main") Nothing False (Just 30))
 
     it "round-trips ReqAckRecovery" $
       roundTrip (ReqAckRecovery Nothing) `shouldBe` Just (ReqAckRecovery Nothing)

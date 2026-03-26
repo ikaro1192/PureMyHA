@@ -18,7 +18,10 @@ puremyha status
 puremyha topology
 
 # Manual switchover (planned maintenance)
-puremyha switchover [--to=<host>] [--cluster=<name>]
+puremyha switchover [--to=<host>] [--drain-timeout=<secs>] [--cluster=<name>]
+
+# With drain: wait up to 30s for connections to close, then KILL remaining
+puremyha switchover --drain-timeout 30 [--to=<host>]
 
 # Dry-run: show which replica would be promoted without executing
 puremyha switchover --dry-run [--to=<host>]

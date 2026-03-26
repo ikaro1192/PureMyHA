@@ -82,9 +82,11 @@ cli_topology() {
 cli_switchover() {
   local to_host="${1:-}"
   local dry_run="${2:-false}"
+  local drain_timeout="${3:-}"
   local args=()
   [ -n "$to_host" ] && args+=(--to "$to_host")
   [ "$dry_run" = "true" ] && args+=(--dry-run)
+  [ -n "$drain_timeout" ] && args+=(--drain-timeout "$drain_timeout")
   cli_exec switchover "${args[@]}"
 }
 
