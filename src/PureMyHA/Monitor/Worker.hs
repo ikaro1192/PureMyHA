@@ -5,6 +5,7 @@ module PureMyHA.Monitor.Worker
   , monitorNode
   , runWorker
   , suppressBelowThreshold
+  , enrichErrantGtids
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -231,19 +232,22 @@ enrichErrantGtids ns = do
           let srcNodes = Map.lookup srcId (ctNodes topo)
           case srcNodes of
             Nothing -> pure ns
-            Just srcNs -> do
-              let replicaGtid = case nsProbeResult ns of
-                    ProbeSuccess{prReplicaStatus = Just rs} -> rsExecutedGtidSet rs
-                    _ -> ""
-                  sourceGtid = case nsProbeResult srcNs of
-                    ProbeSuccess{prGtidExecuted = g} -> g
-                    ProbeFailure{} -> ""
-                  ci = makeConnectInfo srcId creds
-              result <- withNodeConn mTls ci $ \conn ->
-                gtidSubtract conn replicaGtid sourceGtid
-              case result of
-                Left _         -> pure ns
-                Right errant   -> pure ns { nsErrantGtids = errant }
+            Just srcNs ->
+              if not (nsIsReachable srcNs)
+                then pure ns
+                else do
+                  let replicaGtid = case nsProbeResult ns of
+                        ProbeSuccess{prReplicaStatus = Just rs} -> rsExecutedGtidSet rs
+                        _ -> ""
+                      sourceGtid = case nsProbeResult srcNs of
+                        ProbeSuccess{prGtidExecuted = g} -> g
+                        ProbeFailure{} -> ""
+                      ci = makeConnectInfo srcId creds
+                  result <- withNodeConn mTls ci $ \conn ->
+                    gtidSubtract conn replicaGtid sourceGtid
+                  case result of
+                    Left _         -> pure ns
+                    Right errant   -> pure ns { nsErrantGtids = errant }
 
 recomputeClusterHealth :: App ()
 recomputeClusterHealth = do
