@@ -168,6 +168,7 @@ data FailoverConfig = FailoverConfig
   , fcWaitRelayLogTimeout         :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
   , fcAutoFence                   :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
   , fcMaxReplicaLagForCandidate   :: Maybe Int        -- ^ Max lag in seconds for failover candidates; lagging nodes are excluded (default Nothing)
+  , fcNeverPromote                :: [Text]           -- ^ Hosts permanently excluded from promotion; they continue to replicate but are never selected as candidates (default [])
   } deriving (Show, Generic)
 
 data CandidatePriority = CandidatePriority
@@ -333,6 +334,7 @@ instance FromJSON FailoverConfig where
       <*> (unDuration <$> o .:? "wait_for_relay_log_apply_timeout" .!= DurationField 60)
       <*> o .:? "auto_fence" .!= False
       <*> o .:? "max_replica_lag_for_candidate"
+      <*> o .:? "never_promote" .!= []
 
 instance FromJSON CandidatePriority where
   parseJSON = withObject "CandidatePriority" $ \o ->
@@ -423,6 +425,9 @@ validateConfig cfg = clusterErrors ++ httpErrors
         fcErrors =
           [ prefix <> "failover.max_replica_lag_for_candidate must be > 0"
           | Just n <- [fcMaxReplicaLagForCandidate fc], n <= 0 ]
+          ++
+          [ prefix <> "failover.never_promote host '" <> T.unpack h <> "' is not listed in nodes"
+          | h <- fcNeverPromote fc, h `notElem` hosts ]
 
     httpErrors
       | not (hcEnabled (cfgHttp cfg)) = []

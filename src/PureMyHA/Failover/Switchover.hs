@@ -48,7 +48,7 @@ runSwitchover mToHost = do
       appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: Cluster not found"
       pure (Left "Cluster not found")
     Just topo ->
-      case selectCandidate (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) mToHost of
+      case selectCandidate (fcNeverPromote fc) (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) mToHost of
         Left err -> do
           appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: " <> err
           pure (Left err)
@@ -190,7 +190,7 @@ dryRunSwitchover mToHost = do
   case mTopo of
     Nothing   -> pure (Left "Cluster not found")
     Just topo ->
-      case selectCandidate (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) mToHost of
+      case selectCandidate (fcNeverPromote fc) (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) mToHost of
         Left  err         -> pure (Left err)
         Right candidateId ->
           pure (Right ("Dry run: would promote " <> nodeHost candidateId <> " to source"))

@@ -47,6 +47,10 @@ global:
                                        # Lagging and are automatically excluded regardless of this setting.
     candidate_priority:            # optional promotion priority (auto-selected by GTID if omitted)
       - host: db2
+    never_promote:                 # optional; hosts permanently excluded from promotion (default: empty)
+      - db3-analytics              # e.g. analytics replicas, backup-only nodes, delayed replicas
+                                   # These nodes continue to be monitored and replicate normally.
+                                   # `switchover --to <never_promote_host>` is also rejected.
   hooks:
     pre_failover: /etc/puremyha/hooks/pre_failover.sh
     post_failover: /etc/puremyha/hooks/post_failover.sh

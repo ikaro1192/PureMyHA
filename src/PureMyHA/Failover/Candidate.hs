@@ -4,6 +4,7 @@ module PureMyHA.Failover.Candidate
   , rankCandidates
   , CandidateInfo (..)
   , isEligibleCandidate
+  , isNeverPromote
   , hasErrantGtid
   , hasConnectError
   , priorityRank
@@ -33,16 +34,18 @@ data CandidateInfo = CandidateInfo
 --   - nodes that are not reachable (have connect errors)
 --   - nodes whose health is Lagging
 --   - nodes whose lag exceeds maxLag (when specified)
+--   - nodes in the never_promote list
 -- Ranks by:
 --   1. candidate_priority config order (lower index = higher priority)
 --   2. Executed_Gtid_Set (we use text length as a rough proxy; real comparison is done by MySQL)
 selectCandidate
-  :: Maybe Int              -- ^ max lag in seconds for auto-select candidates (Nothing = no limit)
+  :: [Text]                 -- ^ hosts permanently excluded from promotion (never_promote list)
+  -> Maybe Int              -- ^ max lag in seconds for auto-select candidates (Nothing = no limit)
   -> Map NodeId NodeState
   -> [CandidatePriority]
   -> Maybe Text             -- ^ explicit --to host override
   -> Either Text NodeId
-selectCandidate mMaxLag nodes priorities mToHost =
+selectCandidate neverPromote mMaxLag nodes priorities mToHost =
   case mToHost of
     Just toHost ->
       -- Explicit target: validate it exists and has no errant GTIDs
@@ -52,30 +55,32 @@ selectCandidate mMaxLag nodes priorities mToHost =
       in case matching of
            []  -> Left $ "Host not found as replica: " <> toHost
            (ns:_)
+             | toHost `elem` neverPromote -> Left $ "Cannot promote: host is in never_promote list: " <> toHost
              | hasErrantGtid ns -> Left $ "Cannot promote: node has errant GTIDs: " <> toHost
              | hasConnectError ns -> Left $ "Cannot promote: node unreachable: " <> toHost
              | otherwise -> Right (nsNodeId ns)
     Nothing ->
       -- Auto-select: filter, rank, pick best
-      let candidates = rankCandidates mMaxLag (Map.elems nodes) priorities
+      let candidates = rankCandidates neverPromote mMaxLag (Map.elems nodes) priorities
       in case candidates of
            []    -> Left "No suitable failover candidate found"
            (c:_) -> Right (ciNodeId c)
 
--- | Rank candidate nodes (replicas without errant GTIDs and within lag threshold)
-rankCandidates :: Maybe Int -> [NodeState] -> [CandidatePriority] -> [CandidateInfo]
-rankCandidates mMaxLag nodes priorities =
-  let eligible = filter (isEligibleCandidate mMaxLag) nodes
+-- | Rank candidate nodes (replicas without errant GTIDs, within lag threshold, and not in never_promote)
+rankCandidates :: [Text] -> Maybe Int -> [NodeState] -> [CandidatePriority] -> [CandidateInfo]
+rankCandidates neverPromote mMaxLag nodes priorities =
+  let eligible = filter (isEligibleCandidate neverPromote mMaxLag) nodes
       infos    = map (toCandidateInfo priorities) eligible
   in sortBy (comparing ciPriorityRank <> comparing (Down . gtidScore)) infos
 
-isEligibleCandidate :: Maybe Int -> NodeState -> Bool
-isEligibleCandidate mMaxLag ns =
+isEligibleCandidate :: [Text] -> Maybe Int -> NodeState -> Bool
+isEligibleCandidate neverPromote mMaxLag ns =
   not (isSource ns)
   && not (hasErrantGtid ns)
   && not (hasConnectError ns)
   && not (isLagging ns)
   && not (exceedsMaxLag mMaxLag ns)
+  && nodeHost (nsNodeId ns) `notElem` neverPromote
 
 isLagging :: NodeState -> Bool
 isLagging ns = case nsHealth ns of
@@ -96,6 +101,9 @@ hasConnectError :: NodeState -> Bool
 hasConnectError ns = case nsProbeResult ns of
   ProbeFailure{prConnectError = e} -> not (T.null e)
   ProbeSuccess{}                   -> False
+
+isNeverPromote :: [Text] -> NodeState -> Bool
+isNeverPromote neverPromote ns = nodeHost (nsNodeId ns) `elem` neverPromote
 
 toCandidateInfo :: [CandidatePriority] -> NodeState -> CandidateInfo
 toCandidateInfo priorities ns = CandidateInfo
@@ -121,10 +129,12 @@ gtidScore = gtidTransactionCount . ciExecutedGtid
 -- nodes during split-brain fencing.  Ranked solely by GTID transaction count —
 -- candidate_priority is intentionally ignored because those preferences apply to
 -- failover replica selection, not to split-brain survivor identification.
-selectSurvivor :: [CandidatePriority] -> [NodeState] -> Maybe NodeId
-selectSurvivor _priorities nodes =
-  let infos  = map (toSourceCandidateInfo []) nodes
-      ranked = sortBy (comparing (Down . gtidScore)) infos
+-- Nodes in the never_promote list are excluded from survivor selection.
+selectSurvivor :: [Text] -> [CandidatePriority] -> [NodeState] -> Maybe NodeId
+selectSurvivor neverPromote _priorities nodes =
+  let eligible = filter (\ns -> nodeHost (nsNodeId ns) `notElem` neverPromote) nodes
+      infos    = map (toSourceCandidateInfo []) eligible
+      ranked   = sortBy (comparing (Down . gtidScore)) infos
   in case ranked of
        []    -> Nothing
        (c:_) -> Just (ciNodeId c)
