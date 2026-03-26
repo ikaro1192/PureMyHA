@@ -5,7 +5,8 @@ import Test.Hspec
 import Fixtures
 import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..))
 import PureMyHA.Env (runApp)
-import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids)
+import qualified Data.Set as Set
+import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes)
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
 import PureMyHA.Types
@@ -100,3 +101,37 @@ spec = do
       let prev = healthySource { nsHealth = NeedsAttention "prior err", nsConsecutiveFailures = 2 }
       suppressBelowThreshold threshold 2 (Just prev) errNs
         `shouldBe` errNs { nsHealth = NeedsAttention "prior err" }
+
+  describe "computeStaleNodes" $ do
+    let db1 = NodeId "db1" 3306
+        db2 = NodeId "db2" 3306
+        db3 = NodeId "db3" 3306
+        db4 = NodeId "db4" 3306
+
+    it "returns empty when all known nodes are in discovered set" $
+      computeStaleNodes (Set.fromList [db1, db2]) (Set.fromList [db1, db2]) Set.empty
+        `shouldBe` Set.empty
+
+    it "returns empty when all known nodes are in configured set" $
+      computeStaleNodes (Set.fromList [db1, db2]) Set.empty (Set.fromList [db1, db2])
+        `shouldBe` Set.empty
+
+    it "returns stale node absent from both discovered and configured" $
+      computeStaleNodes (Set.fromList [db1, db2, db3]) (Set.fromList [db1]) (Set.fromList [db2])
+        `shouldBe` Set.singleton db3
+
+    it "returns empty when known is empty" $
+      computeStaleNodes Set.empty (Set.fromList [db1]) (Set.fromList [db2])
+        `shouldBe` Set.empty
+
+    it "preserves configured nodes even if not discovered" $
+      computeStaleNodes (Set.fromList [db1, db2]) (Set.fromList [db1]) (Set.fromList [db2])
+        `shouldBe` Set.empty
+
+    it "preserves discovered nodes even if not configured" $
+      computeStaleNodes (Set.fromList [db1, db2]) (Set.fromList [db2]) (Set.fromList [db1])
+        `shouldBe` Set.empty
+
+    it "returns multiple stale nodes" $
+      computeStaleNodes (Set.fromList [db1, db2, db3, db4]) (Set.fromList [db1]) (Set.fromList [db2])
+        `shouldBe` Set.fromList [db3, db4]

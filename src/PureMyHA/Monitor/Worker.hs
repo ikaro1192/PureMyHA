@@ -6,6 +6,7 @@ module PureMyHA.Monitor.Worker
   , runWorker
   , suppressBelowThreshold
   , enrichErrantGtids
+  , computeStaleNodes
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -98,9 +99,7 @@ runTopologyRefresh reg = do
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes mergedTopo)
       newNodes   = Set.toList (Set.difference discovered knownNodes)
-      -- Prune workers for nodes that are neither in the current topology
-      -- nor in the configured seed list (truly decommissioned nodes)
-      staleNodes = Set.toList (Set.difference knownNodes (Set.union discovered configuredNodes))
+      staleNodes = Set.toList (computeStaleNodes knownNodes discovered configuredNodes)
   unless (null newNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: "
       <> T.pack (show (length newNodes)) <> " new node(s) found"
@@ -116,6 +115,12 @@ runTopologyRefresh reg = do
       mAsync <- Map.lookup nid <$> readTVarIO reg
       forM_ mAsync cancel
       atomically $ modifyTVar' reg (Map.delete nid)
+
+-- | Compute nodes to prune: those in the registry but absent from both
+-- the merged topology and the configured seed list.
+computeStaleNodes :: Set.Set NodeId -> Set.Set NodeId -> Set.Set NodeId -> Set.Set NodeId
+computeStaleNodes knownNodes discoveredNodes configuredNodes =
+  Set.difference knownNodes (Set.union discoveredNodes configuredNodes)
 
 -- | Suppress NeedsAttention health state when consecutive failure count is below
 -- the configured threshold. Falls back to previous health (or Healthy if no prior state).

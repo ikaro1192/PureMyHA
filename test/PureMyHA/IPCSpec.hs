@@ -1,9 +1,15 @@
 module PureMyHA.IPCSpec (spec) where
 
+import Control.Concurrent.Async (async, wait)
 import Data.Aeson (encode, decode)
+import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy.Char8 as BLC
+import Network.Socket (socketPair, Family (..), SocketType (..), close)
+import qualified Network.Socket.ByteString as NSB
 import Test.Hspec
 import PureMyHA.IPC.Protocol
+import PureMyHA.IPC.Socket (recvLine, maxLineLength)
 import PureMyHA.Types
 
 spec :: Spec
@@ -173,6 +179,42 @@ spec = do
   describe "OperationResult FromJSON error path" $
     it "rejects object with neither success nor failure" $
       (decode (BLC.pack "{\"other\":\"x\"}") :: Maybe OperationResult) `shouldBe` Nothing
+
+  describe "recvLine" $ do
+    it "returns Right for normal data with newline" $ do
+      (s1, s2) <- socketPair AF_UNIX Stream 0
+      _ <- async $ do
+        NSB.sendAll s2 (BSC.pack "hello world\n")
+        close s2
+      result <- recvLine s1
+      close s1
+      result `shouldBe` Right (BSC.pack "hello world")
+
+    it "returns Left when connection closes without newline" $ do
+      (s1, s2) <- socketPair AF_UNIX Stream 0
+      _ <- async $ do
+        NSB.sendAll s2 (BSC.pack "no newline here")
+        close s2
+      result <- recvLine s1
+      close s1
+      result `shouldBe` Left "Connection closed before newline"
+
+    it "returns Left when data exceeds maxLineLength" $ do
+      (s1, s2) <- socketPair AF_UNIX Stream 0
+      -- Sender and receiver must run concurrently: sendAll blocks when
+      -- the kernel buffer is full, and recvLine drains it.
+      sender <- async $ do
+        let chunk = BS.replicate 65536 0x41  -- 64KB of 'A'
+            totalChunks = (maxLineLength `div` 65536) + 2
+        mapM_ (\_ -> NSB.sendAll s2 chunk) [1 :: Int .. totalChunks]
+        close s2
+      result <- recvLine s1
+      -- Close receiver first so sender gets EPIPE and unblocks
+      close s1
+      _ <- async (wait sender) -- don't block on sender if it already errored
+      case result of
+        Left msg -> msg `shouldBe` "Line too long (exceeds 1 MiB)"
+        Right _  -> expectationFailure "expected Left but got Right"
 
 roundTrip :: Request -> Maybe Request
 roundTrip = decode . encode
