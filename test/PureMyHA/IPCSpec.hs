@@ -51,6 +51,17 @@ spec = do
     it "round-trips ReqResumeFailover" $
       roundTrip (ReqResumeFailover Nothing) `shouldBe` Just (ReqResumeFailover Nothing)
 
+  describe "ReqSwitchover field accessors" $ do
+    let req = ReqSwitchover (Just "main") (Just "db2") True (Just 30)
+    it "reqCluster returns the cluster" $
+      reqCluster req `shouldBe` Just "main"
+    it "reqToHost returns the target host" $
+      reqToHost req `shouldBe` Just "db2"
+    it "reqDryRun returns the dry-run flag" $
+      reqDryRun req `shouldBe` True
+    it "reqDrainTimeout returns the drain timeout" $
+      reqDrainTimeout req `shouldBe` Just 30
+
   describe "Response JSON round-trip" $ do
     it "round-trips RespError" $
       roundTripResp (RespError "something went wrong")

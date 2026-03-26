@@ -25,6 +25,9 @@ spec = do
     it "includes Sleep connections from application pools" $
       isUserProcess (ProcessInfo 6 "app" "Sleep") `shouldBe` True
 
+    it "piId accessor returns the process id" $
+      piId (ProcessInfo 42 "app" "Query") `shouldBe` 42
+
   describe "needsPublicKeyRetrieval" $ do
     it "returns True when TLS is not configured" $
       needsPublicKeyRetrieval Nothing `shouldBe` True
