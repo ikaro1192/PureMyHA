@@ -43,3 +43,4 @@ make e2e-clean
 There are test scripts in `e2e/tests/`. Filenames are self-documenting (e.g. `01-topology-discovery.sh`, `10-pause-resume-failover.sh`).
 
 The test environment uses accelerated timings (`interval: 1s`, `recovery_block_period: 30s`) so the full suite completes in a few minutes. Cluster state is automatically reset between tests.
+

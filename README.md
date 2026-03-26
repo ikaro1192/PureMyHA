@@ -42,6 +42,7 @@ Inspired by the design philosophy of Orchestrator, PureMyHA provides topology di
 - **Prometheus Metrics Endpoint** — `GET /metrics` exposes cluster health, replication lag, consecutive failures, and node role in Prometheus text exposition format for Grafana and other monitoring stacks
 - **Runtime Log Level Control** — Change log verbosity without restarting the daemon via `puremyha set-log-level debug|info|warn|error`
 - **Config Validation** — `puremyha validate-config` validates the config file offline (no daemon required)
+- **Replica Re-seeding via CLONE Plugin** — Re-seed a replica from a donor using the MySQL CLONE plugin; auto-selects the donor with the highest GTID transaction count when `--donor` is omitted (`puremyha clone`)
 
 ## Requirements
 
@@ -195,9 +196,6 @@ puremyha switchover [--to=<host>]
 
 # Validate config file offline
 puremyha validate-config
-
-# Clear super_read_only after auto-fence (verify data consistency first)
-puremyha unfence --host <host>
 ```
 
 See [docs/cli.md](docs/cli.md) for the full CLI reference including all commands, global flags, and JSON output examples.
