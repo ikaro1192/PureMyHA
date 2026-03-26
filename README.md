@@ -199,7 +199,7 @@ puremyha status
 puremyha topology
 
 # Manual switchover (planned maintenance)
-puremyha switchover [--to=<host>]
+puremyha switchover [--to=<host>] [--drain-timeout=<secs>]
 
 # Validate config file offline
 puremyha validate-config

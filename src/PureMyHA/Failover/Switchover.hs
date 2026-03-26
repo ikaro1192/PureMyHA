@@ -12,6 +12,7 @@ import Control.Monad.Reader (asks)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
+import qualified Data.Text as T
 import Database.MySQL.Base (ConnectInfo)
 import PureMyHA.Config
 import PureMyHA.Env
@@ -37,8 +38,9 @@ switchoverReconnectTargets nodes candidateId =
 -- | Execute a manual switchover
 runSwitchover
   :: Maybe Text        -- ^ --to host
+  -> Maybe Int         -- ^ --drain-timeout seconds (Nothing = no drain)
   -> App (Either Text ())
-runSwitchover mToHost = do
+runSwitchover mToHost mDrainTimeout = do
   tvar <- asks envDaemonState
   cc   <- asks envCluster
   fc   <- asks envFailover
@@ -68,15 +70,16 @@ runSwitchover mToHost = do
               appLogError $ "[" <> unClusterName (ccName cc) <> "] Pre-switchover hook aborted: " <> err
               pure (Left $ "Pre-switchover hook failed: " <> err)
             Right () ->
-              doSwitchover candidateId oldSourceId oldSourceHost topo
+              doSwitchover candidateId oldSourceId oldSourceHost topo mDrainTimeout
 
 doSwitchover
   :: NodeId
   -> Maybe NodeId
   -> Maybe Text
   -> ClusterTopology
+  -> Maybe Int         -- ^ drain timeout seconds
   -> App (Either Text ())
-doSwitchover candidateId oldSourceId oldSourceHost topo = do
+doSwitchover candidateId oldSourceId oldSourceHost topo mDrainTimeout = do
   cc    <- asks envCluster
   creds <- getMonCredentials
   mTls  <- getTLSConfig
@@ -91,6 +94,12 @@ doSwitchover candidateId oldSourceId oldSourceHost topo = do
       appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover aborted: cannot set old source read_only: " <> err
       pure (Left $ "Cannot set old source read_only: " <> err)
     Right () -> do
+      -- Drain phase: wait up to drain-timeout seconds, then KILL remaining user connections
+      case (oldSourceId, mDrainTimeout) of
+        (Just srcId, Just secs) | secs > 0 -> do
+          let srcCi = makeConnectInfo srcId creds
+          waitThenKill mTls srcCi (ccName cc) secs
+        _ -> pure ()
       -- Step 2: Get old source GTID set
       mOldGtid <- liftIO $ case oldSourceId of
         Nothing -> pure Nothing
@@ -177,6 +186,37 @@ reconnectToNew newSourceId ns = do
       setReadOnly conn
       startReplica conn
     pure ()
+
+-- | Wait up to timeoutSecs for user connections to close, then KILL remaining ones.
+-- Polls SHOW PROCESSLIST every second. If connection to old source is lost, proceeds silently.
+waitThenKill
+  :: Maybe TLSConfig
+  -> ConnectInfo
+  -> ClusterName
+  -> Int            -- ^ timeout seconds (>0)
+  -> App ()
+waitThenKill mTls srcCi clusterName timeoutSecs = go timeoutSecs
+  where
+    go secsLeft = do
+      result <- liftIO $ withNodeConn mTls srcCi showProcessList
+      case result of
+        Left _ -> pure ()  -- can't connect to old source; proceed
+        Right procs -> do
+          let userProcs = filter isUserProcess procs
+          if null userProcs
+            then pure ()
+            else if secsLeft <= 0
+              then do
+                appLogInfo $ "[" <> unClusterName clusterName <> "] Killing "
+                  <> T.pack (show (length userProcs)) <> " remaining connection(s)"
+                _ <- liftIO $ withNodeConn mTls srcCi $ \conn ->
+                  mapM_ (killConnection conn . piId) userProcs
+                pure ()
+              else do
+                appLogInfo $ "[" <> unClusterName clusterName <> "] Draining connections: "
+                  <> T.pack (show (length userProcs)) <> " remaining"
+                liftIO $ threadDelay 1_000_000
+                go (secsLeft - 1)
 
 -- | Dry-run switchover: validate and select candidate without executing SQL
 dryRunSwitchover

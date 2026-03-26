@@ -18,6 +18,10 @@ module PureMyHA.MySQL.Query
   , checkClonePlugin
   , setCloneValidDonorList
   , cloneInstanceFrom
+  , ProcessInfo (..)
+  , showProcessList
+  , isUserProcess
+  , killConnection
   ) where
 
 import Data.Text (Text)
@@ -335,3 +339,39 @@ cloneInstanceFrom conn donorHost donorPort DbCredentials{..} = do
         Just (ERRException err) | errCode err `elem` [1053, 3707] -> pure ()
         Just _  -> throwIO e
         Nothing -> pure ()
+
+-- | A row from SHOW PROCESSLIST
+data ProcessInfo = ProcessInfo
+  { piId      :: Int
+  , piUser    :: Text
+  , piCommand :: Text
+  } deriving (Show, Eq)
+
+-- | Parse SHOW PROCESSLIST and return all entries
+showProcessList :: MySQLConn -> IO [ProcessInfo]
+showProcessList conn = do
+  (cols, stream) <- query_ conn "SHOW PROCESSLIST"
+  rows <- consumeRows stream
+  let colNames = map (TE.decodeUtf8 . columnName) cols
+      mkRow row =
+        let kvs  = zip colNames row
+            get k = maybe MySQLNull id (lookup k kvs)
+        in ProcessInfo
+             (intVal  (get "Id"))
+             (textVal (get "User"))
+             (textVal (get "Command"))
+  pure (map mkRow rows)
+
+-- | True if this is a user (application) connection that should be drained.
+-- Filters out replication threads and internal daemon processes (pure).
+isUserProcess :: ProcessInfo -> Bool
+isUserProcess pi =
+  piUser pi /= "system user" &&
+  piCommand pi `notElem` ["Binlog Dump", "Binlog Dump GTID", "Daemon"]
+
+-- | Execute KILL CONNECTION for the given process ID
+killConnection :: MySQLConn -> Int -> IO ()
+killConnection conn pid = do
+  let sql = "KILL CONNECTION " <> T.pack (show pid)
+  _ <- execute_ conn (Query (BL.fromStrict (TE.encodeUtf8 sql)))
+  pure ()

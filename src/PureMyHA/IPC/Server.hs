@@ -106,7 +106,7 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
     let topos = filterClusters mCluster (dsClusters ds)
     pure $ RespTopology (map toClusterTopologyView topos)
 
-  ReqSwitchover mCluster mToHost dryRun ->
+  ReqSwitchover mCluster mToHost dryRun mDrainTimeout ->
     withClusterEnv mCluster clusterMap $ \env ->
       if dryRun
         then do
@@ -115,7 +115,7 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
             Left err  -> OperationFailure err
             Right msg -> OperationSuccess msg
         else do
-          result <- runApp env $ runSwitchover mToHost
+          result <- runApp env $ runSwitchover mToHost mDrainTimeout
           pure $ RespOperation $ case result of
             Left err -> OperationFailure err
             Right () -> OperationSuccess "Switchover completed"

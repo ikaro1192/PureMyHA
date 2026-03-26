@@ -19,12 +19,16 @@ spec = do
       roundTrip (ReqTopology (Just "main")) `shouldBe` Just (ReqTopology (Just "main"))
 
     it "round-trips ReqSwitchover with dryRun=false" $
-      roundTrip (ReqSwitchover (Just "main") (Just "db2") False)
-        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") False)
+      roundTrip (ReqSwitchover (Just "main") (Just "db2") False Nothing)
+        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") False Nothing)
 
     it "round-trips ReqSwitchover with dryRun=true" $
-      roundTrip (ReqSwitchover (Just "main") (Just "db2") True)
-        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") True)
+      roundTrip (ReqSwitchover (Just "main") (Just "db2") True Nothing)
+        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") True Nothing)
+
+    it "round-trips ReqSwitchover with drain-timeout" $
+      roundTrip (ReqSwitchover (Just "main") Nothing False (Just 30))
+        `shouldBe` Just (ReqSwitchover (Just "main") Nothing False (Just 30))
 
     it "round-trips ReqAckRecovery" $
       roundTrip (ReqAckRecovery Nothing) `shouldBe` Just (ReqAckRecovery Nothing)
@@ -46,6 +50,17 @@ spec = do
 
     it "round-trips ReqResumeFailover" $
       roundTrip (ReqResumeFailover Nothing) `shouldBe` Just (ReqResumeFailover Nothing)
+
+  describe "ReqSwitchover field accessors" $ do
+    let req = ReqSwitchover (Just "main") (Just "db2") True (Just 30)
+    it "reqCluster returns the cluster" $
+      reqCluster req `shouldBe` Just "main"
+    it "reqToHost returns the target host" $
+      reqToHost req `shouldBe` Just "db2"
+    it "reqDryRun returns the dry-run flag" $
+      reqDryRun req `shouldBe` True
+    it "reqDrainTimeout returns the drain timeout" $
+      reqDrainTimeout req `shouldBe` Just 30
 
   describe "Response JSON round-trip" $ do
     it "round-trips RespError" $

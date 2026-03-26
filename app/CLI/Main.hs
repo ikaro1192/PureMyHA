@@ -24,7 +24,7 @@ data CLIOptions = CLIOptions
 data Command
   = CmdStatus
   | CmdTopology
-  | CmdSwitchover (Maybe Text) Bool
+  | CmdSwitchover (Maybe Text) Bool (Maybe Int)
   | CmdAckRecovery
   | CmdErrantGtid
   | CmdFixErrantGtid
@@ -134,6 +134,10 @@ switchoverCmd = CmdSwitchover
   <*> switch
         ( long "dry-run"
         <> help "Show what would happen without executing" )
+  <*> optional (option auto
+        ( long "drain-timeout"
+        <> metavar "SECS"
+        <> help "Wait up to SECS seconds for user connections to close, then KILL remaining" ))
 
 main :: IO ()
 main = do
@@ -150,7 +154,7 @@ main = do
       let req = case optCommand opts of
             CmdStatus             -> ReqStatus mCluster
             CmdTopology           -> ReqTopology mCluster
-            CmdSwitchover mTo dr  -> ReqSwitchover mCluster mTo dr
+            CmdSwitchover mTo dr mDt -> ReqSwitchover mCluster mTo dr mDt
             CmdAckRecovery        -> ReqAckRecovery mCluster
             CmdErrantGtid         -> ReqErrantGtid mCluster
             CmdFixErrantGtid      -> ReqFixErrantGtid mCluster
