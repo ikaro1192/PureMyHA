@@ -6,7 +6,8 @@ module PureMyHA.MySQL.Connection
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (bracket, try, SomeException)
+import Control.Exception (finally, try, SomeException)
+import Control.Monad (void)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -33,7 +34,9 @@ withNodeConn
   -> (MySQLConn -> IO a)
   -> IO (Either Text a)
 withNodeConn mTls ci action = do
-  result <- try @SomeException $ bracket (connectWithAuth mTls ci) close action
+  result <- try @SomeException $ do
+    conn <- connectWithAuth mTls ci
+    action conn `finally` void (try @SomeException (close conn))
   pure $ case result of
     Left err -> Left (T.pack (show err))
     Right v  -> Right v

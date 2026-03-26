@@ -25,13 +25,15 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString.Lazy as BL
 import Data.List (nubBy)
-import Control.Exception (try, SomeException, IOException)
+import Control.Exception (try, SomeException, fromException, throwIO)
 import Control.Concurrent (threadDelay)
 import Network.Socket (getAddrInfo, defaultHints, addrAddress, getNameInfo, NameInfoFlag(NI_NUMERICHOST))
 import Database.MySQL.Base
   ( MySQLConn, MySQLValue (..), query_, execute_
   , Query (..), ColumnDef (..)
+  , ERRException (..)
   )
+import Database.MySQL.Protocol.Packet (ERR (..))
 import qualified System.IO.Streams as S
 import PureMyHA.Config (DbCredentials (..), TLSConfig (..), TLSMode (..))
 import PureMyHA.Types
@@ -320,9 +322,16 @@ cloneInstanceFrom :: MySQLConn -> Text -> Int -> DbCredentials -> IO ()
 cloneInstanceFrom conn donorHost donorPort DbCredentials{..} = do
   let sql = "CLONE INSTANCE FROM '" <> dbUser <> "'@'" <> donorHost <> "':"
             <> T.pack (show donorPort) <> " IDENTIFIED BY '" <> dbPassword <> "'"
-  -- MySQL restarts after a successful clone, dropping the connection before
-  -- sending the OK packet. Catch the resulting IOException and treat it as
-  -- success; real MySQL protocol errors (ERRException) are not IOExceptions
-  -- and still propagate to the caller.
-  _ <- try @IOException $ execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
-  pure ()
+  -- After a successful CLONE, MySQL restarts and closes the TCP connection.
+  -- mysql-haskell throws NetworkException (not IOException) on EOF (io-streams
+  -- returns Nothing). MySQL may also send ER_SERVER_SHUTDOWN (code 1053) as an
+  -- ERRException before restarting. Both indicate success. Re-throw any other
+  -- ERRException (wrong credentials, donor unreachable, etc.).
+  result <- try @SomeException $ execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+  case result of
+    Right _ -> pure ()
+    Left e  ->
+      case fromException @ERRException e of
+        Just (ERRException err) | errCode err `elem` [1053, 3707] -> pure ()
+        Just _  -> throwIO e
+        Nothing -> pure ()

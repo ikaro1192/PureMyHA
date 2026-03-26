@@ -52,6 +52,7 @@ assert_contains() {
     ((PASS_COUNT++)) || true
   else
     echo "  FAIL: $desc (expected to contain '$needle')"
+    echo "  ACTUAL OUTPUT: $haystack"
     ((FAIL_COUNT++)) || true
   fi
 }
