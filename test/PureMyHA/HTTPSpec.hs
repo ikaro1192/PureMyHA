@@ -4,7 +4,7 @@ import Control.Concurrent.STM (atomically)
 import qualified Data.ByteString.Lazy.Char8 as BSL8
 import Data.IORef
 import qualified Data.Map.Strict as Map
-import Network.HTTP.Types (methodGet, methodPost, status200, status404, status405, status503)
+import Network.HTTP.Types (methodGet, methodPost, status200, status404, status405)
 import Network.Wai (defaultRequest, Request (..), Response, responseStatus)
 import Network.Wai.Internal (ResponseReceived (..))
 import Test.Hspec
@@ -92,19 +92,13 @@ spec = do
       resp <- runApp (httpApp tvar) req
       responseStatus resp `shouldBe` status404
 
-    it "returns 200 for /health when cluster is healthy" $ do
+    it "returns 200 for /health when daemon is running" $ do
       tvar <- newDaemonState
-      let ct = ClusterTopology
-                { ctClusterName = "test", ctNodes = clusterHealthy
-                , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
-                , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False }
-      atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["health"] }
       resp <- runApp (httpApp tvar) req
       responseStatus resp `shouldBe` status200
 
-    it "returns 503 for /health when no healthy cluster" $ do
+    it "returns 200 for /health even when no cluster is healthy" $ do
       tvar <- newDaemonState
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterWithDeadSource
@@ -114,7 +108,7 @@ spec = do
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["health"] }
       resp <- runApp (httpApp tvar) req
-      responseStatus resp `shouldBe` status503
+      responseStatus resp `shouldBe` status200
 
     it "returns 200 for /cluster/<name>/status when cluster exists" $ do
       tvar <- newDaemonState
