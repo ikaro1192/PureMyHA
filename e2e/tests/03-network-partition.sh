@@ -15,14 +15,20 @@ echo "  Original source: $orig_source"
 echo "  Pausing mysql-source (simulating network partition)..."
 docker pause e2e-source
 
-# Wait for daemon to detect the issue
-# With 1s monitor interval + 2s connect timeout, detection takes ~3-5s
-sleep 8
+# docker pause sends SIGSTOP — TCP connections freeze (no RST/FIN).
+# On macOS, the OS-level TCP retransmit timeout is very long (minutes),
+# so PureMyHA may not detect the source as unreachable within a reasonable time.
+# The key assertion here is: even after waiting, no auto-failover should have occurred.
+# We wait long enough for several monitoring cycles to pass.
+echo "  Waiting 15s to allow monitoring cycles..."
+sleep 15
 
-# Health should be UnreachableSource or NeedsAttention, NOT DeadSource
-# (Because replicas may still show IO=Yes briefly - the connection hasn't been RST)
 health=$(get_health)
 echo "  Health after pause: $health"
+
+# Whether or not the daemon detected the partition, it must NOT be DeadSource
+# (docker pause keeps TCP alive, so replicas still show IO=Yes → no DeadSource)
+assert_neq "Health is not DeadSource (no failover triggered)" "DeadSource" "$health"
 
 # The source should NOT have changed (no failover occurred)
 current_source=$(get_source_host)

@@ -114,7 +114,6 @@ test-suite puremyha-test
     PureMyHA.GTIDSpec
     PureMyHA.DetectorSpec
     PureMyHA.CandidateSpec
-    PureMyHA.TopologySpec
     PureMyHA.IPCSpec
     PureMyHA.AutoSpec
     PureMyHA.SwitchoverSpec

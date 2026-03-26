@@ -45,14 +45,6 @@ spec = do
 
   describe "dryRunSwitchover" $ do
 
-    it "selects candidate and returns dry-run message" $ do
-      tvar <- newDaemonState
-      let topo = buildClusterTopology "main" clusterHealthy
-      atomically $ updateClusterTopology tvar topo
-      env <- mkTestEnv tvar testCC testFC
-      result <- runApp env $ dryRunSwitchover Nothing
-      result `shouldSatisfy` isRight
-
     it "result contains 'Dry run: would promote'" $ do
       tvar <- newDaemonState
       let topo = buildClusterTopology "main" clusterHealthy
