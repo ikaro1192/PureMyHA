@@ -24,7 +24,7 @@ RUN mkdir -p /staging && \
     cp "$(cabal list-bin puremyha)"  /staging/puremyha
 
 # Stage 2: runtime
-FROM ghcr.io/debian/debian:bookworm-slim
+FROM debian:bookworm-slim
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libgmp10 zlib1g && \
