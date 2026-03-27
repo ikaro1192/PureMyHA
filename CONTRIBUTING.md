@@ -4,7 +4,7 @@ Contributions are welcome — bug reports, feature ideas, and pull requests alik
 
 ## Reporting Bugs
 
-Found something wrong? Please [open an issue](https://github.com/ikaro1192/PureMyHA/issues). It helps to include:
+Found something wrong? Before opening an issue, please search [existing issues](https://github.com/ikaro1192/PureMyHA/issues) to avoid duplicates. If nothing matches, please open a new one. It helps to include:
 
 - PureMyHA version (`puremyha --version`)
 - MySQL version and `gtid_mode` / `enforce_gtid_consistency` values
@@ -13,7 +13,7 @@ Found something wrong? Please [open an issue](https://github.com/ikaro1192/PureM
 
 ## Feature Requests
 
-Have an idea? Please [open an issue](https://github.com/ikaro1192/PureMyHA/issues) and describe:
+Have an idea? Before opening an issue, please search [existing issues](https://github.com/ikaro1192/PureMyHA/issues) to see if it has already been discussed. If not, please open a new one and describe:
 
 - The problem or use case you're trying to solve
 - Your proposed solution or behavior
@@ -82,7 +82,7 @@ New functionality belongs in the most specific existing namespace.
 
 ## Pull Requests
 
-Please open an issue before submitting a PR so we can discuss the approach first. The only exceptions are obvious typo fixes or trivial documentation corrections. Even well-implemented PRs may be declined if they would introduce ongoing maintenance burden that outweighs their benefit — discussing the idea upfront helps avoid that.
+Before submitting a PR, please search [existing issues and PRs](https://github.com/ikaro1192/PureMyHA/issues) to check whether the same change is already in progress. Then open an issue to discuss the approach first. The only exceptions are obvious typo fixes or trivial documentation corrections. Even well-implemented PRs may be declined if they would introduce ongoing maintenance burden that outweighs their benefit — discussing the idea upfront helps avoid that.
 
 - One logical change per PR
 - Ensure local tests pass(unit tests, E2E tests)
