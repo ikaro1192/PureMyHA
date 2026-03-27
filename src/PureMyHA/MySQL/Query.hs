@@ -365,9 +365,9 @@ showProcessList conn = do
 -- | True if this is a user (application) connection that should be drained.
 -- Filters out replication threads and internal daemon processes (pure).
 isUserProcess :: ProcessInfo -> Bool
-isUserProcess pi =
-  piUser pi /= "system user" &&
-  piCommand pi `notElem` ["Binlog Dump", "Binlog Dump GTID", "Daemon"]
+isUserProcess proc =
+  piUser proc /= "system user" &&
+  piCommand proc `notElem` ["Binlog Dump", "Binlog Dump GTID", "Daemon"]
 
 -- | Execute KILL CONNECTION for the given process ID
 killConnection :: MySQLConn -> Int -> IO ()

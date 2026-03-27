@@ -2,7 +2,6 @@
 module PureMyHA.Types
   ( NodeId (..)
   , ClusterName (..)
-  , unClusterName
   , IORunning (..)
   , SQLThreadState (..)
   , ReplicaStatus (..)
