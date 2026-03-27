@@ -93,10 +93,6 @@ testFC = FailoverConfig
   , fcNeverPromote                = []
   }
 
-isRight :: Either a b -> Bool
-isRight (Right _) = True
-isRight _         = False
-
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True
 isLeft _        = False

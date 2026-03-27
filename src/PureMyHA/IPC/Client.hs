@@ -84,8 +84,8 @@ printClusterTopology ctv = do
   putStrLn ""
 
 printNode :: Bool -> NodeStateView -> IO ()
-printNode isSource nsv = do
-  let prefix = if isSource then "[SOURCE] " else "  [REPLICA] "
+printNode isSrc nsv = do
+  let prefix = if isSrc then "[SOURCE] " else "  [REPLICA] "
       host   = T.unpack (nsvHost nsv) <> ":" <> show (nsvPort nsv)
       status = if nsvPaused nsv
                  then "[PAUSED]"
@@ -123,6 +123,7 @@ showHealth UnreachableSource        = "UnreachableSource"
 showHealth DeadSourceAndAllReplicas = "DeadSourceAndAllReplicas"
 showHealth SplitBrainSuspected      = "SplitBrainSuspected"
 showHealth (NeedsAttention msg)     = "NeedsAttention: " <> T.unpack msg
+showHealth (Lagging n)              = "Lagging: " <> show n <> "s"
 
 showTime :: UTCTime -> String
 showTime = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"

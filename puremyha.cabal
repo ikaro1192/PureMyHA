@@ -16,7 +16,7 @@ common common-options
     DeriveAnyClass
     RecordWildCards
     LambdaCase
-  ghc-options:        -Wall -Wno-orphans
+  ghc-options:        -Wall -Wno-orphans -Werror
   build-depends:
     base             >= 4.14 && < 5,
     text             >= 1.2,
