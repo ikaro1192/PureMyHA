@@ -13,6 +13,9 @@ clusters:
     replication_credentials:
       user: repl
       password_file: /etc/puremyha/repl.pass
+    failover:
+      candidate_priority:
+        - host: mysql-replica1
     hooks:
       pre_failover: /etc/puremyha/hooks/pre_failover.sh
       post_failover: /etc/puremyha/hooks/post_failover.sh
@@ -40,5 +43,3 @@ global:
     auto_fence: true
     min_replicas_for_failover: 1
     wait_for_relay_log_apply_timeout: 10s
-    candidate_priority:
-      - host: mysql-replica1
