@@ -11,12 +11,18 @@ PureMyHA does **not** implement leader election itself. Two approaches are avail
 
 ```mermaid
 graph LR
-    Node1["Node1 (Active)"] --- Pacemaker["Corosync/Pacemaker"]
+    Client["Client"] -->|"Write VIP:3306"| HAProxy["HAProxy"]
+    Client -->|"Read VIP:3306"| HAProxy
+    HAProxy -->|"Source"| DB1["db1 (MySQL)"]
+    HAProxy -->|"Replica"| DB2["db2 (MySQL)"]
+    Node1["Node1 (Active)\npuremyhad + HAProxy + VIPs"] --- Pacemaker["Corosync/Pacemaker"]
     Pacemaker --- Node2["Node2 (Standby)"]
     Pacemaker --- QDevice["QDevice\n(quorum arbiter)"]
 ```
 
 Delegates leader election entirely to Pacemaker + QDevice. Daemon state is held in memory only and rebuilt from MySQL on restart.
+
+HAProxy runs on the same node as `puremyhad` and routes MySQL traffic in TCP (Layer 4) mode. Two VIPs provide separate endpoints for writes and reads — both on port 3306. PureMyHA hook scripts update HAProxy backends automatically on failover or switchover.
 
 Sample configuration files and a Docker Compose demo are in [`pacemaker-sample/`](../pacemaker-sample/).
 
@@ -52,18 +58,23 @@ make clean
 
 | Host | Role | Required packages |
 |------|------|-------------------|
-| ha1 (192.168.10.11) | Cluster node (Active) | pacemaker, pcs, corosync, fence-agents |
-| ha2 (192.168.10.12) | Cluster node (Standby) | pacemaker, pcs, corosync, fence-agents |
+| ha1 (192.168.10.11) | Cluster node (Active) | pacemaker, pcs, corosync, fence-agents, haproxy, socat |
+| ha2 (192.168.10.12) | Cluster node (Standby) | pacemaker, pcs, corosync, fence-agents, haproxy, socat |
 | qdevice (192.168.10.13) | Quorum arbiter only | corosync-qnetd |
 
-A Virtual IP (e.g. `192.168.10.100`) floats to whichever node runs `puremyhad`.
+Two Virtual IPs float to whichever node runs `puremyhad`:
+
+| VIP | Purpose |
+|-----|---------|
+| 192.168.10.100 (Write VIP) | Routes to the MySQL source via HAProxy |
+| 192.168.10.101 (Read VIP) | Routes to MySQL replicas via HAProxy |
 
 **Step 1 — Install packages**
 
 ```bash
 # On ha1 and ha2:
-apt-get install -y pacemaker pcs corosync fence-agents   # Debian/Ubuntu
-# dnf install -y pacemaker pcs corosync fence-agents-all  # RHEL/Rocky
+apt-get install -y pacemaker pcs corosync fence-agents haproxy socat   # Debian/Ubuntu
+# dnf install -y pacemaker pcs corosync fence-agents-all haproxy socat  # RHEL/Rocky
 
 # On the QDevice host only:
 apt-get install -y corosync-qnetd
@@ -98,7 +109,39 @@ install -m 755 pacemaker-sample/ocf/puremyha \
     /usr/lib/ocf/resource.d/puremyha/puremyhad
 ```
 
-**Step 5 — Bootstrap the cluster**
+**Step 5 — Deploy HAProxy configuration and hook scripts**
+
+Run on **both** ha1 and ha2:
+
+```bash
+# Deploy HAProxy config (edit VIP addresses and server entries first):
+cp pacemaker-sample/haproxy/haproxy.cfg.example /etc/haproxy/haproxy.cfg
+mkdir -p /run/haproxy
+
+# Install hook scripts:
+mkdir -p /etc/puremyha/hooks
+install -m 755 pacemaker-sample/haproxy/hooks/haproxy-common.sh \
+    /etc/puremyha/hooks/haproxy-common.sh
+install -m 755 pacemaker-sample/haproxy/hooks/post_failover.sh \
+    /etc/puremyha/hooks/post_failover.sh
+install -m 755 pacemaker-sample/haproxy/hooks/post_switchover.sh \
+    /etc/puremyha/hooks/post_switchover.sh
+
+# Disable HAProxy systemd service — Pacemaker manages it:
+systemctl disable haproxy
+systemctl stop haproxy
+```
+
+Add the hooks to your PureMyHA config (`/etc/puremyha/config.yaml`):
+
+```yaml
+global:
+  hooks:
+    post_failover: /etc/puremyha/hooks/post_failover.sh
+    post_switchover: /etc/puremyha/hooks/post_switchover.sh
+```
+
+**Step 6 — Bootstrap the cluster**
 
 ```bash
 # Set the hacluster password (same on both nodes):
@@ -109,14 +152,14 @@ pcs host auth ha1 ha2 -u hacluster -p PASSWORD
 pcs cluster setup puremyha-cluster ha1 ha2 --start --enable
 ```
 
-**Step 6 — Add the QDevice**
+**Step 7 — Add the QDevice**
 
 ```bash
 pcs quorum device add model net host=192.168.10.13 algorithm=ffsplit
 pcs quorum status   # confirm expected_votes: 3
 ```
 
-**Step 7 — Configure STONITH**
+**Step 8 — Configure STONITH**
 
 STONITH is **mandatory** in production. Without fencing, a split-brain can leave two nodes running `puremyhad` simultaneously.
 
@@ -134,14 +177,9 @@ pcs constraint location fence-ha1 avoids ha1
 pcs constraint location fence-ha2 avoids ha2
 ```
 
-**Step 8 — Create resources**
+**Step 9 — Create resources and resource group**
 
 ```bash
-# Virtual IP
-pcs resource create puremyha-vip IPaddr2 \
-    ip=192.168.10.100 cidr_netmask=24 \
-    op monitor interval=10s
-
 # puremyhad daemon (OCF RA)
 pcs resource create puremyhad ocf:puremyha:puremyhad \
     config=/etc/puremyha/config.yaml \
@@ -149,9 +187,26 @@ pcs resource create puremyhad ocf:puremyha:puremyhad \
     op start timeout=30s op stop timeout=60s \
     op monitor interval=15s timeout=15s
 
-# VIP always colocated with puremyhad; puremyhad starts first
-pcs constraint colocation add puremyha-vip with puremyhad INFINITY
-pcs constraint order puremyhad then puremyha-vip
+# HAProxy (use systemd:haproxy in production with systemd)
+pcs resource create haproxy systemd:haproxy \
+    op start timeout=30s op stop timeout=30s \
+    op monitor interval=10s timeout=10s
+
+# Write VIP — clients connect here for read-write access
+pcs resource create vip-write IPaddr2 \
+    ip=192.168.10.100 cidr_netmask=24 \
+    op monitor interval=10s
+
+# Read VIP — clients connect here for read-only access
+pcs resource create vip-read IPaddr2 \
+    ip=192.168.10.101 cidr_netmask=24 \
+    op monitor interval=10s
+
+# Resource group: ensures colocation and correct start/stop order
+#   Start: puremyhad → haproxy → vip-write → vip-read
+#   Stop:  vip-read → vip-write → haproxy → puremyhad
+pcs resource group add puremyha-group \
+    puremyhad haproxy vip-write vip-read
 ```
 
 See [`pacemaker-sample/setup.sh`](../pacemaker-sample/setup.sh) for a fully annotated reference script.
@@ -159,19 +214,23 @@ See [`pacemaker-sample/setup.sh`](../pacemaker-sample/setup.sh) for a fully anno
 ### Verification
 
 ```bash
-# Overall cluster health
+# Overall cluster health — all 4 resources in puremyha-group should be Started
 pcs status
 
 # Confirm QDevice vote is active (expected_votes: 3)
 pcs quorum status
 
 # Planned failover test
-pcs node standby ha1          # puremyhad migrates to ha2
+pcs node standby ha1          # entire resource group migrates to ha2
 pcs status
 pcs node unstandby ha1        # ha1 rejoins as standby
 
 # Confirm socket exists only on the active node
 ls -la /run/puremyhad.sock    # run on the active node — should exist
+
+# Check HAProxy is listening and stats socket exists on the active node
+ss -tlnp | grep 3306
+echo "show stat" | socat stdio /run/haproxy/admin.sock
 
 # Config reload (sends SIGHUP via ExecReload in the systemd unit)
 pcs resource reload puremyhad

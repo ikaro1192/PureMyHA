@@ -6,13 +6,21 @@
 # Read and adapt each section to your environment before executing.
 #
 # Topology:
-#   ha1      192.168.10.11  — cluster node (Active puremyhad)
-#   ha2      192.168.10.12  — cluster node (Standby puremyhad)
+#   ha1      192.168.10.11  — cluster node (Active puremyhad + HAProxy)
+#   ha2      192.168.10.12  — cluster node (Standby puremyhad + HAProxy)
 #   qdevice  192.168.10.13  — quorum device host (corosync-qnetd only)
-#   VIP      192.168.10.100 — virtual IP that follows puremyhad
+#   db1      MySQL source
+#   db2      MySQL replica
+#
+# Virtual IPs:
+#   192.168.10.100 — Write VIP (routes to MySQL source via HAProxy)
+#   192.168.10.101 — Read VIP  (routes to MySQL replicas via HAProxy)
+#
+# Pacemaker Resource Group (start order):
+#   puremyhad → haproxy → vip-write → vip-read
 #
 # Prerequisites on ha1 and ha2:
-#   - pacemaker, pcs, corosync, fence-agents installed
+#   - pacemaker, pcs, corosync, fence-agents, haproxy, socat installed
 #   - /etc/corosync/corosync.conf deployed (see corosync.conf.example)
 #   - /etc/hosts or DNS entries for ha1, ha2, qdevice
 #   - hacluster user password set: echo "PASSWORD" | passwd --stdin hacluster
@@ -27,10 +35,10 @@
 # Run on ha1 AND ha2.
 
 # Debian / Ubuntu
-apt-get install -y pacemaker pcs corosync fence-agents
+apt-get install -y pacemaker pcs corosync fence-agents haproxy socat
 
 # RHEL / Rocky / AlmaLinux
-# dnf install -y pacemaker pcs corosync fence-agents-all
+# dnf install -y pacemaker pcs corosync fence-agents-all haproxy socat
 
 # On the QDevice host only:
 # apt-get install -y corosync-qnetd     # Debian
@@ -77,7 +85,44 @@ install -m 755 /path/to/pacemaker-sample/ocf/puremyha \
     /usr/lib/ocf/resource.d/puremyha/puremyhad
 
 
-# --- SECTION 6: Authenticate and bootstrap the cluster ---
+# --- SECTION 6: Deploy HAProxy configuration and hook scripts ---
+# Run on ha1 AND ha2.
+#
+# HAProxy sits between clients and MySQL. It runs in TCP (Layer 4) mode:
+#   Write VIP:3306 → mysql_source backend  (single active source)
+#   Read  VIP:3306 → mysql_replicas backend (replica pool)
+#
+# PureMyHA hook scripts update HAProxy backends automatically on failover
+# or switchover using the HAProxy Runtime API (stats socket) and also
+# rewrite the config file for persistence.
+
+# Deploy HAProxy config (edit VIP addresses and server entries first):
+cp /path/to/pacemaker-sample/haproxy/haproxy.cfg.example /etc/haproxy/haproxy.cfg
+
+# Create the stats socket directory:
+mkdir -p /run/haproxy
+
+# Install hook scripts:
+mkdir -p /etc/puremyha/hooks
+install -m 755 /path/to/pacemaker-sample/haproxy/hooks/haproxy-common.sh \
+    /etc/puremyha/hooks/haproxy-common.sh
+install -m 755 /path/to/pacemaker-sample/haproxy/hooks/post_failover.sh \
+    /etc/puremyha/hooks/post_failover.sh
+install -m 755 /path/to/pacemaker-sample/haproxy/hooks/post_switchover.sh \
+    /etc/puremyha/hooks/post_switchover.sh
+
+# Disable HAProxy systemd service — Pacemaker manages it:
+systemctl disable haproxy
+systemctl stop haproxy
+
+# Add hooks to PureMyHA config (/etc/puremyha/config.yaml):
+#   global:
+#     hooks:
+#       post_failover: /etc/puremyha/hooks/post_failover.sh
+#       post_switchover: /etc/puremyha/hooks/post_switchover.sh
+
+
+# --- SECTION 7: Authenticate and bootstrap the cluster ---
 # Run on ONE node (ha1) only.
 
 # Authenticate pcs to both nodes (uses the hacluster password set in Section 2):
@@ -89,7 +134,7 @@ pcs cluster setup puremyha-cluster ha1 ha2 \
     --enable
 
 
-# --- SECTION 7: Add the QDevice ---
+# --- SECTION 8: Add the QDevice ---
 # Run on ONE node (ha1) only.
 # The QDevice host must have corosync-qnetd running before this step.
 pcs quorum device add model net \
@@ -100,7 +145,7 @@ pcs quorum device add model net \
 pcs quorum status
 
 
-# --- SECTION 8: Configure STONITH (fencing) ---
+# --- SECTION 9: Configure STONITH (fencing) ---
 # STONITH is MANDATORY in production. A cluster without fencing risks
 # data corruption if a node hangs partway through a failover.
 # NEVER run `pcs property set stonith-enabled=false` in production.
@@ -135,15 +180,6 @@ pcs constraint location fence-ha2 avoids ha2
 # pcs stonith fence ha2
 
 
-# --- SECTION 9: Create the Virtual IP resource ---
-# The VIP floats to the active node so CLI clients and hooks always connect
-# to the correct host via /run/puremyhad.sock.
-pcs resource create puremyha-vip IPaddr2 \
-    ip=192.168.10.100 \
-    cidr_netmask=24 \
-    op monitor interval=10s timeout=10s
-
-
 # --- SECTION 10: Create the puremyhad resource ---
 # Uses the OCF RA installed in Section 5.
 # Set http_port only if http.enabled=true in config.yaml (port must match http.port).
@@ -157,18 +193,52 @@ pcs resource create puremyhad ocf:puremyha:puremyhad \
     op monitor interval=15s timeout=15s
 
 
-# --- SECTION 11: Colocation and ordering constraints ---
-# Ensure the VIP always runs on the same node as puremyhad:
-pcs constraint colocation add puremyha-vip with puremyhad INFINITY
+# --- SECTION 11: Create the HAProxy resource ---
+# In production, use systemd:haproxy instead of ocf:heartbeat:anything:
+#   pcs resource create haproxy systemd:haproxy \
+#       op start timeout=30s op stop timeout=30s op monitor interval=10s timeout=10s
+#
+# ocf:heartbeat:anything is used here because the demo environment runs
+# without systemd. For production with systemd, prefer the systemd RA above.
+pcs resource create haproxy ocf:heartbeat:anything \
+    binfile="/usr/sbin/haproxy" \
+    cmdline_options="-f /etc/haproxy/haproxy.cfg -p /run/haproxy/haproxy.pid -Ws" \
+    pidfile="/run/haproxy/haproxy.pid" \
+    op start   timeout=30s \
+    op stop    timeout=30s \
+    op monitor interval=10s timeout=10s
 
-# Ensure puremyhad starts before the VIP is brought up:
-pcs constraint order puremyhad then puremyha-vip
+
+# --- SECTION 12: Create the Virtual IP resources ---
+# Two VIPs are used — both on port 3306 — so clients distinguish read/write
+# by IP address, not port number.
+
+# Write VIP: clients connect here for read-write access to the MySQL source.
+pcs resource create vip-write IPaddr2 \
+    ip=192.168.10.100 \
+    cidr_netmask=24 \
+    op monitor interval=10s timeout=10s
+
+# Read VIP: clients connect here for read-only access to MySQL replicas.
+pcs resource create vip-read IPaddr2 \
+    ip=192.168.10.101 \
+    cidr_netmask=24 \
+    op monitor interval=10s timeout=10s
 
 
-# --- SECTION 12: Prefer ha1 as the active node (optional) ---
-# After maintenance, puremyhad will prefer to return to ha1 (score=50).
-# Remove this if you want the resource to stay on whichever node it is on.
-pcs constraint location puremyhad prefers ha1=50
+# --- SECTION 13: Create a Resource Group ---
+# A resource group ensures all resources run on the same node and
+# start/stop in the correct order:
+#   Start: puremyhad → haproxy → vip-write → vip-read
+#   Stop:  vip-read → vip-write → haproxy → puremyhad
+pcs resource group add puremyha-group \
+    puremyhad haproxy vip-write vip-read
+
+
+# --- SECTION 14: Prefer ha1 as the active node (optional) ---
+# After maintenance, the resource group will prefer to return to ha1 (score=50).
+# Remove this if you want the group to stay on whichever node it is on.
+pcs constraint location puremyha-group prefers ha1=50
 
 
 # =============================================================================
@@ -184,11 +254,19 @@ pcs quorum status
 # Show all constraints:
 pcs constraint show
 
-# Planned failover test (moves puremyhad to ha2):
+# Planned failover test (moves the entire resource group to ha2):
 pcs node standby ha1
 pcs status
-# Confirm puremyhad and VIP are now on ha2, then restore ha1:
+# Confirm all resources (puremyhad, haproxy, vip-write, vip-read) are on ha2,
+# then restore ha1:
 pcs node unstandby ha1
+
+# Check that HAProxy is listening and the stats socket exists on the active node:
+# ss -tlnp | grep 3306           # should show HAProxy listening
+# ls -la /run/haproxy/admin.sock # should exist on the active node
+
+# Test the HAProxy stats socket (on the active node):
+# echo "show stat" | socat stdio /run/haproxy/admin.sock
 
 # Reload puremyhad config (sends SIGHUP via ExecReload in the systemd unit):
 # pcs resource reload puremyhad

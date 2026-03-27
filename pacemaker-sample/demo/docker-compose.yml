@@ -17,6 +17,7 @@ services:
       - ../../dist-bins/puremyhad:/usr/sbin/puremyhad:ro
       - ./config/puremyha.yaml:/etc/puremyha/config.yaml:ro
       - ./config/mysql.pass:/etc/puremyha/mysql.pass:ro
+      - ./config/haproxy.cfg:/etc/haproxy/haproxy.cfg:ro
 
   ha2:
     build:
@@ -31,6 +32,7 @@ services:
       - ../../dist-bins/puremyhad:/usr/sbin/puremyhad:ro
       - ./config/puremyha.yaml:/etc/puremyha/config.yaml:ro
       - ./config/mysql.pass:/etc/puremyha/mysql.pass:ro
+      - ./config/haproxy.cfg:/etc/haproxy/haproxy.cfg:ro
 
   qdevice:
     build:
