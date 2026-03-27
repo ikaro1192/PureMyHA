@@ -150,8 +150,8 @@ main = do
 
   case optCommand opts of
     CmdValidateConfig configPath -> runValidateConfig configPath json
-    _ -> do
-      let req = case optCommand opts of
+    cmd -> do
+      let req = case cmd of
             CmdStatus             -> ReqStatus mCluster
             CmdTopology           -> ReqTopology mCluster
             CmdSwitchover mTo dr mDt -> ReqSwitchover mCluster mTo dr mDt
