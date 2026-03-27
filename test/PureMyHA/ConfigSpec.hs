@@ -296,6 +296,52 @@ spec = do
             ]
       decodeConfig yaml `shouldSatisfy` isLeft
 
+    it "rejects candidate_priority set in global failover" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "global:"
+            , "  monitoring:"
+            , "    interval: 5s"
+            , "    connect_timeout: 2s"
+            , "    replication_lag_warning: 10s"
+            , "    replication_lag_critical: 30s"
+            , "  failure_detection:"
+            , "    recovery_block_period: 3600s"
+            , "  failover:"
+            , "    auto_failover: true"
+            , "    candidate_priority:"
+            , "      - host: db2"
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
+
+    it "rejects never_promote set in global failover" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "global:"
+            , "  monitoring:"
+            , "    interval: 5s"
+            , "    connect_timeout: 2s"
+            , "    replication_lag_warning: 10s"
+            , "    replication_lag_critical: 30s"
+            , "  failure_detection:"
+            , "    recovery_block_period: 3600s"
+            , "  failover:"
+            , "    auto_failover: true"
+            , "    never_promote:"
+            , "      - db3-analytics"
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
+
     it "fails when failover is absent from both cluster and global" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"

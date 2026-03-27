@@ -236,6 +236,12 @@ instance FromJSON Config where
     rawClusters <- o .:  "clusters"
     logging     <- o .:? "logging" .!= defaultLoggingConfig
     http        <- o .:? "http"    .!= defaultHttpConfig
+    case mglobal >>= gcFailover of
+      Just fc | not (null (fcCandidatePriority fc)) || not (null (fcNeverPromote fc)) ->
+        fail "global.failover.candidate_priority and global.failover.never_promote \
+             \are cluster-specific (hostnames differ per cluster) and cannot be set \
+             \in the global section; specify them under each cluster's failover block instead"
+      _ -> pure ()
     clusters    <- case mapM (resolveCluster mglobal) rawClusters of
       Left err -> fail err
       Right cs -> pure cs
