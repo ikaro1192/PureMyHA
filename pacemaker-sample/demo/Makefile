@@ -1,6 +1,14 @@
 COMPOSE = docker compose
 
-.PHONY: build start setup status failover unstandby logs clean
+# The node currently running puremyhad (resource group owner).
+# Most MySQL-related commands must run on this node.
+ACTIVE_NODE = $$($(COMPOSE) exec ha1 crm_mon -1 --output-as=xml 2>/dev/null \
+	| grep -oP 'resource id="puremyhad"[^/]*managed="true"[^/]*role="Started"[^/]*node="\K[^"]+' \
+	|| echo ha1)
+
+.PHONY: build start setup status quorum failover unstandby \
+        switchover stop-source resume-source ack-recovery topology \
+        pause-failover resume-failover logs clean
 
 ## Build the puremyhad binary and cluster node images
 build:
@@ -55,6 +63,66 @@ unstandby:
 	$(COMPOSE) exec ha1 pcs node unstandby ha1
 	@sleep 3
 	$(COMPOSE) exec ha1 crm_mon -1
+
+## ---- MySQL operations (via puremyha CLI) ----
+
+## Graceful switchover: swap source ↔ replica roles
+## Usage: make switchover              (auto-select best replica)
+##        make switchover TO=db2       (switch to a specific host)
+switchover:
+	@node=$(ACTIVE_NODE); \
+	echo "==> Running switchover on $$node..."; \
+	if [ -n "$(TO)" ]; then \
+		$(COMPOSE) exec $$node puremyha switchover --to=$(TO); \
+	else \
+		$(COMPOSE) exec $$node puremyha switchover; \
+	fi
+
+## Simulate MySQL source failure by blocking network traffic to the source
+## Usage: make stop-source HOST=db1    (block traffic to db1:3306)
+stop-source:
+	@if [ -z "$(HOST)" ]; then echo "Usage: make stop-source HOST=<mysql-host>"; exit 1; fi
+	@node=$(ACTIVE_NODE); \
+	echo "==> Blocking traffic to $(HOST):3306 on $$node (simulating source failure)..."; \
+	$(COMPOSE) exec $$node iptables -A OUTPUT -d $(HOST) -p tcp --dport 3306 -j DROP; \
+	$(COMPOSE) exec $$node iptables -A INPUT -s $(HOST) -p tcp --sport 3306 -j DROP; \
+	echo "    puremyhad should detect the failure within a few monitoring cycles."
+
+## Restore network connectivity to a previously blocked MySQL host
+## Usage: make resume-source HOST=db1
+resume-source:
+	@if [ -z "$(HOST)" ]; then echo "Usage: make resume-source HOST=<mysql-host>"; exit 1; fi
+	@node=$(ACTIVE_NODE); \
+	echo "==> Restoring traffic to $(HOST):3306 on $$node..."; \
+	$(COMPOSE) exec $$node iptables -D OUTPUT -d $(HOST) -p tcp --dport 3306 -j DROP 2>/dev/null || true; \
+	$(COMPOSE) exec $$node iptables -D INPUT -s $(HOST) -p tcp --sport 3306 -j DROP 2>/dev/null || true; \
+	echo "    Done."
+
+## Show current MySQL topology as seen by puremyhad
+topology:
+	@node=$(ACTIVE_NODE); \
+	$(COMPOSE) exec $$node curl -s http://127.0.0.1:8080/cluster/main/topology | python3 -m json.tool 2>/dev/null \
+	|| $(COMPOSE) exec $$node curl -s http://127.0.0.1:8080/cluster/main/topology
+
+## Acknowledge recovery block after auto-failover (re-enables auto-failover)
+ack-recovery:
+	@node=$(ACTIVE_NODE); \
+	echo "==> Acknowledging recovery block on $$node..."; \
+	$(COMPOSE) exec $$node puremyha ack-recovery
+
+## Pause automatic failover (e.g. during maintenance)
+pause-failover:
+	@node=$(ACTIVE_NODE); \
+	echo "==> Pausing auto-failover..."; \
+	$(COMPOSE) exec $$node puremyha pause-failover
+
+## Resume automatic failover
+resume-failover:
+	@node=$(ACTIVE_NODE); \
+	echo "==> Resuming auto-failover..."; \
+	$(COMPOSE) exec $$node puremyha resume-failover
+
+## ---- General ----
 
 ## Follow logs from all containers
 logs:

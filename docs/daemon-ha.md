@@ -236,6 +236,67 @@ echo "show stat" | socat stdio /run/haproxy/admin.sock
 pcs resource reload puremyhad
 ```
 
+### MySQL operations (Docker Compose demo)
+
+The demo Makefile provides targets for MySQL-level operations via the `puremyha` CLI. These commands are automatically routed to the Pacemaker node currently running `puremyhad`.
+
+#### Switchover (graceful role swap)
+
+```bash
+# Auto-select the best replica as new source
+make switchover
+
+# Switch to a specific host
+make switchover TO=db2
+```
+
+`puremyha switchover` performs a graceful source ↔ replica role swap: the current source is demoted, the target replica is promoted, and HAProxy backends are updated via the `post_switchover` hook. Client connections are briefly interrupted during the transition.
+
+#### Simulating MySQL source failure
+
+```bash
+# Block network traffic to the MySQL source (simulates source crash)
+make stop-source HOST=db1
+
+# Watch puremyhad detect the failure and trigger auto-failover
+make logs          # or: make status
+
+# After failover, acknowledge the recovery block to re-enable auto-failover
+make ack-recovery
+
+# Restore network connectivity to the old source
+make resume-source HOST=db1
+```
+
+`stop-source` uses iptables inside the privileged demo container to drop all traffic to the specified MySQL host on port 3306. `puremyhad` detects the unreachable source within a few monitoring cycles (`interval: 3s` × `consecutive_failures_for_dead: 3` = ~9 seconds) and triggers automatic failover.
+
+After auto-failover, an anti-flap recovery block prevents further automatic failovers for `recovery_block_period` (default 3600s). Run `make ack-recovery` to clear the block when you are ready.
+
+#### Other MySQL operations
+
+```bash
+# Show the current MySQL topology as seen by puremyhad
+make topology
+
+# Pause auto-failover (e.g. during planned maintenance)
+make pause-failover
+
+# Resume auto-failover
+make resume-failover
+```
+
+#### Demo targets summary
+
+| Target | Description |
+|--------|-------------|
+| `make switchover [TO=host]` | Graceful source ↔ replica role swap |
+| `make stop-source HOST=host` | Simulate source failure (iptables block) |
+| `make resume-source HOST=host` | Restore connectivity after simulation |
+| `make topology` | Show MySQL topology from puremyhad |
+| `make ack-recovery` | Clear anti-flap recovery block |
+| `make pause-failover` | Pause automatic failover |
+| `make resume-failover` | Resume automatic failover |
+
 ---
 
 ## VIP-watching cron / systemd.timer (simple)
