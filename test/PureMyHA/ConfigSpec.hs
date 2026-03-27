@@ -342,7 +342,7 @@ spec = do
             ]
       decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "fails when failover is absent from both cluster and global" $ do
+    it "succeeds with defaults when failover is absent from both cluster and global" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
@@ -359,7 +359,14 @@ spec = do
             , "  failure_detection:"
             , "    recovery_block_period: 3600s"
             ]
-      decodeConfig yaml `shouldSatisfy` isLeft
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg -> do
+          let fc = ccFailover (head (cfgClusters cfg))
+          fcAutoFailover fc `shouldBe` True
+          fcAutoFence    fc `shouldBe` False
+          fcCandidatePriority fc `shouldSatisfy` null
+          fcNeverPromote      fc `shouldBe` []
 
   describe "TLS config parsing" $ do
     it "ccTLS defaults to Nothing when tls key is absent" $ do

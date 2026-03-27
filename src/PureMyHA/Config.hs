@@ -30,6 +30,7 @@ module PureMyHA.Config
 import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON (..), withObject, withText, (.:), (.:?), (.!=))
 import Data.List (group, sort)
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (NominalDiffTime)
@@ -77,7 +78,7 @@ defaultLoggingConfig = LoggingConfig "/var/log/puremyha.log" LogLevelInfo
 data GlobalConfig = GlobalConfig
   { gcMonitoring       :: Maybe MonitoringConfig
   , gcFailureDetection :: Maybe FailureDetectionConfig
-  , gcFailover         :: Maybe FailoverConfig
+  , gcFailover         :: Maybe RawFailoverConfig
   , gcHooks            :: Maybe HooksConfig
   } deriving (Show, Generic)
 
@@ -122,7 +123,7 @@ data RawClusterConfig = RawClusterConfig
   , rccReplicationCredentials :: Maybe Credentials
   , rccMonitoring             :: Maybe MonitoringConfig
   , rccFailureDetection       :: Maybe FailureDetectionConfig
-  , rccFailover               :: Maybe FailoverConfig
+  , rccFailover               :: Maybe RawFailoverConfig
   , rccHooks                  :: Maybe HooksConfig
   , rccTLS                    :: Maybe TLSConfig
   } deriving (Show, Generic)
@@ -176,6 +177,19 @@ data CandidatePriority = CandidatePriority
   { cpHost :: Text
   } deriving (Show, Generic)
 
+-- | Internal type for YAML parsing of failover config; all scalar fields are optional
+-- to support field-level merging between per-cluster and global sections.
+-- 'candidate_priority' and 'never_promote' are cluster-only and never inherited from global.
+data RawFailoverConfig = RawFailoverConfig
+  { rfcAutoFailover              :: Maybe Bool
+  , rfcMinReplicasForFailover    :: Maybe Int
+  , rfcCandidatePriority         :: [CandidatePriority]
+  , rfcWaitRelayLogTimeout       :: Maybe NominalDiffTime
+  , rfcAutoFence                 :: Maybe Bool
+  , rfcMaxReplicaLagForCandidate :: Maybe Int
+  , rfcNeverPromote              :: [Text]
+  } deriving (Show, Generic)
+
 data HooksConfig = HooksConfig
   { hcPreFailover                 :: Maybe FilePath
   , hcPostFailover                :: Maybe FilePath
@@ -205,13 +219,29 @@ instance FromJSON DurationField where
       Right d -> pure (DurationField d)
       Left e  -> fail e
 
+-- | Merge per-cluster and global raw failover configs into a resolved 'FailoverConfig'.
+-- Scalar fields: cluster value takes precedence over global, then falls back to the default.
+-- 'candidate_priority' and 'never_promote' are cluster-only and never inherited from global.
+resolveFailover :: Maybe RawFailoverConfig -> Maybe RawFailoverConfig -> FailoverConfig
+resolveFailover clusterRaw globalRaw = FailoverConfig
+  { fcAutoFailover              = fromMaybe True  (pick rfcAutoFailover)
+  , fcMinReplicasForFailover    = fromMaybe 1     (pick rfcMinReplicasForFailover)
+  , fcCandidatePriority         = maybe [] rfcCandidatePriority clusterRaw
+  , fcWaitRelayLogTimeout       = fromMaybe 60    (pick rfcWaitRelayLogTimeout)
+  , fcAutoFence                 = fromMaybe False (pick rfcAutoFence)
+  , fcMaxReplicaLagForCandidate = pick rfcMaxReplicaLagForCandidate
+  , fcNeverPromote              = maybe [] rfcNeverPromote clusterRaw
+  }
+  where
+    pick :: (RawFailoverConfig -> Maybe a) -> Maybe a
+    pick f = (clusterRaw >>= f) <|> (globalRaw >>= f)
+
 -- | Resolve a raw cluster config against optional global defaults.
 -- Per-cluster settings take precedence; falls back to global; errors if neither present.
 resolveCluster :: Maybe GlobalConfig -> RawClusterConfig -> Either String ClusterConfig
 resolveCluster mglobal raw = do
   mc  <- require "monitoring"        rccMonitoring       (gcMonitoring       =<< mglobal)
   fdc <- require "failure_detection" rccFailureDetection (gcFailureDetection =<< mglobal)
-  fc  <- require "failover"          rccFailover         (gcFailover         =<< mglobal)
   pure ClusterConfig
     { ccName                   = ClusterName (rccName raw)
     , ccNodes                  = rccNodes raw
@@ -219,7 +249,7 @@ resolveCluster mglobal raw = do
     , ccReplicationCredentials = rccReplicationCredentials raw
     , ccMonitoring             = mc
     , ccFailureDetection       = fdc
-    , ccFailover               = fc
+    , ccFailover               = resolveFailover (rccFailover raw) (gcFailover =<< mglobal)
     , ccHooks                  = rccHooks raw <|> (gcHooks =<< mglobal)
     , ccTLS                    = rccTLS raw
     }
@@ -237,7 +267,7 @@ instance FromJSON Config where
     logging     <- o .:? "logging" .!= defaultLoggingConfig
     http        <- o .:? "http"    .!= defaultHttpConfig
     case mglobal >>= gcFailover of
-      Just fc | not (null (fcCandidatePriority fc)) || not (null (fcNeverPromote fc)) ->
+      Just rfc | not (null (rfcCandidatePriority rfc)) || not (null (rfcNeverPromote rfc)) ->
         fail "global.failover.candidate_priority and global.failover.never_promote \
              \are cluster-specific (hostnames differ per cluster) and cannot be set \
              \in the global section; specify them under each cluster's failover block instead"
@@ -332,14 +362,14 @@ instance FromJSON FailureDetectionConfig where
       <$> (unDuration <$> o .:  "recovery_block_period")
       <*> o .:? "consecutive_failures_for_dead" .!= 3
 
-instance FromJSON FailoverConfig where
+instance FromJSON RawFailoverConfig where
   parseJSON = withObject "FailoverConfig" $ \o ->
-    FailoverConfig
-      <$> o .:? "auto_failover" .!= True
-      <*> o .:? "min_replicas_for_failover" .!= 1
+    RawFailoverConfig
+      <$> o .:? "auto_failover"
+      <*> o .:? "min_replicas_for_failover"
       <*> o .:? "candidate_priority" .!= []
-      <*> (unDuration <$> o .:? "wait_for_relay_log_apply_timeout" .!= DurationField 60)
-      <*> o .:? "auto_fence" .!= False
+      <*> (fmap unDuration <$> o .:? "wait_for_relay_log_apply_timeout")
+      <*> o .:? "auto_fence"
       <*> o .:? "max_replica_lag_for_candidate"
       <*> o .:? "never_promote" .!= []
 
