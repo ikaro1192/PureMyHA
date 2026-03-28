@@ -9,19 +9,21 @@ module PureMyHA.Monitor.Worker
   , computeStaleNodes
   , pruneStaleWorkers
   , detectAndPruneStaleWorkers
+  , probeTimeoutMicros
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, wait, cancel, Async)
+import Control.Concurrent.Async (async, wait, cancel, waitCatch, Async)
 import Control.Concurrent.STM (atomically, TVar, newTVarIO, modifyTVar', readTVarIO)
 import Control.Exception (SomeException, catch)
+import System.Timeout (timeout)
 import Control.Monad (when, forM, forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask, asks)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
-import Data.Time (getCurrentTime)
+import Data.Time (getCurrentTime, NominalDiffTime)
 import PureMyHA.Config
 import PureMyHA.Env
 import PureMyHA.Failover.Auto (runAutoFailover, runAutoFence)
@@ -136,6 +138,14 @@ detectAndPruneStaleWorkers reg cc discovered = do
   pruneStaleWorkers reg staleNodes
   pure staleNodes
 
+-- | Compute the probe timeout in microseconds.
+-- Formula: connect_timeout × (2 × connect_retries + 1)
+-- This covers the worst case of all retry attempts completing with max backoff,
+-- and ensures a hung MySQL (TCP connected but query never responds) is detected.
+probeTimeoutMicros :: NominalDiffTime -> Int -> Int
+probeTimeoutMicros cap retries =
+  round (realToFrac cap * fromIntegral (2 * retries + 1) * 1_000_000 :: Double)
+
 -- | Suppress NeedsAttention health state when consecutive failure count is below
 -- the configured threshold. Falls back to previous health (or Healthy if no prior state).
 suppressBelowThreshold :: Int -> Int -> Maybe NodeState -> NodeState -> NodeState
@@ -167,10 +177,23 @@ monitorNode nid = do
     mTopo <- getClusterTopology tvar (ccName cc)
     pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
   let prevFailures = maybe 0 nsConsecutiveFailures mOldNs
-  result <- liftIO $ withNodeConnRetry retries backoff cap logRetry mTls ci $ \conn -> do
-    mRs      <- showReplicaStatus conn
-    gtidExec <- getGtidExecuted conn
-    pure (mRs, gtidExec)
+  -- Run the probe in a separate thread so that timeout can interrupt it via
+  -- waitCatch (STM — always interruptible) rather than wrapping the I/O directly.
+  -- mysql-haskell's readPacket blocks in a C recv() that async exceptions cannot
+  -- reliably interrupt; by moving the I/O to a sibling thread we avoid that.
+  -- The probe thread runs to completion once MySQL responds; it holds no shared
+  -- locks so no deadlock is possible.
+  let tMicros = probeTimeoutMicros cap retries
+  result <- liftIO $ do
+    probeAsync <- async $ withNodeConnRetry retries backoff cap logRetry mTls ci $ \conn -> do
+      mRs      <- showReplicaStatus conn
+      gtidExec <- getGtidExecuted conn
+      pure (mRs, gtidExec)
+    mEither <- timeout tMicros (waitCatch probeAsync)
+    case mEither of
+      Nothing          -> return (Left "probe timeout")
+      Just (Left  e)   -> return (Left (T.pack (show e)))
+      Just (Right r)   -> return r
   let newFailures = case result of { Left _ -> prevFailures + 1; Right _ -> 0 }
   let ns = case result of
         Left err ->
@@ -255,6 +278,9 @@ enrichErrantGtids ns = do
   cc    <- asks envCluster
   creds <- getMonCredentials
   mTls  <- getTLSConfig
+  env   <- ask
+  mc    <- liftIO $ readTVarIO (envMonitoring env)
+  let tMicros = probeTimeoutMicros (mcConnectTimeout mc) (mcConnectRetries mc)
   liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     case mTopo of
@@ -266,7 +292,7 @@ enrichErrantGtids ns = do
           case srcNodes of
             Nothing -> pure ns
             Just srcNs ->
-              if not (nsIsReachable srcNs)
+              if not (nsIsReachable srcNs) || not (nsIsReachable ns)
                 then pure ns
                 else do
                   let replicaGtid = case nsProbeResult ns of
@@ -276,11 +302,14 @@ enrichErrantGtids ns = do
                         ProbeSuccess{prGtidExecuted = g} -> g
                         ProbeFailure{} -> ""
                       ci = makeConnectInfo srcId creds
-                  result <- withNodeConn mTls ci $ \conn ->
+                  errantAsync <- async $ withNodeConn mTls ci $ \conn ->
                     gtidSubtract conn replicaGtid sourceGtid
-                  case result of
-                    Left _         -> pure ns
-                    Right errant   -> pure ns { nsErrantGtids = errant }
+                  mResult <- timeout tMicros (waitCatch errantAsync)
+                  case mResult of
+                    Nothing                       -> pure ns
+                    Just (Left _)                 -> pure ns
+                    Just (Right (Left _))         -> pure ns
+                    Just (Right (Right errant))   -> pure ns { nsErrantGtids = errant }
 
 recomputeClusterHealth :: App ()
 recomputeClusterHealth = do

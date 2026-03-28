@@ -10,7 +10,7 @@ import Fixtures
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..))
 import PureMyHA.Env (runApp)
 import qualified Data.Set as Set
-import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers)
+import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros)
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
 import PureMyHA.Types
@@ -42,7 +42,27 @@ testFC = FailoverConfig
 spec :: Spec
 spec = do
 
+  describe "probeTimeoutMicros" $ do
+
+    it "computes 6s for default config (2s timeout, 1 retry)" $
+      probeTimeoutMicros 2 1 `shouldBe` 6_000_000
+
+    it "computes 2s when no retries (2s timeout, 0 retries)" $
+      probeTimeoutMicros 2 0 `shouldBe` 2_000_000
+
+    it "scales correctly with higher retries (3s timeout, 2 retries)" $
+      probeTimeoutMicros 3 2 `shouldBe` 15_000_000
+
   describe "enrichErrantGtids" $ do
+
+    it "returns ns unchanged when monitored node is unreachable (skips TCP connect)" $ do
+      tvar <- newDaemonState
+      let topo = (buildClusterTopology "main" clusterWithDeadSource)
+                   { ctSourceNodeId = Just (NodeId "db1" 3306) }
+      atomically $ updateClusterTopology tvar topo
+      env <- mkTestEnv tvar testCC testFC
+      result <- runApp env (enrichErrantGtids unreachableReplica)
+      nsErrantGtids result `shouldBe` nsErrantGtids unreachableReplica
 
     it "returns ns unchanged when source is unreachable (skips TCP connect)" $ do
       tvar <- newDaemonState
