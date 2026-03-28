@@ -1,11 +1,12 @@
 module PureMyHA.DiscoverySpec (spec) where
 
+import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import Test.Hspec
 import Fixtures
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailureDetectionConfig (..), FailoverConfig (..))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailureDetectionConfig (..), FailoverConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
 import PureMyHA.Topology.Discovery
   ( buildNodeStateFromProbe
   , buildClusterTopology
@@ -26,11 +27,11 @@ testRs = mkReplicaStatus "db0" 3306 IOYes "uuid1:1-100"
 testCC :: ClusterConfig
 testCC = ClusterConfig
   { ccName                   = "test-cluster"
-  , ccNodes                  = [NodeConfig "db1" 3306]
+  , ccNodes                  = NodeConfig "db1" (Port 3306) :| []
   , ccCredentials            = Credentials "root" "/run/pw"
   , ccReplicationCredentials = Nothing
-  , ccMonitoring             = MonitoringConfig 3 5 30 60 300 1 1
-  , ccFailureDetection       = FailureDetectionConfig 3600 3
+  , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
+  , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
   , ccFailover               = FailoverConfig True 1 [] 60 False Nothing []
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing

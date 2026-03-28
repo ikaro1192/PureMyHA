@@ -17,7 +17,8 @@ import qualified Data.Set as Set
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
-import PureMyHA.Config (ClusterConfig (..), DbCredentials, NodeConfig (..), TLSConfig)
+import qualified Data.List.NonEmpty as NE
+import PureMyHA.Config (ClusterConfig (..), DbCredentials, NodeConfig (..), Port (..), TLSConfig)
 import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getTLSConfig)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
@@ -32,7 +33,7 @@ discoverTopology = do
   creds  <- getMonCredentials
   mTls   <- getTLSConfig
   logger <- asks envLogger >>= liftIO . readTVarIO
-  let seedNodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc)
+  let seedNodes = map (\nc -> NodeId (ncHost nc) (unPort (ncPort nc))) (NE.toList (ccNodes cc))
   nodeStates <- liftIO $ discoverAll mTls creds (Set.fromList seedNodes) Set.empty Map.empty logger
   pure (buildClusterTopology (ccName cc) nodeStates)
 

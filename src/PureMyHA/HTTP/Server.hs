@@ -15,7 +15,7 @@ import Network.HTTP.Types (status200, status404, status405, methodGet, Header)
 import Network.Wai (Application, Request (..), Response, responseLBS)
 import Network.Wai.Handler.Warp (defaultSettings, runSettings, setHost, setPort)
 
-import PureMyHA.Config (HttpConfig (..))
+import PureMyHA.Config (HttpConfig (..), Port (..))
 import PureMyHA.IPC.Protocol ()   -- ToJSON instances
 import PureMyHA.IPC.Server (toClusterStatus, toClusterTopologyView)
 import PureMyHA.Topology.State (TVarDaemonState, readDaemonState)
@@ -30,7 +30,7 @@ prometheusCT = ("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
 startHTTPServer :: HttpConfig -> TVarDaemonState -> IO ()
 startHTTPServer cfg tvar = do
   let settings = setHost (fromString (hcListenAddress cfg))
-               $ setPort (hcPort cfg)
+               $ setPort (unPort (hcPort cfg))
                $ defaultSettings
   runSettings settings (httpApp tvar)
 

@@ -3,18 +3,21 @@ module PureMyHA.ConfigSpec (spec) where
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy.Char8 as BLC
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Yaml as Yaml
 import Test.Hspec
 import PureMyHA.Config
   ( Config (..), ClusterConfig (..), MonitoringConfig (..)
   , FailureDetectionConfig (..), FailoverConfig (..)
-  , HooksConfig (..), HttpConfig (..)
+  , HooksConfig (..)
   , LoggingConfig (..), LogLevel (..), parseLogLevel, logLevelToText
   , parseDuration
   , validateConfig, loadConfig
   , defaultLoggingConfig, defaultHttpConfig
   , TLSMode (..), TLSMinVersion (..), TLSConfig (..)
   , NodeConfig (..), Credentials (..)
+  , Port (..), PositiveDuration (..), AtLeastOne (..)
   )
 
 spec :: Spec
@@ -104,7 +107,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -113,8 +116,8 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg -> do
-          let cc = head (cfgClusters cfg)
-          mcInterval (ccMonitoring cc) `shouldBe` 5
+          let cc = NE.head (cfgClusters cfg)
+          mcInterval (ccMonitoring cc) `shouldBe` PositiveDuration 5
           fdcRecoveryBlockPeriod (ccFailureDetection cc) `shouldBe` 3600
           fcAutoFailover (ccFailover cc) `shouldBe` True
           fcAutoFence   (ccFailover cc) `shouldBe` False
@@ -123,7 +126,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -137,13 +140,13 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          mcInterval (ccMonitoring (head (cfgClusters cfg))) `shouldBe` 1
+          mcInterval (ccMonitoring (NE.head (cfgClusters cfg))) `shouldBe` PositiveDuration 1
 
     it "cluster-level failure_detection overrides global" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -154,13 +157,13 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          fdcRecoveryBlockPeriod (ccFailureDetection (head (cfgClusters cfg))) `shouldBe` 60
+          fdcRecoveryBlockPeriod (ccFailureDetection (NE.head (cfgClusters cfg))) `shouldBe` 60
 
     it "consecutive_failures_for_dead defaults to 3 when absent" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -169,13 +172,13 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          fdcConsecutiveFailuresForDead (ccFailureDetection (head (cfgClusters cfg))) `shouldBe` 3
+          fdcConsecutiveFailuresForDead (ccFailureDetection (NE.head (cfgClusters cfg))) `shouldBe` AtLeastOne 3
 
     it "parses explicit consecutive_failures_for_dead" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -187,13 +190,13 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          fdcConsecutiveFailuresForDead (ccFailureDetection (head (cfgClusters cfg))) `shouldBe` 5
+          fdcConsecutiveFailuresForDead (ccFailureDetection (NE.head (cfgClusters cfg))) `shouldBe` AtLeastOne 5
 
     it "cluster-level failover overrides global" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -204,13 +207,13 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          fcAutoFailover (ccFailover (head (cfgClusters cfg))) `shouldBe` False
+          fcAutoFailover (ccFailover (NE.head (cfgClusters cfg))) `shouldBe` False
 
     it "cluster-level hooks override global hooks" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -223,7 +226,7 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          case ccHooks (head (cfgClusters cfg)) of
+          case ccHooks (NE.head (cfgClusters cfg)) of
             Nothing -> expectationFailure "expected hooks to be set"
             Just h  -> hcPreFailover h `shouldBe` Just "/cluster/pre_failover.sh"
 
@@ -231,7 +234,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -240,13 +243,13 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          ccHooks (head (cfgClusters cfg)) `shouldSatisfy` isNothing
+          ccHooks (NE.head (cfgClusters cfg)) `shouldSatisfy` isNothing
 
     it "global hooks are used when cluster does not specify hooks" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -257,7 +260,7 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          case ccHooks (head (cfgClusters cfg)) of
+          case ccHooks (NE.head (cfgClusters cfg)) of
             Nothing -> expectationFailure "expected global hooks to be inherited"
             Just h  -> hcPreFailover h `shouldBe` Just "/global/pre_failover.sh"
 
@@ -265,7 +268,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -281,7 +284,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -300,7 +303,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -323,7 +326,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -346,7 +349,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -362,7 +365,7 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg -> do
-          let fc = ccFailover (head (cfgClusters cfg))
+          let fc = ccFailover (NE.head (cfgClusters cfg))
           fcAutoFailover fc `shouldBe` True
           fcAutoFence    fc `shouldBe` False
           fcCandidatePriority fc `shouldSatisfy` null
@@ -373,7 +376,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -381,13 +384,13 @@ spec = do
             ]
       case decodeConfig yaml of
         Left err  -> expectationFailure err
-        Right cfg -> ccTLS (head (cfgClusters cfg)) `shouldSatisfy` isNothing
+        Right cfg -> ccTLS (NE.head (cfgClusters cfg)) `shouldSatisfy` isNothing
 
     it "parses tls.mode: disabled" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -398,13 +401,13 @@ spec = do
       case decodeConfig yaml of
         Left err  -> expectationFailure err
         Right cfg ->
-          fmap tlsMode (ccTLS (head (cfgClusters cfg))) `shouldBe` Just TLSDisabled
+          fmap tlsMode (ccTLS (NE.head (cfgClusters cfg))) `shouldBe` Just TLSDisabled
 
     it "parses tls.mode: skip-verify" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -415,13 +418,13 @@ spec = do
       case decodeConfig yaml of
         Left err  -> expectationFailure err
         Right cfg ->
-          fmap tlsMode (ccTLS (head (cfgClusters cfg))) `shouldBe` Just TLSSkipVerify
+          fmap tlsMode (ccTLS (NE.head (cfgClusters cfg))) `shouldBe` Just TLSSkipVerify
 
     it "parses tls.mode: verify-ca with ca_cert" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -433,7 +436,7 @@ spec = do
       case decodeConfig yaml of
         Left err  -> expectationFailure err
         Right cfg -> do
-          let mTls = ccTLS (head (cfgClusters cfg))
+          let mTls = ccTLS (NE.head (cfgClusters cfg))
           fmap tlsMode (mTls) `shouldBe` Just TLSVerifyCA
           (mTls >>= tlsCACert) `shouldBe` Just "/etc/tls/ca.pem"
 
@@ -441,7 +444,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -453,13 +456,13 @@ spec = do
       case decodeConfig yaml of
         Left err  -> expectationFailure err
         Right cfg ->
-          fmap tlsMode (ccTLS (head (cfgClusters cfg))) `shouldBe` Just TLSVerifyFull
+          fmap tlsMode (ccTLS (NE.head (cfgClusters cfg))) `shouldBe` Just TLSVerifyFull
 
     it "parses mutual TLS with client_cert and client_key" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -473,7 +476,7 @@ spec = do
       case decodeConfig yaml of
         Left err  -> expectationFailure err
         Right cfg -> do
-          let mTls = ccTLS (head (cfgClusters cfg))
+          let mTls = ccTLS (NE.head (cfgClusters cfg))
           (mTls >>= tlsClientCert) `shouldBe` Just "/etc/tls/client.pem"
           (mTls >>= tlsClientKey)  `shouldBe` Just "/etc/tls/client-key.pem"
 
@@ -481,7 +484,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -495,7 +498,7 @@ spec = do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -507,13 +510,13 @@ spec = do
       case decodeConfig yaml of
         Left err  -> expectationFailure err
         Right cfg ->
-          (ccTLS (head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Just TLSVersion12
+          (ccTLS (NE.head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Just TLSVersion12
 
     it "parses tls.min_version: \"1.3\"" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -525,13 +528,13 @@ spec = do
       case decodeConfig yaml of
         Left err  -> expectationFailure err
         Right cfg ->
-          (ccTLS (head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Just TLSVersion13
+          (ccTLS (NE.head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Just TLSVersion13
 
     it "tls.min_version defaults to Nothing when absent" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -542,13 +545,13 @@ spec = do
       case decodeConfig yaml of
         Left err  -> expectationFailure err
         Right cfg ->
-          (ccTLS (head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Nothing
+          (ccTLS (NE.head (cfgClusters cfg)) >>= tlsMinVersion) `shouldBe` Nothing
 
     it "rejects unknown tls.min_version" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"
             , "  - name: test"
-            , "    nodes: []"
+            , "    nodes: [{host: db1}]"
             , "    credentials:"
             , "      user: u"
             , "      password_file: /dev/null"
@@ -654,114 +657,204 @@ spec = do
       parseLogLevel (logLevelToText LogLevelError) `shouldBe` Just LogLevelError
 
   describe "validateConfig extra edge cases" $ do
-    it "reports error when no clusters defined" $ do
-      let cfg = Config [] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "no clusters defined")
+    -- Single-field constraints (port range, positive durations, >= 1 integers) are now
+    -- enforced at YAML parse time by newtype wrappers. The following tests verify
+    -- parse-time rejection. validateConfig only checks cross-field constraints.
 
-    it "reports error for HTTP port out of range when enabled" $ do
-      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 99999)
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "http.port")
+    it "rejects empty clusters list at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters: []"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "no HTTP error when HTTP is disabled even with bad port" $ do
-      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig False "127.0.0.1" 99999)
-      validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "http.port"))
+    it "rejects empty nodes list at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: []"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "reports error when no nodes defined in cluster" $ do
-      let cc = minimalCluster { ccNodes = [] }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "no nodes defined")
+    it "rejects monitoring.interval of 0s at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , "    monitoring:"
+            , "      interval: 0s"
+            , "      connect_timeout: 2s"
+            , "      replication_lag_warning: 10s"
+            , "      replication_lag_critical: 30s"
+            , "global:"
+            , "  failure_detection:"
+            , "    recovery_block_period: 3600s"
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "reports error for monitoring.interval <= 0" $ do
-      let mc = (ccMonitoring minimalCluster) { mcInterval = 0 }
-          cc = minimalCluster { ccMonitoring = mc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "monitoring.interval must be > 0")
+    it "rejects monitoring.connect_timeout of 0s at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , "    monitoring:"
+            , "      interval: 3s"
+            , "      connect_timeout: 0s"
+            , "      replication_lag_warning: 10s"
+            , "      replication_lag_critical: 30s"
+            , "global:"
+            , "  failure_detection:"
+            , "    recovery_block_period: 3600s"
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "reports error for consecutive_failures_for_dead < 1" $ do
-      let fdc = (ccFailureDetection minimalCluster) { fdcConsecutiveFailuresForDead = 0 }
-          cc = minimalCluster { ccFailureDetection = fdc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "consecutive_failures_for_dead")
+    it "rejects connect_retries of 0 at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , "    monitoring:"
+            , "      interval: 3s"
+            , "      connect_timeout: 2s"
+            , "      replication_lag_warning: 10s"
+            , "      replication_lag_critical: 30s"
+            , "      connect_retries: 0"
+            , "global:"
+            , "  failure_detection:"
+            , "    recovery_block_period: 3600s"
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "reports error for connect_retries < 1" $ do
-      let mc = (ccMonitoring minimalCluster) { mcConnectRetries = 0 }
-          cc = minimalCluster { ccMonitoring = mc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "connect_retries")
+    it "rejects consecutive_failures_for_dead of 0 at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , "    failure_detection:"
+            , "      recovery_block_period: 3600s"
+            , "      consecutive_failures_for_dead: 0"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "reports error for monitoring.connect_timeout <= 0" $ do
-      let mc = (ccMonitoring minimalCluster) { mcConnectTimeout = 0 }
-          cc = minimalCluster { ccMonitoring = mc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "connect_timeout")
+    it "rejects node port 0 at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "        port: 0"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "returns no HTTP errors when HTTP is enabled with a valid port" $ do
-      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 8080)
-      validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "http.port"))
+    it "rejects node port 65536 at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "        port: 65536"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
     it "accepts node port 1 (minimum valid)" $ do
-      let cc  = minimalCluster { ccNodes = [NodeConfig "db1" 1] }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "port"))
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "        port: 1"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isRight
 
     it "accepts node port 65535 (maximum valid)" $ do
-      let cc  = minimalCluster { ccNodes = [NodeConfig "db1" 65535] }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` (not . any (isInfixOf "port"))
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes:"
+            , "      - host: db1"
+            , "        port: 65535"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isRight
 
-    it "reports error for node port 0" $ do
-      let cc  = minimalCluster { ccNodes = [NodeConfig "db1" 0] }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "port")
+    it "rejects http port 0 at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , "http:"
+            , "  port: 0"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
-    it "reports error for node port 65536" $ do
-      let cc  = minimalCluster { ccNodes = [NodeConfig "db1" 65536] }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "port")
+    it "rejects http port 65536 at parse time" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , "http:"
+            , "  port: 65536"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
+
+    it "rejects http port out of range at parse time even when http is disabled" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials: {user: u, password_file: /dev/null}"
+            , "http:"
+            , "  enabled: false"
+            , "  port: 99999"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
 
     it "reports error when replication_lag_warning equals replication_lag_critical" $ do
       let mc  = (ccMonitoring minimalCluster) { mcReplicationLagWarning = 30, mcReplicationLagCritical = 30 }
           cc  = minimalCluster { ccMonitoring = mc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+          cfg = Config (cc :| []) defaultLoggingConfig defaultHttpConfig
       validateConfig cfg `shouldSatisfy` any (isInfixOf "replication_lag_warning")
 
-    -- negative interval/connect_timeout tests removed: same code path as the <= 0 tests above
-
-    it "accumulates multiple monitoring errors at once" $ do
-      let mc  = (ccMonitoring minimalCluster) { mcInterval = 0, mcConnectTimeout = 0 }
-          cc  = minimalCluster { ccMonitoring = mc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
-          errs = validateConfig cfg
-      errs `shouldSatisfy` any (isInfixOf "monitoring.interval must be > 0")
-      errs `shouldSatisfy` any (isInfixOf "connect_timeout")
-
     it "returns no errors for two valid clusters" $ do
-      let cc2 = minimalCluster { ccName = "test2", ccNodes = [NodeConfig "db2" 3306] }
-          cfg = Config [minimalCluster, cc2] defaultLoggingConfig defaultHttpConfig
+      let cc2 = minimalCluster { ccName = "test2", ccNodes = NodeConfig "db2" (Port 3306) :| [] }
+          cfg = Config (minimalCluster :| [cc2]) defaultLoggingConfig defaultHttpConfig
       validateConfig cfg `shouldBe` []
-
-    it "reports error for HTTP port 0 when enabled" $ do
-      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 0)
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "http.port")
-
-    it "reports error for HTTP port 65536 when enabled" $ do
-      let cfg = Config [minimalCluster] defaultLoggingConfig (HttpConfig True "127.0.0.1" 65536)
-      validateConfig cfg `shouldSatisfy` any (isInfixOf "http.port")
 
     it "reports error when never_promote host is not in nodes" $ do
       let fc  = (ccFailover minimalCluster) { fcNeverPromote = ["db99"] }
           cc  = minimalCluster { ccFailover = fc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+          cfg = Config (cc :| []) defaultLoggingConfig defaultHttpConfig
       validateConfig cfg `shouldSatisfy` any (isInfixOf "never_promote host 'db99'")
 
     it "returns no errors when never_promote host is in nodes" $ do
       let fc  = (ccFailover minimalCluster) { fcNeverPromote = ["db1"] }
           cc  = minimalCluster { ccFailover = fc }
-          cfg = Config [cc] defaultLoggingConfig defaultHttpConfig
+          cfg = Config (cc :| []) defaultLoggingConfig defaultHttpConfig
       validateConfig cfg `shouldBe` []
 
     it "returns no errors for empty never_promote list" $ do
-      let cfg = Config [minimalCluster] defaultLoggingConfig defaultHttpConfig
+      let cfg = Config (minimalCluster :| []) defaultLoggingConfig defaultHttpConfig
       validateConfig cfg `shouldBe` []
 
   describe "never_promote YAML parsing" $ do
@@ -782,7 +875,7 @@ spec = do
             ]
       case decodeConfig yaml of
         Left err -> expectationFailure err
-        Right cfg -> fcNeverPromote (ccFailover (head (cfgClusters cfg))) `shouldBe` ["db2"]
+        Right cfg -> fcNeverPromote (ccFailover (NE.head (cfgClusters cfg))) `shouldBe` ["db2"]
 
     it "defaults never_promote to empty list when not specified" $ do
       let yaml = BC.pack $ unlines
@@ -797,7 +890,7 @@ spec = do
             ]
       case decodeConfig yaml of
         Left err -> expectationFailure err
-        Right cfg -> fcNeverPromote (ccFailover (head (cfgClusters cfg))) `shouldBe` []
+        Right cfg -> fcNeverPromote (ccFailover (NE.head (cfgClusters cfg))) `shouldBe` []
 
   describe "loadConfig" $ do
     it "returns Right for a valid YAML file" $ do
@@ -833,11 +926,11 @@ spec = do
 minimalCluster :: ClusterConfig
 minimalCluster = ClusterConfig
   { ccName                   = "test"
-  , ccNodes                  = [NodeConfig "db1" 3306]
+  , ccNodes                  = NodeConfig "db1" (Port 3306) :| []
   , ccCredentials            = Credentials "u" "/dev/null"
   , ccReplicationCredentials = Nothing
-  , ccMonitoring             = MonitoringConfig 5 2 10 30 300 1 1
-  , ccFailureDetection       = FailureDetectionConfig 3600 3
+  , ccMonitoring             = MonitoringConfig (PositiveDuration 5) (PositiveDuration 2) 10 30 300 (AtLeastOne 1) 1
+  , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
   , ccFailover               = FailoverConfig True 1 [] 60 False Nothing []
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing

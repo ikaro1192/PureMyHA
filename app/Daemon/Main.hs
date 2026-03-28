@@ -5,7 +5,8 @@ import Control.Concurrent.STM   (TMVar, TVar, atomically, newTVarIO, newEmptyTMV
                                   putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
 import Control.Monad (void, when, forM_)
-import Data.List (find)
+import Data.Foldable (find)
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
@@ -56,7 +57,7 @@ main = do
   tvar        <- newDaemonState
   shutdownVar <- installShutdownHandlers
 
-  clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (cfgClusters cfg)
+  clusterPasswords <- mapM (\cc -> (cc,) <$> loadClusterPasswords cc) (NE.toList (cfgClusters cfg))
   clusterEnvs      <- mapM (initCluster tvar loggerVar) clusterPasswords
 
   httpAsyncVar <- newTVarIO Nothing
@@ -97,7 +98,7 @@ installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar = do
       Right cfg' -> do
         forM_ clusterEnvs $ \env -> do
           let name = ccName (envCluster env)
-          case find (\cc -> ccName cc == name) (cfgClusters cfg') of
+          case find (\cc -> ccName cc == name) (NE.toList (cfgClusters cfg')) of
             Nothing -> logWarn logger $ "SIGHUP: cluster " <> unClusterName name <> " not found in new config"
             Just cc -> atomically $ do
               writeTVar (envMonitoring env) (ccMonitoring cc)

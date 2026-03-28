@@ -21,6 +21,7 @@ import System.Timeout (timeout)
 import Control.Monad (when, forM, forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask, asks)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import qualified Data.Set as Set
 import qualified Data.Text as T
@@ -43,7 +44,7 @@ type WorkerRegistry = TVar (Map.Map NodeId (Async ()))
 startMonitorWorkers :: App (WorkerRegistry, [Async ()])
 startMonitorWorkers = do
   env <- ask
-  let nodes = map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes (envCluster env))
+  let nodes = map (\nc -> NodeId (ncHost nc) (unPort (ncPort nc))) (NE.toList (ccNodes (envCluster env)))
   liftIO $ do
     reg <- newTVarIO Map.empty
     asyncs <- forM nodes $ \nid -> do
@@ -59,7 +60,7 @@ runWorker nid = do
   where
     loop env = do
       mc <- readTVarIO (envMonitoring env)
-      let intervalMicros = round (mcInterval mc * 1_000_000) :: Int
+      let intervalMicros = round (unPositiveDuration (mcInterval mc) * 1_000_000) :: Int
       runApp env (monitorNode nid)
         `catch` (\(_ :: SomeException) -> pure ())
       threadDelay intervalMicros
@@ -134,7 +135,7 @@ detectAndPruneStaleWorkers :: WorkerRegistry -> ClusterConfig -> Set.Set NodeId 
 detectAndPruneStaleWorkers reg cc discovered = do
   knownNodes <- Map.keysSet <$> readTVarIO reg
   let configuredNodes = Set.fromList
-        (map (\nc -> NodeId (ncHost nc) (ncPort nc)) (ccNodes cc))
+        (map (\nc -> NodeId (ncHost nc) (unPort (ncPort nc))) (NE.toList (ccNodes cc)))
       staleNodes = Set.toList (computeStaleNodes knownNodes discovered configuredNodes)
   pruneStaleWorkers reg staleNodes
   pure staleNodes
@@ -181,10 +182,10 @@ monitorNode nid = do
   creds <- getMonCredentials
   mTls  <- getTLSConfig
   let ci        = makeConnectInfo nid creds
-      threshold = fdcConsecutiveFailuresForDead fdc
-      retries   = mcConnectRetries mc
+      threshold = unAtLeastOne (fdcConsecutiveFailuresForDead fdc)
+      retries   = unAtLeastOne (mcConnectRetries mc)
       backoff   = mcConnectRetryBackoff mc
-      cap       = mcConnectTimeout mc
+      cap       = unPositiveDuration (mcConnectTimeout mc)
       logRetry msg = readTVarIO (envLogger env) >>= \l ->
         logDebug l ("[" <> unClusterName (ccName cc) <> "] Node " <> nodeHost nid <> ": " <> msg)
   -- Read old state before connecting for prevFailures count
@@ -295,7 +296,7 @@ enrichErrantGtids ns = do
   mTls  <- getTLSConfig
   env   <- ask
   mc    <- liftIO $ readTVarIO (envMonitoring env)
-  let tMicros = probeTimeoutMicros (mcConnectTimeout mc) (mcConnectRetries mc)
+  let tMicros = probeTimeoutMicros (unPositiveDuration (mcConnectTimeout mc)) (unAtLeastOne (mcConnectRetries mc))
   liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
     case mTopo of

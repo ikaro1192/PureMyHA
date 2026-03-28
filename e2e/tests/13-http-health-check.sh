@@ -60,7 +60,7 @@ assert_eq "POST /health returns 405" "405" "$status"
 # Pause auto-failover so health stays degraded long enough to observe
 cli_pause_failover >/dev/null 2>&1
 $COMPOSE stop mysql-source
-wait_for_health_not "Healthy" 30
+wait_for_health "DeadSource" 30
 
 status=$(http_get "/health")
 assert_eq "GET /health returns 200 even when cluster degraded" "200" "$status"
