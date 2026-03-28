@@ -3,12 +3,12 @@ COMPOSE = docker compose
 # The node currently running puremyhad (resource group owner).
 # Most MySQL-related commands must run on this node.
 ACTIVE_NODE = $$($(COMPOSE) exec ha1 crm_mon -1 --output-as=xml 2>/dev/null \
-	| grep -oP 'resource id="puremyhad"[^/]*managed="true"[^/]*role="Started"[^/]*node="\K[^"]+' \
-	|| echo ha1)
+	| sed -n 's/.*resource id="puremyhad"[^/]*role="Started"[^/]*node="\([^"]*\)".*/\1/p' \
+	| head -1 | grep . || echo ha1)
 
 .PHONY: build start setup status quorum failover unstandby \
-        switchover stop-source resume-source ack-recovery topology \
-        pause-failover resume-failover logs clean
+        switchover stop-source start-source ack-recovery topology \
+        haproxy-stat pause-failover resume-failover logs clean
 
 ## Build the puremyhad binary and cluster node images
 build:
@@ -21,14 +21,16 @@ build:
 	@echo "==> Building cluster images..."
 	$(COMPOSE) build
 
-## Start all containers (ha1, ha2, qdevice)
+## Start all containers (db1, db2, ha1, ha2, qdevice)
 start:
 	$(COMPOSE) up -d
 	@echo ""
 	@echo "Containers started. Run 'make setup' to initialize the cluster."
 
-## Initialize the Pacemaker cluster (run once after 'make start')
+## Initialize MySQL replication and the Pacemaker cluster (run once after 'make start')
 setup:
+	@echo "==> Phase 0: Setup MySQL replication (db1 → db2)..."
+	./scripts/setup-replication.sh
 	@echo "==> Phase 1: Auth and cluster setup..."
 	$(COMPOSE) exec ha1 /setup/setup-cluster.sh
 	@echo "==> Starting corosync on both nodes..."
@@ -78,31 +80,40 @@ switchover:
 		$(COMPOSE) exec $$node puremyha switchover; \
 	fi
 
-## Simulate MySQL source failure by blocking network traffic to the source
-## Usage: make stop-source HOST=db1    (block traffic to db1:3306)
+## Simulate MySQL source failure by stopping the container.
+## MySQL receives SIGTERM, closes all connections immediately, and the
+## container's network interface is removed — subsequent TCP connections
+## fail at ARP level.  Auto-failover triggers within ~20-30 seconds.
+## Usage: make stop-source              (stops db1)
+##        make stop-source HOST=db2     (stops db2)
 stop-source:
-	@if [ -z "$(HOST)" ]; then echo "Usage: make stop-source HOST=<mysql-host>"; exit 1; fi
-	@node=$(ACTIVE_NODE); \
-	echo "==> Blocking traffic to $(HOST):3306 on $$node (simulating source failure)..."; \
-	$(COMPOSE) exec $$node iptables -A OUTPUT -d $(HOST) -p tcp --dport 3306 -j DROP; \
-	$(COMPOSE) exec $$node iptables -A INPUT -s $(HOST) -p tcp --sport 3306 -j DROP; \
-	echo "    puremyhad should detect the failure within a few monitoring cycles."
+	@host=$${HOST:-db1}; \
+	echo "==> Stopping MySQL container $$host (simulating crash)..."; \
+	$(COMPOSE) stop $$host; \
+	echo "    puremyhad should detect the failure within ~20-30 seconds."
 
-## Restore network connectivity to a previously blocked MySQL host
-## Usage: make resume-source HOST=db1
-resume-source:
-	@if [ -z "$(HOST)" ]; then echo "Usage: make resume-source HOST=<mysql-host>"; exit 1; fi
-	@node=$(ACTIVE_NODE); \
-	echo "==> Restoring traffic to $(HOST):3306 on $$node..."; \
-	$(COMPOSE) exec $$node iptables -D OUTPUT -d $(HOST) -p tcp --dport 3306 -j DROP 2>/dev/null || true; \
-	$(COMPOSE) exec $$node iptables -D INPUT -s $(HOST) -p tcp --sport 3306 -j DROP 2>/dev/null || true; \
-	echo "    Done."
+## Restart a previously stopped MySQL container
+## Usage: make start-source             (starts db1)
+##        make start-source HOST=db2    (starts db2)
+start-source:
+	@host=$${HOST:-db1}; \
+	echo "==> Starting MySQL container $$host..."; \
+	$(COMPOSE) start $$host; \
+	echo "    Done. The node will rejoin as a replica after unfencing."
 
 ## Show current MySQL topology as seen by puremyhad
 topology:
 	@node=$(ACTIVE_NODE); \
 	$(COMPOSE) exec $$node curl -s http://127.0.0.1:8080/cluster/main/topology | python3 -m json.tool 2>/dev/null \
 	|| $(COMPOSE) exec $$node curl -s http://127.0.0.1:8080/cluster/main/topology
+
+## Show HAProxy backend server status (source/replica routing)
+haproxy-stat:
+	@node=$(ACTIVE_NODE); \
+	echo "BACKEND          SERVER     STATUS   CHECK        CONN  ADDR"; \
+	$(COMPOSE) exec $$node sh -c \
+	  'echo "show stat" | socat stdio /run/haproxy/admin.sock' \
+	| awk -F, '/^mysql_/ { printf "%-16s %-10s %-8s %-12s %-5s %s\n", $$1, $$2, $$18, $$37, $$5, $$74 }'
 
 ## Acknowledge recovery block after auto-failover (re-enables auto-failover)
 ack-recovery:

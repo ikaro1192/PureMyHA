@@ -28,16 +28,18 @@ Sample configuration files and a Docker Compose demo are in [`pacemaker-sample/`
 
 ### Quick start (Docker Compose demo)
 
+The demo includes two MySQL 8.4 containers (db1 as source, db2 as replica) with GTID-based replication, in addition to the Pacemaker cluster nodes and QDevice.
+
 ```bash
 cd pacemaker-sample/demo
 
 # 1. Build the puremyhad binary and cluster images
 make build
 
-# 2. Start containers (ha1, ha2, qdevice)
+# 2. Start containers (db1, db2, ha1, ha2, qdevice)
 make start
 
-# 3. Initialize the cluster
+# 3. Initialize MySQL replication and the Pacemaker cluster
 make setup
 
 # 4. Check cluster status
@@ -203,10 +205,11 @@ pcs resource create vip-read IPaddr2 \
     op monitor interval=10s
 
 # Resource group: ensures colocation and correct start/stop order
-#   Start: puremyhad → haproxy → vip-write → vip-read
-#   Stop:  vip-read → vip-write → haproxy → puremyhad
+# VIPs must be assigned before HAProxy starts — HAProxy binds to VIP addresses.
+#   Start: puremyhad → vip-write → vip-read → haproxy
+#   Stop:  haproxy → vip-read → vip-write → puremyhad
 pcs resource group add puremyha-group \
-    puremyhad haproxy vip-write vip-read
+    puremyhad vip-write vip-read haproxy
 ```
 
 See [`pacemaker-sample/setup.sh`](../pacemaker-sample/setup.sh) for a fully annotated reference script.
@@ -255,20 +258,21 @@ make switchover TO=db2
 #### Simulating MySQL source failure
 
 ```bash
-# Block network traffic to the MySQL source (simulates source crash)
-make stop-source HOST=db1
+# Stop the MySQL source container (simulates source crash)
+make stop-source            # stops db1 by default
+make stop-source HOST=db2   # or specify a different host
 
-# Watch puremyhad detect the failure and trigger auto-failover
-make logs          # or: make status
+# Watch puremyhad detect the failure and trigger auto-failover (~20-30s)
+make topology      # or: make logs
 
 # After failover, acknowledge the recovery block to re-enable auto-failover
 make ack-recovery
 
-# Restore network connectivity to the old source
-make resume-source HOST=db1
+# Restart the old source container
+make start-source           # starts db1 by default
 ```
 
-`stop-source` uses iptables inside the privileged demo container to drop all traffic to the specified MySQL host on port 3306. `puremyhad` detects the unreachable source within a few monitoring cycles (`interval: 3s` × `consecutive_failures_for_dead: 3` = ~9 seconds) and triggers automatic failover.
+`stop-source` stops the MySQL container via `docker compose stop`. MySQL receives SIGTERM and closes all client connections immediately. The container's network interface is then removed, so subsequent TCP connections fail at the ARP level. Auto-failover triggers within approximately 20–30 seconds.
 
 After auto-failover, an anti-flap recovery block prevents further automatic failovers for `recovery_block_period` (default 3600s). Run `make ack-recovery` to clear the block when you are ready.
 
@@ -277,6 +281,9 @@ After auto-failover, an anti-flap recovery block prevents further automatic fail
 ```bash
 # Show the current MySQL topology as seen by puremyhad
 make topology
+
+# Show HAProxy backend routing (which server handles source/replica traffic)
+make haproxy-stat
 
 # Pause auto-failover (e.g. during planned maintenance)
 make pause-failover
@@ -290,9 +297,10 @@ make resume-failover
 | Target | Description |
 |--------|-------------|
 | `make switchover [TO=host]` | Graceful source ↔ replica role swap |
-| `make stop-source HOST=host` | Simulate source failure (iptables block) |
-| `make resume-source HOST=host` | Restore connectivity after simulation |
+| `make stop-source [HOST=host]` | Simulate source failure (stops MySQL container, default: db1) |
+| `make start-source [HOST=host]` | Restart a stopped MySQL container (default: db1) |
 | `make topology` | Show MySQL topology from puremyhad |
+| `make haproxy-stat` | Show HAProxy backend server status and routing |
 | `make ack-recovery` | Clear anti-flap recovery block |
 | `make pause-failover` | Pause automatic failover |
 | `make resume-failover` | Resume automatic failover |

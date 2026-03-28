@@ -63,15 +63,15 @@ backend mysql_source
 # After failover, the old source becomes a replica and is enabled here;
 # the new source is disabled to keep write traffic off the read pool.
 #
-# NOTE: The mysql-check option requires a MySQL user that can authenticate
-# without a password (or with a known password). Create it on all nodes:
-#   CREATE USER 'haproxy_check'@'%';
-#   -- No privileges needed; the user only needs to complete the handshake.
-# If you do not want MySQL-level health checks, remove "option mysql-check"
-# and rely on TCP-only checks.
+# Health checks use TCP by default (the "check" keyword on each server line).
+# TCP checks verify that MySQL is accepting connections on port 3306.
+#
+# HAProxy also supports MySQL-protocol health checks via "option mysql-check",
+# but this requires a user with mysql_native_password authentication. Since
+# MySQL 8.4+ disables mysql_native_password by default, TCP checks are the
+# recommended approach.
 # -----------------------------------------------------------------------------
 backend mysql_replicas
     balance roundrobin
-    option mysql-check user haproxy_check
     server db1 db1:3306 check inter 3s rise 2 fall 3 disabled
     server db2 db2:3306 check inter 3s rise 2 fall 3

@@ -6,7 +6,7 @@
 # a resource group. Run after both ha1 and ha2 have corosync/pacemaker running.
 #
 # Resource Group (start order):
-#   puremyhad → haproxy → vip-write → vip-read
+#   puremyhad → vip-write → vip-read → haproxy
 #
 # Called by:  make setup
 # =============================================================================
@@ -40,15 +40,31 @@ pcs quorum device add model net \
 echo "==> Disabling STONITH (demo only — never do this in production)..."
 pcs property set stonith-enabled=false
 
-echo "==> Creating puremyhad resource..."
+echo "==> Creating resource group (puremyhad → vip-write → vip-read → haproxy)..."
+# Resources are created directly in the group with --group to avoid a race
+# where Pacemaker distributes ungrouped resources across nodes.
+# VIPs must be assigned before HAProxy starts — HAProxy binds to VIP addresses.
+
 pcs resource create puremyhad ocf:puremyha:puremyhad \
     config=/etc/puremyha/config.yaml \
     socket=/run/puremyhad.sock \
     op start   timeout=30s \
     op stop    timeout=60s \
-    op monitor interval=15s timeout=15s
+    op monitor interval=15s timeout=15s \
+    --group puremyha-group
 
-echo "==> Creating HAProxy resource..."
+pcs resource create vip-write IPaddr2 \
+    ip=192.168.100.100 \
+    cidr_netmask=24 \
+    op monitor interval=10s timeout=10s \
+    --group puremyha-group
+
+pcs resource create vip-read IPaddr2 \
+    ip=192.168.100.101 \
+    cidr_netmask=24 \
+    op monitor interval=10s timeout=10s \
+    --group puremyha-group
+
 # ocf:heartbeat:anything is used because the demo runs without systemd.
 # In production, use: pcs resource create haproxy systemd:haproxy ...
 pcs resource create haproxy ocf:heartbeat:anything \
@@ -57,25 +73,11 @@ pcs resource create haproxy ocf:heartbeat:anything \
     pidfile="/run/haproxy/haproxy.pid" \
     op start   timeout=30s \
     op stop    timeout=30s \
-    op monitor interval=10s timeout=10s
-
-echo "==> Creating Write VIP resource..."
-pcs resource create vip-write IPaddr2 \
-    ip=192.168.100.100 \
-    cidr_netmask=24 \
-    op monitor interval=10s timeout=10s
-
-echo "==> Creating Read VIP resource..."
-pcs resource create vip-read IPaddr2 \
-    ip=192.168.100.101 \
-    cidr_netmask=24 \
-    op monitor interval=10s timeout=10s
-
-echo "==> Creating resource group (puremyhad → haproxy → vip-write → vip-read)..."
-pcs resource group add puremyha-group \
-    puremyhad haproxy vip-write vip-read
+    op monitor interval=10s timeout=10s \
+    --group puremyha-group
 
 echo ""
-echo "==> Cluster setup complete!"
+echo "==> Cluster setup complete! Waiting for resources to settle..."
+sleep 15
 echo ""
 crm_mon -1

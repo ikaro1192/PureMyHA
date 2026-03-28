@@ -1,4 +1,45 @@
 services:
+  # ---- MySQL nodes ----
+
+  db1:
+    image: mysql:8.4
+    hostname: db1
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - ./config/mysql-source.cnf:/etc/mysql/conf.d/source.cnf:ro
+      - ./config/mysql-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    networks:
+      cluster-net:
+        ipv4_address: 192.168.100.21
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-prootpass"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  db2:
+    image: mysql:8.4
+    hostname: db2
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+    volumes:
+      - ./config/mysql-replica.cnf:/etc/mysql/conf.d/replica.cnf:ro
+      - ./config/mysql-init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    depends_on:
+      db1:
+        condition: service_healthy
+    networks:
+      cluster-net:
+        ipv4_address: 192.168.100.22
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-prootpass"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # ---- Pacemaker cluster nodes ----
+
   ha1:
     build:
       context: ..
@@ -7,6 +48,11 @@ services:
     # Pacemaker and Corosync require elevated privileges to manage
     # network interfaces (VIP) and process lifecycle.
     privileged: true
+    depends_on:
+      db1:
+        condition: service_healthy
+      db2:
+        condition: service_healthy
     networks:
       cluster-net:
         ipv4_address: 192.168.100.11
@@ -17,6 +63,7 @@ services:
       - ../../dist-bins/puremyhad:/usr/sbin/puremyhad:ro
       - ./config/puremyha.yaml:/etc/puremyha/config.yaml:ro
       - ./config/mysql.pass:/etc/puremyha/mysql.pass:ro
+      - ./config/repl.pass:/etc/puremyha/repl.pass:ro
       - ./config/haproxy.cfg:/etc/haproxy/haproxy.cfg:ro
 
   ha2:
@@ -25,6 +72,11 @@ services:
       dockerfile: demo/Dockerfile
     hostname: ha2
     privileged: true
+    depends_on:
+      db1:
+        condition: service_healthy
+      db2:
+        condition: service_healthy
     networks:
       cluster-net:
         ipv4_address: 192.168.100.12
@@ -32,6 +84,7 @@ services:
       - ../../dist-bins/puremyhad:/usr/sbin/puremyhad:ro
       - ./config/puremyha.yaml:/etc/puremyha/config.yaml:ro
       - ./config/mysql.pass:/etc/puremyha/mysql.pass:ro
+      - ./config/repl.pass:/etc/puremyha/repl.pass:ro
       - ./config/haproxy.cfg:/etc/haproxy/haproxy.cfg:ro
 
   qdevice:
