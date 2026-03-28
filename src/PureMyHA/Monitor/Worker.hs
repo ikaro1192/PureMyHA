@@ -5,6 +5,7 @@ module PureMyHA.Monitor.Worker
   , monitorNode
   , runWorker
   , suppressBelowThreshold
+  , buildLagHookEnv
   , enrichErrantGtids
   , computeStaleNodes
   , pruneStaleWorkers
@@ -154,6 +155,20 @@ suppressBelowThreshold threshold failCount mOldNs ns
       ns { nsHealth = maybe Healthy nsHealth mOldNs }
   | otherwise = ns
 
+-- | Build the base HookEnv for lag threshold hooks.
+-- Sets hookNode to the replica's hostname so hook scripts can identify
+-- which replica is lagging in multi-replica topologies.
+buildLagHookEnv :: ClusterName -> NodeId -> T.Text -> HookEnv
+buildLagHookEnv clusterName nid ts =
+  HookEnv { hookClusterName = clusterName
+           , hookNewSource   = Nothing
+           , hookOldSource   = Nothing
+           , hookFailureType = Nothing
+           , hookTimestamp   = ts
+           , hookLagSeconds  = Nothing
+           , hookNode        = Just (nodeHost nid)
+           }
+
 -- | Perform a single monitoring cycle for a node
 monitorNode :: NodeId -> App ()
 monitorNode nid = do
@@ -239,7 +254,7 @@ monitorNode nid = do
     ts     <- getCurrentTimestamp
     let oldHealth = fmap nsHealth mOldNs
         newHealth = nsHealth ns'''
-        baseEnv   = HookEnv (ccName cc) Nothing Nothing Nothing ts Nothing
+        baseEnv   = buildLagHookEnv (ccName cc) nid ts
     case (oldHealth, newHealth) of
       (Just (Lagging _), Lagging _) -> pure ()  -- already lagging, no transition
       (_, Lagging lag) ->
@@ -331,12 +346,12 @@ recomputeClusterHealth = do
           DeadSource -> do
             mHooks <- readTVarIO (envHooks env)
             ts <- getCurrentTimestamp
-            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSource") ts Nothing
+            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSource") ts Nothing Nothing
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           DeadSourceAndAllReplicas -> do
             mHooks <- readTVarIO (envHooks env)
             ts <- getCurrentTimestamp
-            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSourceAndAllReplicas") ts Nothing
+            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSourceAndAllReplicas") ts Nothing Nothing
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           _ -> pure ()
       -- Log all health transitions for observability

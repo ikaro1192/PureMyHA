@@ -21,6 +21,8 @@ clusters:
       post_failover: /etc/puremyha/hooks/post_failover.sh
       pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
       post_switchover: /etc/puremyha/hooks/post_switchover.sh
+      on_lag_threshold_exceeded: /etc/puremyha/hooks/on_lag_threshold_exceeded.sh
+      on_lag_threshold_recovered: /etc/puremyha/hooks/on_lag_threshold_recovered.sh
 
 http:
   enabled: true

@@ -135,8 +135,8 @@ Shell hooks are called at key lifecycle events. All hooks receive cluster and no
 | `post_failover` | After automatic failover completes |
 | `pre_switchover` | Before manual switchover begins |
 | `post_switchover` | After manual switchover completes |
-| `on_lag_threshold_exceeded` | Replica crosses `replication_lag_critical` |
-| `on_lag_threshold_recovered` | Replica recovers below `replication_lag_critical` |
+| `on_lag_threshold_exceeded` | Replica crosses `replication_lag_critical` — provides `PUREMYHA_NODE` (replica hostname) and `PUREMYHA_LAG_SECONDS` |
+| `on_lag_threshold_recovered` | Replica recovers below `replication_lag_critical` — provides `PUREMYHA_NODE` (replica hostname) |
 
 See [docs/configuration.md](configuration.md) for hook configuration syntax.
 

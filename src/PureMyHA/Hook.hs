@@ -24,6 +24,7 @@ data HookEnv = HookEnv
   , hookFailureType :: Maybe Text   -- e.g. "DeadSource", "PromoteFailed"
   , hookTimestamp   :: Text         -- ISO-8601 UTC: "2026-03-17T12:00:00Z"
   , hookLagSeconds  :: Maybe Int    -- e.g. 45 when on_lag_threshold_exceeded fires
+  , hookNode        :: Maybe Text   -- hostname of the replica for lag threshold hooks
   }
 
 getCurrentTimestamp :: IO Text
@@ -41,6 +42,7 @@ runHook scriptPath hookEnv = do
         maybe [] (\h -> [("PUREMYHA_OLD_SOURCE", T.unpack h)]) (hookOldSource hookEnv) ++
         maybe [] (\ft -> [("PUREMYHA_FAILURE_TYPE", T.unpack ft)]) (hookFailureType hookEnv) ++
         maybe [] (\s  -> [("PUREMYHA_LAG_SECONDS", show s)]) (hookLagSeconds hookEnv) ++
+        maybe [] (\n  -> [("PUREMYHA_NODE",        T.unpack n)]) (hookNode hookEnv) ++
         [("PUREMYHA_TIMESTAMP", T.unpack (hookTimestamp hookEnv))]
   result <- try @SomeException $ do
     (_, _, _, ph) <- createProcess (proc scriptPath [T.unpack (unClusterName (hookClusterName hookEnv))])
