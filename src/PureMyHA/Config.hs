@@ -18,6 +18,10 @@ module PureMyHA.Config
   , TLSMode (..)
   , TLSMinVersion (..)
   , TLSConfig (..)
+  , Port (..)
+  , PositiveDuration (..)
+  , AtLeastOne (..)
+  , PositiveInt (..)
   , parseLogLevel
   , logLevelToText
   , defaultLoggingConfig
@@ -30,6 +34,8 @@ module PureMyHA.Config
 import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON (..), withObject, withText, (.:), (.:?), (.!=))
 import Data.List (group, sort)
+import Data.List.NonEmpty (NonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -40,7 +46,7 @@ import Text.Read (readMaybe)
 import PureMyHA.Types (ClusterName (..), unClusterName)
 
 data Config = Config
-  { cfgClusters :: [ClusterConfig]
+  { cfgClusters :: NonEmpty ClusterConfig
   , cfgLogging  :: LoggingConfig
   , cfgHttp     :: HttpConfig
   } deriving (Show, Generic)
@@ -48,11 +54,11 @@ data Config = Config
 data HttpConfig = HttpConfig
   { hcEnabled       :: Bool
   , hcListenAddress :: String
-  , hcPort          :: Int
+  , hcPort          :: Port
   } deriving (Show, Eq, Generic)
 
 defaultHttpConfig :: HttpConfig
-defaultHttpConfig = HttpConfig False "127.0.0.1" 8080
+defaultHttpConfig = HttpConfig False "127.0.0.1" (Port 8080)
 
 data LogLevel = LogLevelDebug | LogLevelInfo | LogLevelWarn | LogLevelError
   deriving (Show, Eq, Bounded, Enum)
@@ -105,7 +111,7 @@ data TLSConfig = TLSConfig
 
 data ClusterConfig = ClusterConfig
   { ccName                   :: ClusterName
-  , ccNodes                  :: [NodeConfig]
+  , ccNodes                  :: NonEmpty NodeConfig
   , ccCredentials            :: Credentials
   , ccReplicationCredentials :: Maybe Credentials
   , ccMonitoring             :: MonitoringConfig
@@ -140,7 +146,7 @@ data ClusterPasswords = ClusterPasswords
 
 data NodeConfig = NodeConfig
   { ncHost :: Text
-  , ncPort :: Int
+  , ncPort :: Port
   } deriving (Show, Generic)
 
 data Credentials = Credentials
@@ -149,18 +155,18 @@ data Credentials = Credentials
   } deriving (Show, Generic)
 
 data MonitoringConfig = MonitoringConfig
-  { mcInterval               :: NominalDiffTime
-  , mcConnectTimeout         :: NominalDiffTime
+  { mcInterval               :: PositiveDuration
+  , mcConnectTimeout         :: PositiveDuration
   , mcReplicationLagWarning  :: NominalDiffTime
   , mcReplicationLagCritical :: NominalDiffTime
   , mcDiscoveryInterval      :: NominalDiffTime  -- 0 = disabled, default 300s
-  , mcConnectRetries         :: Int              -- ^ Total connection attempts per probe cycle (1 = no retry, default)
+  , mcConnectRetries         :: AtLeastOne        -- ^ Total connection attempts per probe cycle (1 = no retry, default)
   , mcConnectRetryBackoff    :: NominalDiffTime  -- ^ Initial backoff between retries, doubles each attempt, capped at connect_timeout (default 1s)
   } deriving (Show, Generic)
 
 data FailureDetectionConfig = FailureDetectionConfig
   { fdcRecoveryBlockPeriod         :: NominalDiffTime
-  , fdcConsecutiveFailuresForDead  :: Int   -- ^ Consecutive failures required to mark a node dead (default 3)
+  , fdcConsecutiveFailuresForDead  :: AtLeastOne  -- ^ Consecutive failures required to mark a node dead (default 3)
   } deriving (Show, Generic)
 
 data FailoverConfig = FailoverConfig
@@ -169,7 +175,7 @@ data FailoverConfig = FailoverConfig
   , fcCandidatePriority           :: [CandidatePriority]
   , fcWaitRelayLogTimeout         :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
   , fcAutoFence                   :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
-  , fcMaxReplicaLagForCandidate   :: Maybe Int        -- ^ Max lag in seconds for failover candidates; lagging nodes are excluded (default Nothing)
+  , fcMaxReplicaLagForCandidate   :: Maybe PositiveInt -- ^ Max lag in seconds for failover candidates; lagging nodes are excluded (default Nothing)
   , fcNeverPromote                :: [Text]           -- ^ Hosts permanently excluded from promotion; they continue to replicate but are never selected as candidates (default [])
   } deriving (Show, Generic)
 
@@ -186,7 +192,7 @@ data RawFailoverConfig = RawFailoverConfig
   , rfcCandidatePriority         :: [CandidatePriority]
   , rfcWaitRelayLogTimeout       :: Maybe NominalDiffTime
   , rfcAutoFence                 :: Maybe Bool
-  , rfcMaxReplicaLagForCandidate :: Maybe Int
+  , rfcMaxReplicaLagForCandidate :: Maybe PositiveInt
   , rfcNeverPromote              :: [Text]
   } deriving (Show, Generic)
 
@@ -201,6 +207,50 @@ data HooksConfig = HooksConfig
   , hcOnLagThresholdExceeded      :: Maybe FilePath  -- ^ Fired when a replica transitions to Lagging health
   , hcOnLagThresholdRecovered     :: Maybe FilePath  -- ^ Fired when a replica recovers from Lagging health
   } deriving (Show, Generic)
+
+-- | A TCP/IP port number in the range 1–65535.
+newtype Port = Port { unPort :: Int }
+  deriving (Show, Eq)
+
+-- | A strictly positive duration (> 0).
+newtype PositiveDuration = PositiveDuration { unPositiveDuration :: NominalDiffTime }
+  deriving (Show, Eq)
+
+-- | An integer value >= 1.
+newtype AtLeastOne = AtLeastOne { unAtLeastOne :: Int }
+  deriving (Show, Eq)
+
+-- | A strictly positive integer (> 0).
+newtype PositiveInt = PositiveInt { unPositiveInt :: Int }
+  deriving (Show, Eq)
+
+instance FromJSON Port where
+  parseJSON v = do
+    n <- parseJSON v
+    if n >= 1 && n <= 65535
+      then pure (Port n)
+      else fail $ "port out of range (1-65535): " <> show n
+
+instance FromJSON PositiveDuration where
+  parseJSON v = do
+    DurationField d <- parseJSON v
+    if d > 0
+      then pure (PositiveDuration d)
+      else fail "duration must be > 0"
+
+instance FromJSON AtLeastOne where
+  parseJSON v = do
+    n <- parseJSON v
+    if n >= 1
+      then pure (AtLeastOne n)
+      else fail "value must be >= 1"
+
+instance FromJSON PositiveInt where
+  parseJSON v = do
+    n <- parseJSON v
+    if n > 0
+      then pure (PositiveInt n)
+      else fail "value must be > 0"
 
 -- | Parse duration strings like "3s", "10s", "3600s"
 parseDuration :: Text -> Either String NominalDiffTime
@@ -240,11 +290,14 @@ resolveFailover clusterRaw globalRaw = FailoverConfig
 -- Per-cluster settings take precedence; falls back to global; errors if neither present.
 resolveCluster :: Maybe GlobalConfig -> RawClusterConfig -> Either String ClusterConfig
 resolveCluster mglobal raw = do
-  mc  <- require "monitoring"        rccMonitoring       (gcMonitoring       =<< mglobal)
-  fdc <- require "failure_detection" rccFailureDetection (gcFailureDetection =<< mglobal)
+  mc    <- require "monitoring"        rccMonitoring       (gcMonitoring       =<< mglobal)
+  fdc   <- require "failure_detection" rccFailureDetection (gcFailureDetection =<< mglobal)
+  nodes <- case NE.nonEmpty (rccNodes raw) of
+    Just ne -> Right ne
+    Nothing -> Left $ "Cluster '" <> T.unpack (rccName raw) <> "': no nodes defined"
   pure ClusterConfig
     { ccName                   = ClusterName (rccName raw)
-    , ccNodes                  = rccNodes raw
+    , ccNodes                  = nodes
     , ccCredentials            = rccCredentials raw
     , ccReplicationCredentials = rccReplicationCredentials raw
     , ccMonitoring             = mc
@@ -272,9 +325,12 @@ instance FromJSON Config where
              \are cluster-specific (hostnames differ per cluster) and cannot be set \
              \in the global section; specify them under each cluster's failover block instead"
       _ -> pure ()
-    clusters    <- case mapM (resolveCluster mglobal) rawClusters of
+    resolved <- case mapM (resolveCluster mglobal) rawClusters of
       Left err -> fail err
       Right cs -> pure cs
+    clusters <- case NE.nonEmpty resolved of
+      Just ne -> pure ne
+      Nothing -> fail "no clusters defined"
     pure $ Config clusters logging http
 
 instance FromJSON LoggingConfig where
@@ -337,7 +393,7 @@ instance FromJSON NodeConfig where
   parseJSON = withObject "NodeConfig" $ \o ->
     NodeConfig
       <$> o .: "host"
-      <*> o .:? "port" .!= 3306
+      <*> o .:? "port" .!= Port 3306
 
 instance FromJSON Credentials where
   parseJSON = withObject "Credentials" $ \o ->
@@ -348,19 +404,19 @@ instance FromJSON Credentials where
 instance FromJSON MonitoringConfig where
   parseJSON = withObject "MonitoringConfig" $ \o ->
     MonitoringConfig
-      <$> (unDuration <$> o .:  "interval")
-      <*> (unDuration <$> o .:  "connect_timeout")
+      <$> o .:  "interval"
+      <*> o .:  "connect_timeout"
       <*> (unDuration <$> o .:  "replication_lag_warning")
       <*> (unDuration <$> o .:  "replication_lag_critical")
       <*> (unDuration <$> o .:? "discovery_interval"    .!= DurationField 300)
-      <*>               o .:? "connect_retries"          .!= 1
+      <*> o .:? "connect_retries"                        .!= AtLeastOne 1
       <*> (unDuration <$> o .:? "connect_retry_backoff" .!= DurationField 1)
 
 instance FromJSON FailureDetectionConfig where
   parseJSON = withObject "FailureDetectionConfig" $ \o ->
     FailureDetectionConfig
       <$> (unDuration <$> o .:  "recovery_block_period")
-      <*> o .:? "consecutive_failures_for_dead" .!= 3
+      <*> o .:? "consecutive_failures_for_dead" .!= AtLeastOne 3
 
 instance FromJSON RawFailoverConfig where
   parseJSON = withObject "FailoverConfig" $ \o ->
@@ -382,7 +438,7 @@ instance FromJSON HttpConfig where
     HttpConfig
       <$> o .:? "enabled"        .!= False
       <*> o .:? "listen_address" .!= "127.0.0.1"
-      <*> o .:? "port"           .!= 8080
+      <*> o .:? "port"           .!= Port 8080
 
 instance FromJSON HooksConfig where
   parseJSON = withObject "HooksConfig" $ \o ->
@@ -404,16 +460,20 @@ loadConfig path = do
     Left err  -> Left (show err)
     Right cfg -> Right cfg
 
--- | Validate a parsed 'Config' for semantic correctness.
+-- | Validate a parsed 'Config' for cross-field semantic correctness.
+-- Single-field constraints (port range, positive durations, etc.) are enforced
+-- at parse time by the newtype wrappers. This function checks only:
+--   1. Duplicate cluster names
+--   2. Duplicate node hosts within a cluster
+--   3. replication_lag_warning < replication_lag_critical
+--   4. never_promote hosts exist in the nodes list
 -- Returns a list of error messages; an empty list means the config is valid.
 validateConfig :: Config -> [String]
-validateConfig cfg = clusterErrors ++ httpErrors
+validateConfig cfg = clusterErrors
   where
-    clusters = cfgClusters cfg
+    clusters = NE.toList (cfgClusters cfg)
 
-    clusterErrors
-      | null clusters = ["no clusters defined"]
-      | otherwise     = duplicateClusterErrors ++ concatMap validateCluster clusters
+    clusterErrors = duplicateClusterErrors ++ concatMap validateCluster clusters
 
     clusterNames = map ccName clusters
     duplicateClusterErrors =
@@ -421,57 +481,26 @@ validateConfig cfg = clusterErrors ++ httpErrors
       | n <- duplicates clusterNames ]
 
     validateCluster :: ClusterConfig -> [String]
-    validateCluster cc = nodeErrors ++ monErrors ++ fdErrors ++ fcErrors
+    validateCluster cc = nodeErrors ++ monErrors ++ fcErrors
       where
         cname  = T.unpack (unClusterName (ccName cc))
         prefix = "cluster '" <> cname <> "': "
-        nodes  = ccNodes cc
-
-        nodeErrors
-          | null nodes = [prefix <> "no nodes defined"]
-          | otherwise  = duplicateHostErrors ++ concatMap (validateNode prefix) nodes
+        nodes  = NE.toList (ccNodes cc)
 
         hosts = map ncHost nodes
-        duplicateHostErrors =
+        nodeErrors =
           [ prefix <> "duplicate node host: '" <> T.unpack h <> "'"
           | h <- duplicates hosts ]
 
-        validateNode :: String -> NodeConfig -> [String]
-        validateNode p nc =
-          [ p <> "node port " <> show (ncPort nc) <> " is out of range (1-65535)"
-          | ncPort nc < 1 || ncPort nc > 65535 ]
-
         mc = ccMonitoring cc
-        monErrors = concat
-          [ [ prefix <> "monitoring.interval must be > 0"
-            | mcInterval mc <= 0 ]
-          , [ prefix <> "monitoring.connect_timeout must be > 0"
-            | mcConnectTimeout mc <= 0 ]
-          , [ prefix <> "monitoring.replication_lag_warning must be less than replication_lag_critical"
-            | mcReplicationLagWarning mc >= mcReplicationLagCritical mc ]
-          , [ prefix <> "monitoring.connect_retries must be >= 1"
-            | mcConnectRetries mc < 1 ]
-          ]
-
-        fdc = ccFailureDetection cc
-        fdErrors =
-          [ prefix <> "failure_detection.consecutive_failures_for_dead must be >= 1"
-          | fdcConsecutiveFailuresForDead fdc < 1 ]
+        monErrors =
+          [ prefix <> "monitoring.replication_lag_warning must be less than replication_lag_critical"
+          | mcReplicationLagWarning mc >= mcReplicationLagCritical mc ]
 
         fc = ccFailover cc
         fcErrors =
-          [ prefix <> "failover.max_replica_lag_for_candidate must be > 0"
-          | Just n <- [fcMaxReplicaLagForCandidate fc], n <= 0 ]
-          ++
           [ prefix <> "failover.never_promote host '" <> T.unpack h <> "' is not listed in nodes"
           | h <- fcNeverPromote fc, h `notElem` hosts ]
-
-    httpErrors
-      | not (hcEnabled (cfgHttp cfg)) = []
-      | p < 1 || p > 65535 =
-          ["http.port " <> show p <> " is out of range (1-65535)"]
-      | otherwise = []
-      where p = hcPort (cfgHttp cfg)
 
 -- | Return elements that appear more than once in the list.
 duplicates :: Ord a => [a] -> [a]

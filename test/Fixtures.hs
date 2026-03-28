@@ -59,8 +59,8 @@ mkNodeState nid role mRs health = NodeState
 mkTestEnv :: TVarDaemonState -> ClusterConfig -> FailoverConfig -> IO ClusterEnv
 mkTestEnv tvar cc fc = do
   let pws = ClusterPasswords (DbCredentials "" "") (DbCredentials "" "")
-      fdc = FailureDetectionConfig 0 3
-  mcVar    <- newTVarIO (MonitoringConfig 3 5 30 60 300 1 1)
+      fdc = FailureDetectionConfig 0 (AtLeastOne 3)
+  mcVar    <- newTVarIO (MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1)
   hooksVar <- newTVarIO Nothing
   lock     <- newFailoverLock
   logger    <- nullLogger

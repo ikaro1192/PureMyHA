@@ -85,7 +85,7 @@ executeFailover topo = runExceptT $ do
   fc <- lift $ asks envFailover
   let prefix = "[" <> unClusterName (ccName cc) <> "] "
   candidateId <- ExceptT $ do
-    case selectCandidate (fcNeverPromote fc) (fcMaxReplicaLagForCandidate fc) (ctNodes topo) (fcCandidatePriority fc) Nothing of
+    case selectCandidate (fcNeverPromote fc) (fmap unPositiveInt (fcMaxReplicaLagForCandidate fc)) (ctNodes topo) (fcCandidatePriority fc) Nothing of
       Left err -> do
         appLogError (prefix <> "Auto-failover failed: " <> err)
         pure (Left err)
@@ -206,7 +206,7 @@ doAutoFence = do
   -- The probe that triggered the SplitBrainSuspected transition may have captured
   -- GTID counts before recent writes landed; a short wait ensures fresh data.
   mc <- liftIO . readTVarIO =<< asks envMonitoring
-  liftIO $ threadDelay (round (mcInterval mc * 2 * 1_000_000))
+  liftIO $ threadDelay (round (unPositiveDuration (mcInterval mc) * 2 * 1_000_000))
   clusterName <- getClusterName
   fc          <- asks envFailover
   let prefix = "[" <> unClusterName clusterName <> "] "
@@ -241,7 +241,7 @@ fenceNode clusterName survivorHost ns = do
   let nid    = nsNodeId ns
       ci     = makeConnectInfo nid creds
       prefix = "[" <> unClusterName clusterName <> "] "
-      cap    = mcConnectTimeout mc
+      cap    = unPositiveDuration (mcConnectTimeout mc)
   result <- liftIO $ withNodeConnRetry 1 0 cap (const (pure ())) mTls ci setSuperReadOnly
   case result of
     Left err ->

@@ -5,7 +5,8 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Test.Hspec
 import Fixtures
-import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..))
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
 import PureMyHA.Env (runApp)
 import PureMyHA.Failover.Switchover (switchoverReconnectTargets, dryRunSwitchover)
 import PureMyHA.Topology.Discovery (buildClusterTopology)
@@ -72,11 +73,11 @@ spec = do
 testCC :: ClusterConfig
 testCC = ClusterConfig
   { ccName                   = "main"
-  , ccNodes                  = []
+  , ccNodes                  = NodeConfig "db1" (Port 3306) :| []
   , ccCredentials            = Credentials "user" "/dev/null"
   , ccReplicationCredentials = Nothing
-  , ccMonitoring             = MonitoringConfig 3 5 30 60 300 1 1
-  , ccFailureDetection       = FailureDetectionConfig 3600 3
+  , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
+  , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
   , ccFailover               = FailoverConfig True 1 [] 60 False Nothing []
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing

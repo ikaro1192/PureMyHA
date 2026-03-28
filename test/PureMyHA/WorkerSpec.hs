@@ -7,7 +7,8 @@ import Control.Exception (SomeException, try, fromException)
 import qualified Data.Map.Strict as Map
 import Test.Hspec
 import Fixtures
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..))
+import Data.List.NonEmpty (NonEmpty ((:|)))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
 import PureMyHA.Env (runApp)
 import qualified Data.Set as Set
 import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv)
@@ -19,11 +20,11 @@ import PureMyHA.Types
 testCC :: ClusterConfig
 testCC = ClusterConfig
   { ccName                   = "main"
-  , ccNodes                  = []
+  , ccNodes                  = NodeConfig "db1" (Port 3306) :| []
   , ccCredentials            = Credentials "user" "/dev/null"
   , ccReplicationCredentials = Nothing
-  , ccMonitoring             = MonitoringConfig 3 5 30 60 300 1 1
-  , ccFailureDetection       = FailureDetectionConfig 3600 3
+  , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
+  , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
   , ccFailover               = FailoverConfig True 1 [] 60 False Nothing []
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
@@ -212,7 +213,7 @@ spec = do
       a3 <- async (threadDelay maxBound)
       reg <- newTVarIO (Map.fromList [(db1, a1), (db2, a2), (db3, a3)])
       let discovered = Set.singleton db1
-          cc = ccWith [NodeConfig "db2" 3306]
+          cc = ccWith (NodeConfig "db2" (Port 3306) :| [])
       stale <- detectAndPruneStaleWorkers reg cc discovered
       stale `shouldBe` [db3]
       registry <- readTVarIO reg
@@ -233,7 +234,7 @@ spec = do
       a2 <- async (threadDelay maxBound)
       reg <- newTVarIO (Map.fromList [(db1, a1), (db2, a2)])
       let discovered = Set.singleton db1
-          cc = ccWith [NodeConfig "db2" 3306]
+          cc = ccWith (NodeConfig "db2" (Port 3306) :| [])
       stale <- detectAndPruneStaleWorkers reg cc discovered
       stale `shouldBe` []
       registry <- readTVarIO reg
