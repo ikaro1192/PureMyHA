@@ -64,9 +64,9 @@ global:
     on_fence: /etc/puremyha/hooks/on_fence.sh                                      # optional; fired after a node is auto-fenced
                                                                                     # Env: PUREMYHA_CLUSTER, PUREMYHA_OLD_SOURCE (fenced host), PUREMYHA_NEW_SOURCE (survivor host)
     on_lag_threshold_exceeded: /etc/puremyha/hooks/on_lag_threshold_exceeded.sh    # optional; fired when a replica transitions to Lagging health
-                                                                                    # Env: PUREMYHA_CLUSTER, PUREMYHA_LAG_SECONDS, PUREMYHA_TIMESTAMP
+                                                                                    # Env: PUREMYHA_CLUSTER, PUREMYHA_NODE, PUREMYHA_LAG_SECONDS, PUREMYHA_TIMESTAMP
     on_lag_threshold_recovered: /etc/puremyha/hooks/on_lag_threshold_recovered.sh  # optional; fired when a replica recovers from Lagging health
-                                                                                    # Env: PUREMYHA_CLUSTER, PUREMYHA_TIMESTAMP
+                                                                                    # Env: PUREMYHA_CLUSTER, PUREMYHA_NODE, PUREMYHA_TIMESTAMP
 
 logging:                               # optional logging configuration
   log_file: /var/log/puremyha.log    # default: /var/log/puremyha.log

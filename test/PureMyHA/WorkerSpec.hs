@@ -10,7 +10,8 @@ import Fixtures
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..))
 import PureMyHA.Env (runApp)
 import qualified Data.Set as Set
-import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros)
+import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv)
+import PureMyHA.Hook (HookEnv (..))
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
 import PureMyHA.Types
@@ -237,3 +238,24 @@ spec = do
       stale `shouldBe` []
       registry <- readTVarIO reg
       Map.size registry `shouldBe` 2
+
+  describe "buildLagHookEnv" $ do
+
+    it "sets hookNode to the node's host" $
+      hookNode (buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z")
+        `shouldBe` Just "db2"
+
+    it "does not set hookNewSource, hookOldSource, hookFailureType, or hookLagSeconds" $ do
+      let e = buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z"
+      hookNewSource   e `shouldBe` Nothing
+      hookOldSource   e `shouldBe` Nothing
+      hookFailureType e `shouldBe` Nothing
+      hookLagSeconds  e `shouldBe` Nothing
+
+    it "sets hookClusterName correctly" $
+      hookClusterName (buildLagHookEnv "main" (NodeId "db2" 3306) "ts")
+        `shouldBe` "main"
+
+    it "sets hookTimestamp correctly" $
+      hookTimestamp (buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z")
+        `shouldBe` "2026-01-01T00:00:00Z"

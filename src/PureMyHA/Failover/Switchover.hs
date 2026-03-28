@@ -63,7 +63,7 @@ runSwitchover mToHost mDrainTimeout = do
           -- Pre-switchover hook (blocking: non-zero exit aborts)
           mHooks <- getHooksConfig
           ts <- liftIO getCurrentTimestamp
-          let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts Nothing
+          let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts Nothing Nothing
           preResult <- liftIO $ runHookOrAbort mHooks hcPreSwitchover preEnv
           case preResult of
             Left err -> do
@@ -148,7 +148,7 @@ doSwitchover candidateId oldSourceId oldSourceHost topo mDrainTimeout = do
               -- Post-switchover hook (fire-and-forget)
               mHooks <- getHooksConfig
               ts <- liftIO getCurrentTimestamp
-              let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts Nothing
+              let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts Nothing Nothing
               liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
 
               appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover completed: new source is " <> nodeHost candidateId
