@@ -1,0 +1,77 @@
+# =============================================================================
+# HAProxy Configuration for PureMyHA + Pacemaker
+# =============================================================================
+# This configuration routes MySQL traffic through HAProxy in TCP (Layer 4)
+# mode. Two frontends are provided:
+#
+#   Write VIP:3306 → mysql_source   (current MySQL source)
+#   Read  VIP:3306 → mysql_replicas (replica pool, round-robin)
+#
+# PureMyHA hooks update the backends via the stats socket when
+# failover or switchover occurs.
+#
+# Adapt the bind addresses and server entries to your environment.
+# =============================================================================
+
+global
+    log stdout format raw local0 info
+    # The stats socket is used by PureMyHA hooks to update backends at runtime
+    # without restarting HAProxy. The hooks also rewrite this config file so
+    # changes persist across HAProxy restarts.
+    stats socket /run/haproxy/admin.sock mode 660 level admin
+    maxconn 2048
+
+defaults
+    mode    tcp
+    log     global
+    option  tcplog
+    timeout connect  5s
+    timeout client   3600s
+    timeout server   3600s
+    retries 3
+
+# -----------------------------------------------------------------------------
+# Write frontend — binds to the Write VIP.
+# Clients sending writes connect here. Traffic goes to the single active source.
+# -----------------------------------------------------------------------------
+frontend mysql_write
+    # Change this address to your Write VIP.
+    bind 192.168.10.100:3306
+    default_backend mysql_source
+
+# -----------------------------------------------------------------------------
+# Read frontend — binds to the Read VIP.
+# Read-only clients connect here. Traffic is distributed across replicas.
+# -----------------------------------------------------------------------------
+frontend mysql_read
+    # Change this address to your Read VIP.
+    bind 192.168.10.101:3306
+    default_backend mysql_replicas
+
+# -----------------------------------------------------------------------------
+# Write backend — single active MySQL source.
+# The "source" server entry is updated by PureMyHA post_failover /
+# post_switchover hooks via the stats socket.
+# -----------------------------------------------------------------------------
+backend mysql_source
+    # "source" is a logical name used by the hook scripts.
+    # Do not rename it without updating the hooks.
+    server source db1:3306 check inter 3s rise 2 fall 3
+
+# -----------------------------------------------------------------------------
+# Read backend — replica pool.
+# After failover, the old source becomes a replica and is enabled here;
+# the new source is disabled to keep write traffic off the read pool.
+#
+# Health checks use TCP by default (the "check" keyword on each server line).
+# TCP checks verify that MySQL is accepting connections on port 3306.
+#
+# HAProxy also supports MySQL-protocol health checks via "option mysql-check",
+# but this requires a user with mysql_native_password authentication. Since
+# MySQL 8.4+ disables mysql_native_password by default, TCP checks are the
+# recommended approach.
+# -----------------------------------------------------------------------------
+backend mysql_replicas
+    balance roundrobin
+    server db1 db1:3306 check inter 3s rise 2 fall 3 disabled
+    server db2 db2:3306 check inter 3s rise 2 fall 3

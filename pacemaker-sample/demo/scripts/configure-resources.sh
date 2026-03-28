@@ -3,7 +3,10 @@
 # PureMyHA Pacemaker Demo — Resource Configuration Script (Phase 2)
 # =============================================================================
 # Waits for the cluster to form, then configures QDevice, resources, and
-# constraints. Run after both ha1 and ha2 have corosync/pacemaker running.
+# a resource group. Run after both ha1 and ha2 have corosync/pacemaker running.
+#
+# Resource Group (start order):
+#   puremyhad → vip-write → vip-read → haproxy
 #
 # Called by:  make setup
 # =============================================================================
@@ -37,25 +40,44 @@ pcs quorum device add model net \
 echo "==> Disabling STONITH (demo only — never do this in production)..."
 pcs property set stonith-enabled=false
 
-echo "==> Creating puremyhad resource..."
+echo "==> Creating resource group (puremyhad → vip-write → vip-read → haproxy)..."
+# Resources are created directly in the group with --group to avoid a race
+# where Pacemaker distributes ungrouped resources across nodes.
+# VIPs must be assigned before HAProxy starts — HAProxy binds to VIP addresses.
+
 pcs resource create puremyhad ocf:puremyha:puremyhad \
     config=/etc/puremyha/config.yaml \
     socket=/run/puremyhad.sock \
     op start   timeout=30s \
     op stop    timeout=60s \
-    op monitor interval=15s timeout=15s
+    op monitor interval=15s timeout=15s \
+    --group puremyha-group
 
-echo "==> Creating Virtual IP resource..."
-pcs resource create puremyha-vip IPaddr2 \
+pcs resource create vip-write IPaddr2 \
     ip=192.168.100.100 \
     cidr_netmask=24 \
-    op monitor interval=10s timeout=10s
+    op monitor interval=10s timeout=10s \
+    --group puremyha-group
 
-echo "==> Setting colocation and ordering constraints..."
-pcs constraint colocation add puremyha-vip with puremyhad INFINITY
-pcs constraint order puremyhad then puremyha-vip
+pcs resource create vip-read IPaddr2 \
+    ip=192.168.100.101 \
+    cidr_netmask=24 \
+    op monitor interval=10s timeout=10s \
+    --group puremyha-group
+
+# ocf:heartbeat:anything is used because the demo runs without systemd.
+# In production, use: pcs resource create haproxy systemd:haproxy ...
+pcs resource create haproxy ocf:heartbeat:anything \
+    binfile="/usr/sbin/haproxy" \
+    cmdline_options="-f /etc/haproxy/haproxy.cfg -p /run/haproxy/haproxy.pid -Ws" \
+    pidfile="/run/haproxy/haproxy.pid" \
+    op start   timeout=30s \
+    op stop    timeout=30s \
+    op monitor interval=10s timeout=10s \
+    --group puremyha-group
 
 echo ""
-echo "==> Cluster setup complete!"
+echo "==> Cluster setup complete! Waiting for resources to settle..."
+sleep 15
 echo ""
 crm_mon -1

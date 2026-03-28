@@ -1,15 +1,19 @@
 # PureMyHA configuration for the Pacemaker demo environment.
-# Replace the MySQL node addresses with your actual MySQL cluster.
+# Use IP addresses (not hostnames) so that configured NodeIds match
+# discovered NodeIds — puremyhad resolves discovered replicas to IPs.
 clusters:
   - name: main
     nodes:
-      - host: db1
+      - host: "192.168.100.21"
         port: 3306
-      - host: db2
+      - host: "192.168.100.22"
         port: 3306
     credentials:
       user: puremyha
       password_file: /etc/puremyha/mysql.pass
+    replication_credentials:
+      user: repl
+      password_file: /etc/puremyha/repl.pass
 
 global:
   monitoring:
@@ -26,6 +30,9 @@ global:
     auto_failover: true
     min_replicas_for_failover: 1
     wait_for_relay_log_apply_timeout: 60s
+  hooks:
+    post_failover: /etc/puremyha/hooks/post_failover.sh
+    post_switchover: /etc/puremyha/hooks/post_switchover.sh
 
 logging:
   log_file: /var/log/puremyha.log
