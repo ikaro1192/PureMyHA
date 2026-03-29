@@ -21,6 +21,84 @@ import PureMyHA.IPC.Server (toClusterStatus, toClusterTopologyView)
 import PureMyHA.Topology.State (TVarDaemonState, readDaemonState)
 import PureMyHA.Types
 
+-- | Metric name in Prometheus exposition format.
+newtype MetricName = MetricName { unMetricName :: Text }
+
+-- | Human-readable help string for a metric family.
+newtype MetricHelp = MetricHelp { unMetricHelp :: Text }
+
+-- | Prometheus metric type.
+data MetricType = Gauge | Counter
+
+renderMetricType :: MetricType -> Text
+renderMetricType Gauge   = "gauge"
+renderMetricType Counter = "counter"
+
+-- | A single Prometheus sample with labels and a value.
+data MetricSample = MetricSample
+  { msLabels :: Text
+  , msValue  :: Text
+  }
+
+-- | Accumulated Prometheus text lines.  Monoid instance enables @foldMap@ / @<>@.
+newtype MetricOutput = MetricOutput { unMetricOutput :: [Text] }
+
+instance Semigroup MetricOutput where
+  MetricOutput a <> MetricOutput b = MetricOutput (a <> b)
+
+instance Monoid MetricOutput where
+  mempty = MetricOutput []
+
+-- | Descriptor for a metric whose samples are keyed by cluster.
+data ClusterMetric = ClusterMetric
+  { cmName  :: MetricName
+  , cmHelp  :: MetricHelp
+  , cmValue :: ClusterName -> ClusterTopology -> Text
+  }
+
+-- | Descriptor for a metric whose samples are keyed by (cluster, node).
+data NodeMetric = NodeMetric
+  { nmName  :: MetricName
+  , nmHelp  :: MetricHelp
+  , nmValue :: ClusterName -> NodeState -> Text
+  }
+
+clusterMetrics :: [ClusterMetric]
+clusterMetrics =
+  [ ClusterMetric
+      (MetricName "puremyha_cluster_healthy")
+      (MetricHelp "1 if the cluster is Healthy, 0 otherwise")
+      (\_ ct -> boolVal (ctHealth ct == Healthy))
+  , ClusterMetric
+      (MetricName "puremyha_cluster_paused")
+      (MetricHelp "1 if automatic failover is paused")
+      (\_ ct -> boolVal (ctPaused ct))
+  ]
+
+nodeMetrics :: [NodeMetric]
+nodeMetrics =
+  [ NodeMetric
+      (MetricName "puremyha_node_healthy")
+      (MetricHelp "1 if the node is Healthy, 0 otherwise")
+      (\_ ns -> boolVal (nsHealth ns == Healthy))
+  , NodeMetric
+      (MetricName "puremyha_node_is_source")
+      (MetricHelp "1 if the node is the source (primary), 0 if replica")
+      (\_ ns -> boolVal (isSource ns))
+  , NodeMetric
+      (MetricName "puremyha_node_replication_lag_seconds")
+      (MetricHelp "Replication lag in seconds (-1 if unknown or not applicable)")
+      (\_ ns -> lagVal (nsProbeResult ns))
+  , NodeMetric
+      (MetricName "puremyha_node_consecutive_failures")
+      (MetricHelp "Number of consecutive monitoring probe failures")
+      (\_ ns -> T.pack (show (nsConsecutiveFailures ns)))
+  , NodeMetric
+      (MetricName "puremyha_node_paused")
+      (MetricHelp "1 if replication is paused on this node")
+      (\_ ns -> boolVal (nsPaused ns))
+  ]
+
 jsonCT :: Header
 jsonCT = ("Content-Type", "application/json")
 
@@ -71,48 +149,30 @@ handleMetrics tvar = do
 -- | Render all cluster and node metrics in Prometheus text exposition format.
 -- Each metric family emits exactly one HELP/TYPE header followed by all samples.
 renderMetrics :: DaemonState -> BSL.ByteString
-renderMetrics ds = BSL.fromStrict $ TE.encodeUtf8 $ T.unlines $
-  metricBlock "puremyha_cluster_healthy" "gauge" "1 if the cluster is Healthy, 0 otherwise"
-    [ (clusterLabels name, boolVal (ctHealth ct == Healthy))
-    | (name, ct) <- Map.toAscList (dsClusters ds) ]
-  ++
-  metricBlock "puremyha_cluster_paused" "gauge" "1 if automatic failover is paused"
-    [ (clusterLabels name, boolVal (ctPaused ct))
-    | (name, ct) <- Map.toAscList (dsClusters ds) ]
-  ++
-  metricBlock "puremyha_node_healthy" "gauge" "1 if the node is Healthy, 0 otherwise"
-    [ (nodeLabels name ns, boolVal (nsHealth ns == Healthy))
-    | (name, ct) <- Map.toAscList (dsClusters ds)
-    , ns <- Map.elems (ctNodes ct) ]
-  ++
-  metricBlock "puremyha_node_is_source" "gauge" "1 if the node is the source (primary), 0 if replica"
-    [ (nodeLabels name ns, boolVal (isSource ns))
-    | (name, ct) <- Map.toAscList (dsClusters ds)
-    , ns <- Map.elems (ctNodes ct) ]
-  ++
-  metricBlock "puremyha_node_replication_lag_seconds" "gauge"
-    "Replication lag in seconds (-1 if unknown or not applicable)"
-    [ (nodeLabels name ns, lagVal (nsProbeResult ns))
-    | (name, ct) <- Map.toAscList (dsClusters ds)
-    , ns <- Map.elems (ctNodes ct) ]
-  ++
-  metricBlock "puremyha_node_consecutive_failures" "gauge"
-    "Number of consecutive monitoring probe failures"
-    [ (nodeLabels name ns, T.pack (show (nsConsecutiveFailures ns)))
-    | (name, ct) <- Map.toAscList (dsClusters ds)
-    , ns <- Map.elems (ctNodes ct) ]
-  ++
-  metricBlock "puremyha_node_paused" "gauge" "1 if replication is paused on this node"
-    [ (nodeLabels name ns, boolVal (nsPaused ns))
-    | (name, ct) <- Map.toAscList (dsClusters ds)
+renderMetrics ds = BSL.fromStrict $ TE.encodeUtf8 $ T.unlines $ unMetricOutput $
+  let clusters = Map.toAscList (dsClusters ds)
+  in  foldMap (renderClusterMetric clusters) clusterMetrics
+   <> foldMap (renderNodeMetric clusters) nodeMetrics
+
+renderClusterMetric :: [(ClusterName, ClusterTopology)] -> ClusterMetric -> MetricOutput
+renderClusterMetric clusters cm =
+  metricBlock (cmName cm) Gauge (cmHelp cm)
+    [ MetricSample (clusterLabels name) (cmValue cm name ct)
+    | (name, ct) <- clusters ]
+
+renderNodeMetric :: [(ClusterName, ClusterTopology)] -> NodeMetric -> MetricOutput
+renderNodeMetric clusters nm =
+  metricBlock (nmName nm) Gauge (nmHelp nm)
+    [ MetricSample (nodeLabels name ns) (nmValue nm name ns)
+    | (name, ct) <- clusters
     , ns <- Map.elems (ctNodes ct) ]
 
 -- | Emit a Prometheus metric family: one HELP line, one TYPE line, then one line per sample.
-metricBlock :: Text -> Text -> Text -> [(Text, Text)] -> [Text]
-metricBlock name typ help samples =
-  [ "# HELP " <> name <> " " <> help
-  , "# TYPE " <> name <> " " <> typ
-  ] ++ [ name <> "{" <> labels <> "} " <> val | (labels, val) <- samples ]
+metricBlock :: MetricName -> MetricType -> MetricHelp -> [MetricSample] -> MetricOutput
+metricBlock name typ help samples = MetricOutput $
+  [ "# HELP " <> unMetricName name <> " " <> unMetricHelp help
+  , "# TYPE " <> unMetricName name <> " " <> renderMetricType typ
+  ] ++ [ unMetricName name <> "{" <> msLabels s <> "} " <> msValue s | s <- samples ]
 
 clusterLabels :: ClusterName -> Text
 clusterLabels name = "cluster=" <> quoted (unClusterName name)
