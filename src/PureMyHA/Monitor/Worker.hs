@@ -33,7 +33,7 @@ import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
 import PureMyHA.Logger (logDebug, logInfo, logWarn)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
 import PureMyHA.MySQL.Query
-import PureMyHA.Topology.Discovery (discoverTopology)
+import PureMyHA.Topology.Discovery (discoverTopology, deduplicateByHostname)
 import PureMyHA.Topology.State
 import PureMyHA.Types
 import PureMyHA.Monitor.Detector (detectClusterHealth, detectNodeHealth, identifySource)
@@ -100,7 +100,8 @@ runTopologyRefresh reg = do
   let mergedTopo = case mOldTopo of
         Nothing      -> newTopo
         Just oldTopo ->
-          newTopo { ctNodes = Map.union (ctNodes newTopo) (ctNodes oldTopo) }
+          newTopo { ctNodes = deduplicateByHostname
+                      (Map.union (ctNodes newTopo) (ctNodes oldTopo)) }
   liftIO $ atomically $ updateClusterTopology tvar mergedTopo
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes mergedTopo)

@@ -4,6 +4,7 @@ module PureMyHA.Topology.Discovery
   , buildNodeStateFromProbe
   , buildClusterTopology
   , nextDiscoveryTargets
+  , deduplicateByHostname
   ) where
 
 import Control.Concurrent.STM (readTVarIO)
@@ -175,6 +176,23 @@ resolveQueueEntry :: NodeId -> IO NodeId
 resolveQueueEntry nid = do
   hi <- resolveHostInfo (nodeHost nid)
   pure (NodeId hi (nodePort nid))
+
+-- | Remove duplicate nodes that represent the same hostname:port with different
+-- IP representations. Prefers the entry with a resolved IP (IP text differs
+-- from hostname text) over hostname-as-IP fallbacks. This can happen when
+-- DNS resolution fails for a stopped node: the fallback produces a different
+-- NodeId than the previously-resolved entry already in the topology.
+deduplicateByHostname :: Map NodeId NodeState -> Map NodeId NodeState
+deduplicateByHostname nodes =
+  Map.fromList . map selectBest . groupByHostPort . Map.toList $ nodes
+  where
+    hostPort nid   = (nodeHost nid, nodePort nid)
+    isResolved nid = unIPAddr (nodeIPAddr nid) /= unHostName (nodeHost nid)
+    groupByHostPort =
+      Map.elems . foldr (\e m -> Map.insertWith (++) (hostPort (fst e)) [e] m) Map.empty
+    selectBest xs  = case filter (isResolved . fst) xs of
+      (best:_) -> best
+      []       -> head xs
 
 -- | Build an initial (empty) topology from config
 buildInitialTopology :: ClusterConfig -> ClusterTopology
