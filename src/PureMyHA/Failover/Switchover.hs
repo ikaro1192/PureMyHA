@@ -7,8 +7,10 @@ module PureMyHA.Failover.Switchover
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically)
 import Control.Exception (try, SomeException)
+import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
+import Control.Monad.Trans.Class (lift)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -79,80 +81,101 @@ doSwitchover
   -> ClusterTopology
   -> Maybe Int         -- ^ drain timeout seconds
   -> App (Either Text ())
-doSwitchover candidateId oldSourceId oldSourceHost topo mDrainTimeout = do
-  cc    <- asks envCluster
-  creds <- getMonCredentials
-  mTls  <- getTLSConfig
-  -- Step 1: Set old source to read_only (abort on failure to prevent split-brain)
-  readOnlyResult <- liftIO $ case oldSourceId of
-    Nothing -> pure (Right ())
-    Just srcId -> do
-      let srcCi = makeConnectInfo srcId creds
-      withNodeConn mTls srcCi setReadOnly
+doSwitchover candidateId oldSourceId oldSourceHost topo mDrainTimeout = runExceptT $ do
+  cc    <- lift $ asks envCluster
+  creds <- lift getMonCredentials
+  mTls  <- lift getTLSConfig
+  let clName = ccName cc
+
+  ExceptT $ freezeOldSource oldSourceId mDrainTimeout mTls creds clName
+  mOldGtid <- lift $ getSourceGtid oldSourceId mTls creds
+  ExceptT $ promoteCandidate candidateId mOldGtid mTls creds clName
+  lift $ finalizeSwitchover candidateId oldSourceId oldSourceHost topo
+
+-- | Set old source to read_only and drain user connections
+freezeOldSource
+  :: Maybe NodeId -> Maybe Int -> Maybe TLSConfig -> DbCredentials
+  -> ClusterName -> App (Either Text ())
+freezeOldSource Nothing _ _ _ _ = pure (Right ())
+freezeOldSource (Just srcId) mDrainTimeout mTls creds clName = do
+  let srcCi = makeConnectInfo srcId creds
+  readOnlyResult <- liftIO $ withNodeConn mTls srcCi setReadOnly
   case readOnlyResult of
     Left err -> do
-      appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover aborted: cannot set old source read_only: " <> err
+      appLogError $ "[" <> unClusterName clName <> "] Switchover aborted: cannot set old source read_only: " <> err
       pure (Left $ "Cannot set old source read_only: " <> err)
     Right () -> do
-      -- Drain phase: wait up to drain-timeout seconds, then KILL remaining user connections
-      case (oldSourceId, mDrainTimeout) of
-        (Just srcId, Just secs) | secs > 0 -> do
-          let srcCi = makeConnectInfo srcId creds
-          waitThenKill mTls srcCi (ccName cc) secs
-        _ -> pure ()
-      -- Step 2: Get old source GTID set
-      mOldGtid <- liftIO $ case oldSourceId of
-        Nothing -> pure Nothing
-        Just srcId -> do
-          let srcCi = makeConnectInfo srcId creds
-          result <- withNodeConn mTls srcCi getGtidExecuted
-          pure $ case result of
-            Right gtid -> Just gtid
-            Left _     -> Nothing
+      case mDrainTimeout of
+        Just secs | secs > 0 -> waitThenKill mTls srcCi clName secs
+        _                    -> pure ()
+      pure (Right ())
 
-      -- Step 3: Wait for candidate to catch up
-      let candidateCi = makeConnectInfo candidateId creds
-      caught <- liftIO $ waitForCatchup mTls candidateCi mOldGtid maxWaitSeconds
+-- | Get GTID executed set from old source (returns Nothing on failure)
+getSourceGtid
+  :: Maybe NodeId -> Maybe TLSConfig -> DbCredentials
+  -> App (Maybe Text)
+getSourceGtid Nothing _ _ = pure Nothing
+getSourceGtid (Just srcId) mTls creds = do
+  let srcCi = makeConnectInfo srcId creds
+  result <- liftIO $ withNodeConn mTls srcCi getGtidExecuted
+  pure $ case result of
+    Right gtid -> Just gtid
+    Left _     -> Nothing
 
-      if not caught
-        then do
-          appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: Candidate did not catch up within timeout"
-          pure (Left "Candidate did not catch up within timeout")
-        else do
-          -- Step 4: Promote candidate
-          promoteResult <- liftIO $ withNodeConn mTls candidateCi $ \conn -> do
-            stopReplica conn
-            resetReplicaAll conn
-            setReadWrite conn
-          case promoteResult of
-            Left err -> do
-              appLogError $ "[" <> unClusterName (ccName cc) <> "] Switchover failed: Promote failed: " <> err
-              pure (Left $ "Promote failed: " <> err)
-            Right () -> do
-              -- Step 5: Update topology roles atomically
-              tvar <- asks envDaemonState
-              liftIO $ atomically $ do
-                case oldSourceId of
-                  Just srcId ->
-                    case Map.lookup srcId (ctNodes topo) of
-                      Just srcNs -> updateNodeState tvar (ccName cc) (srcNs { nsRole = Replica })
-                      Nothing -> pure ()
-                  Nothing -> pure ()
-                case Map.lookup candidateId (ctNodes topo) of
-                  Just candNs -> updateNodeState tvar (ccName cc) (candNs { nsRole = Source })
-                  Nothing -> pure ()
-              -- Step 6: Reconnect remaining replicas (including old source)
-              let others = switchoverReconnectTargets (ctNodes topo) candidateId
-              mapM_ (reconnectToNew candidateId) others
+-- | Wait for candidate to catch up, then promote it
+promoteCandidate
+  :: NodeId -> Maybe Text -> Maybe TLSConfig -> DbCredentials
+  -> ClusterName -> App (Either Text ())
+promoteCandidate candidateId mOldGtid mTls creds clName = do
+  let candidateCi = makeConnectInfo candidateId creds
+  caught <- liftIO $ waitForCatchup mTls candidateCi mOldGtid maxWaitSeconds
+  if not caught
+    then do
+      appLogError $ "[" <> unClusterName clName <> "] Switchover failed: Candidate did not catch up within timeout"
+      pure (Left "Candidate did not catch up within timeout")
+    else do
+      promoteResult <- liftIO $ withNodeConn mTls candidateCi $ \conn -> do
+        stopReplica conn
+        resetReplicaAll conn
+        setReadWrite conn
+      case promoteResult of
+        Left err -> do
+          appLogError $ "[" <> unClusterName clName <> "] Switchover failed: Promote failed: " <> err
+          pure (Left $ "Promote failed: " <> err)
+        Right () -> pure (Right ())
 
-              -- Post-switchover hook (fire-and-forget)
-              mHooks <- getHooksConfig
-              ts <- liftIO getCurrentTimestamp
-              let postEnv = HookEnv (ccName cc) (Just (unHostName (nodeHost candidateId))) oldSourceHost Nothing ts Nothing Nothing
-              liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
+-- | Update topology roles, reconnect replicas, and fire post-switchover hook
+finalizeSwitchover
+  :: NodeId -> Maybe NodeId -> Maybe Text -> ClusterTopology
+  -> App ()
+finalizeSwitchover candidateId oldSourceId oldSourceHost topo = do
+  cc   <- asks envCluster
+  tvar <- asks envDaemonState
+  let clName = ccName cc
 
-              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover completed: new source is " <> unHostName (nodeHost candidateId)
-              pure (Right ())
+  -- Update topology roles atomically
+  liftIO $ atomically $ do
+    case oldSourceId of
+      Just srcId ->
+        case Map.lookup srcId (ctNodes topo) of
+          Just srcNs -> updateNodeState tvar clName (srcNs { nsRole = Replica })
+          Nothing -> pure ()
+      Nothing -> pure ()
+    case Map.lookup candidateId (ctNodes topo) of
+      Just candNs -> updateNodeState tvar clName (candNs { nsRole = Source })
+      Nothing -> pure ()
+
+  -- Reconnect remaining replicas (including old source)
+  let others = switchoverReconnectTargets (ctNodes topo) candidateId
+  mapM_ (reconnectToNew candidateId) others
+
+  -- Post-switchover hook (fire-and-forget)
+  mHooks <- getHooksConfig
+  ts <- liftIO getCurrentTimestamp
+  let postEnv = HookEnv clName (Just (unHostName (nodeHost candidateId))) oldSourceHost Nothing ts Nothing Nothing
+  liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
+
+  appLogInfo $ "[" <> unClusterName clName <> "] Switchover completed: new source is " <> unHostName (nodeHost candidateId)
 
 waitForCatchup :: Maybe TLSConfig -> ConnectInfo -> Maybe Text -> Int -> IO Bool
 waitForCatchup _ _ Nothing _ = pure True
