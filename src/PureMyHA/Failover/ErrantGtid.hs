@@ -4,8 +4,10 @@ module PureMyHA.Failover.ErrantGtid
   , collectErrantGtids
   ) where
 
+import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
+import Data.Bifunctor (first)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -33,31 +35,27 @@ collectErrantGtids = nub . concatMap (concatMap expandGtidEntry)
 -- | Fix errant GTIDs by injecting empty transactions on the source
 runFixErrantGtid :: App (Either Text ())
 runFixErrantGtid = do
-  tvar  <- asks (envDaemonState)
-  cc    <- asks (envCluster)
+  tvar  <- asks envDaemonState
+  cc    <- asks envCluster
   creds <- getMonCredentials
   mTls  <- getTLSConfig
-  liftIO $ do
-    mTopo <- getClusterTopology tvar (ccName cc)
-    case mTopo of
-      Nothing -> pure (Left "Cluster not found")
-      Just topo ->
-        case ctSourceNodeId topo of
-          Nothing -> pure (Left "No source node found in cluster topology")
-          Just srcId -> do
-            let allNodes    = Map.elems (ctNodes topo)
-                errantNodes = filter (\ns -> nsErrantGtids ns /= "") allNodes
-            case errantNodes of
-              [] -> pure (Right ())
-              _  -> do
-                let parseResults = map (parseGtidIntervals . nsErrantGtids) errantNodes
-                case sequence parseResults of
-                  Left err -> pure (Left ("GTID parse error: " <> T.pack err))
-                  Right entryLists -> do
-                    let gtids = collectErrantGtids entryLists
-                    let srcCi = makeConnectInfo srcId creds
-                    result <- withNodeConn mTls srcCi $ \conn ->
-                      mapM_ (injectEmptyTransaction conn) gtids
-                    case result of
-                      Left err -> pure (Left ("Connection to source failed: " <> err))
-                      Right () -> pure (Right ())
+  liftIO $ runExceptT $ do
+    topo <- ExceptT $
+      maybe (Left "Cluster not found") Right
+        <$> getClusterTopology tvar (ccName cc)
+    srcId <- ExceptT . pure $
+      maybe (Left "No source node found in cluster topology") Right
+        (ctSourceNodeId topo)
+    let allNodes    = Map.elems (ctNodes topo)
+        errantNodes = filter (\ns -> nsErrantGtids ns /= "") allNodes
+    case errantNodes of
+      [] -> pure ()
+      _  -> do
+        entryLists <- ExceptT . pure $
+          first (\e -> "GTID parse error: " <> T.pack e) $
+            traverse (parseGtidIntervals . nsErrantGtids) errantNodes
+        let gtids = collectErrantGtids entryLists
+            srcCi = makeConnectInfo srcId creds
+        ExceptT $
+          first ("Connection to source failed: " <>) <$>
+            withNodeConn mTls srcCi (\conn -> mapM_ (injectEmptyTransaction conn) gtids)
