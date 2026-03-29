@@ -4,14 +4,18 @@ module PureMyHA.Clone
   , parseHostPort
   ) where
 
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (asks)
+import Control.Monad.Trans.Class (lift)
 import Data.List (maximumBy)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Ord (comparing)
 import Data.Text (Text)
 import qualified Data.Text as T
+import Database.MySQL.Base (ConnectInfo)
+import PureMyHA.Config (TLSConfig)
 import PureMyHA.Env
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.GTID (gtidTransactionCount)
@@ -52,73 +56,76 @@ selectDonorAuto nodes recipientId =
       ProbeSuccess{prGtidExecuted = g} -> gtidTransactionCount g
       _                                -> 0
 
+resolveRecipient
+  :: Monad m
+  => Text -> ClusterTopology -> ExceptT Text m NodeState
+resolveRecipient spec topo = do
+  let (host, _) = parseHostPort spec
+  ns <- ExceptT . pure $
+    maybe (Left ("Recipient not found in cluster: " <> host)) Right $
+      findNodeByHost (HostName host) (ctNodes topo)
+  case ctSourceNodeId topo of
+    Just sid | sid == nsNodeId ns -> throwError "Cannot clone onto primary node"
+    _                             -> pure ns
+
+resolveDonor
+  :: Monad m
+  => Maybe Text -> Map NodeId NodeState -> NodeId -> ExceptT Text m NodeId
+resolveDonor Nothing nodes recipientId =
+  ExceptT . pure $ selectDonorAuto nodes recipientId
+resolveDonor (Just spec) nodes recipientId = do
+  let (host, _) = parseHostPort spec
+  ns <- ExceptT . pure $
+    maybe (Left ("Donor not found in cluster: " <> host)) Right $
+      findNodeByHost (HostName host) nodes
+  if nsNodeId ns == recipientId
+    then throwError "Donor and recipient must be different"
+    else pure (nsNodeId ns)
+
+checkCloneActive
+  :: (MonadIO m, MonadError Text m)
+  => Maybe TLSConfig -> ConnectInfo -> Text -> Text -> m ()
+checkCloneActive mTls ci role host = do
+  result <- liftIO $ withNodeConn mTls ci checkClonePlugin
+  case result of
+    Left err    -> throwError $ "Cannot connect to " <> role <> " " <> host <> ": " <> err
+    Right False -> throwError $ "CLONE plugin is not active on " <> role <> ": " <> host
+    Right True  -> pure ()
+
 -- | Re-seed a replica using the MySQL CLONE plugin.
 -- Connects to the recipient and issues CLONE INSTANCE FROM <donor>.
 -- The recipient MySQL process will restart after cloning completes.
 runClone :: HostName -> Maybe HostName -> App (Either Text ())
-runClone recipientSpec_ mDonorSpec_ = do
+runClone recipientSpec_ mDonorSpec_ = runExceptT $ do
   let recipientSpec = unHostName recipientSpec_
       mDonorSpec    = fmap unHostName mDonorSpec_
-  tvar          <- asks envDaemonState
-  clusterName   <- getClusterName
-  let clName    = unClusterName clusterName
-  mTopo <- liftIO $ getClusterTopology tvar clusterName
-  case mTopo of
-    Nothing   -> pure $ Left "Cluster not found"
-    Just topo -> do
-      let nodes = ctNodes topo
-          (recipientHost, _) = parseHostPort recipientSpec
-      case findNodeByHost (HostName recipientHost) nodes of
-        Nothing -> pure $ Left $ "Recipient not found in cluster: " <> recipientHost
-        Just recipientNs -> do
-          let recipientId = nsNodeId recipientNs
-          -- Safety guard: refuse to clone onto the primary
-          case ctSourceNodeId topo of
-            Just sourceId | sourceId == recipientId ->
-              pure $ Left "Cannot clone onto primary node"
-            _ -> do
-              -- Resolve donor: explicit or auto-selected
-              eDonorId <- case mDonorSpec of
-                Just donorSpec -> do
-                  let (donorHost, _) = parseHostPort donorSpec
-                  case findNodeByHost (HostName donorHost) nodes of
-                    Nothing -> pure $ Left $ "Donor not found in cluster: " <> donorHost
-                    Just donorNs
-                      | nsNodeId donorNs == recipientId ->
-                          pure $ Left "Donor and recipient must be different"
-                      | otherwise -> pure $ Right (nsNodeId donorNs)
-                Nothing -> pure $ selectDonorAuto nodes recipientId
-              case eDonorId of
-                Left err -> pure $ Left err
-                Right donorId -> do
-                  mTls  <- getTLSConfig
-                  creds <- getMonCredentials
-                  let donorHost     = unIPAddr (nodeIPAddr donorId)
-                      donorPort     = nodePort donorId
-                      donorCi       = makeConnectInfo donorId creds
-                      recipientCi   = makeConnectInfo recipientId creds
-                  -- Check CLONE plugin on donor
-                  donorCheck <- liftIO $ withNodeConn mTls donorCi checkClonePlugin
-                  case donorCheck of
-                    Left err    -> pure $ Left $ "Cannot connect to donor " <> donorHost <> ": " <> err
-                    Right False -> pure $ Left $ "CLONE plugin is not active on donor: " <> donorHost
-                    Right True  -> do
-                      -- Check CLONE plugin on recipient
-                      recipientCheck <- liftIO $ withNodeConn mTls recipientCi checkClonePlugin
-                      case recipientCheck of
-                        Left err    -> pure $ Left $ "Cannot connect to recipient " <> recipientHost <> ": " <> err
-                        Right False -> pure $ Left $ "CLONE plugin is not active on recipient: " <> recipientHost
-                        Right True  -> do
-                          appLogInfo $ "[" <> clName <> "] Cloning " <> recipientHost
-                                     <> " from donor " <> donorHost
-                          cloneResult <- liftIO $ withNodeConn mTls recipientCi $
-                            \conn -> do
-                              setCloneValidDonorList conn donorHost donorPort
-                              cloneInstanceFrom conn donorHost donorPort creds
-                          case cloneResult of
-                            Left err -> do
-                              appLogError $ "[" <> clName <> "] CLONE failed: " <> err
-                              pure $ Left $ "CLONE failed: " <> err
-                            Right () -> do
-                              appLogInfo $ "[" <> clName <> "] CLONE completed successfully"
-                              pure $ Right ()
+  tvar        <- lift $ asks envDaemonState
+  clusterName <- lift getClusterName
+  let clName  = unClusterName clusterName
+  topo        <- ExceptT . liftIO $
+    maybe (Left "Cluster not found") Right <$>
+      getClusterTopology tvar clusterName
+  recipientNs <- resolveRecipient recipientSpec topo
+  let (recipientHost, _) = parseHostPort recipientSpec
+      recipientId        = nsNodeId recipientNs
+      nodes              = ctNodes topo
+  donorId     <- resolveDonor mDonorSpec nodes recipientId
+  mTls        <- lift getTLSConfig
+  creds       <- lift getMonCredentials
+  let donorHost   = unIPAddr (nodeIPAddr donorId)
+      donorPort   = nodePort donorId
+      donorCi     = makeConnectInfo donorId creds
+      recipientCi = makeConnectInfo recipientId creds
+  checkCloneActive mTls donorCi "donor" donorHost
+  checkCloneActive mTls recipientCi "recipient" recipientHost
+  lift $ appLogInfo $ "[" <> clName <> "] Cloning " <> recipientHost
+                    <> " from donor " <> donorHost
+  result <- liftIO $ withNodeConn mTls recipientCi $ \conn -> do
+    setCloneValidDonorList conn donorHost donorPort
+    cloneInstanceFrom conn donorHost donorPort creds
+  case result of
+    Left err -> do
+      lift $ appLogError $ "[" <> clName <> "] CLONE failed: " <> err
+      throwError $ "CLONE failed: " <> err
+    Right () ->
+      lift $ appLogInfo $ "[" <> clName <> "] CLONE completed successfully"
