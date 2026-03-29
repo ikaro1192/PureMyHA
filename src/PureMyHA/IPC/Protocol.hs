@@ -15,6 +15,7 @@ import Data.Text (Text)
 import GHC.Generics (Generic)
 import PureMyHA.Types
   ( ClusterName
+  , HostName (..)
   , NodeHealth (..)
   , ClusterStatus (..)
   , ClusterTopologyView (..)
@@ -138,25 +139,25 @@ data Request
   | ReqTopology { reqCluster :: Maybe ClusterName }
   | ReqSwitchover
       { reqCluster      :: Maybe ClusterName
-      , reqToHost       :: Maybe Text
+      , reqToHost       :: Maybe HostName
       , reqDryRun       :: Bool
       , reqDrainTimeout :: Maybe Int  -- ^ seconds; Nothing = no drain
       }
   | ReqAckRecovery { reqCluster :: Maybe ClusterName }
   | ReqErrantGtid { reqCluster :: Maybe ClusterName }
   | ReqFixErrantGtid { reqCluster :: Maybe ClusterName }
-  | ReqDemote { reqCluster :: Maybe ClusterName, reqDemoteHost :: Text, reqDemoteSourceHost :: Text }
+  | ReqDemote { reqCluster :: Maybe ClusterName, reqDemoteHost :: HostName, reqDemoteSourceHost :: HostName }
   | ReqDiscovery { reqCluster :: Maybe ClusterName }
-  | ReqPauseReplica  { reqCluster :: Maybe ClusterName, reqPauseHost  :: Text }
-  | ReqResumeReplica { reqCluster :: Maybe ClusterName, reqResumeHost :: Text }
+  | ReqPauseReplica  { reqCluster :: Maybe ClusterName, reqPauseHost  :: HostName }
+  | ReqResumeReplica { reqCluster :: Maybe ClusterName, reqResumeHost :: HostName }
   | ReqPauseFailover  { reqCluster :: Maybe ClusterName }
   | ReqResumeFailover { reqCluster :: Maybe ClusterName }
   | ReqSetLogLevel    { reqLogLevel :: Text }
-  | ReqUnfence { reqCluster :: Maybe ClusterName, reqUnfenceHost :: Text }
+  | ReqUnfence { reqCluster :: Maybe ClusterName, reqUnfenceHost :: HostName }
   | ReqClone
       { reqCloneCluster   :: Maybe ClusterName
-      , reqCloneRecipient :: Text
-      , reqCloneDonor     :: Maybe Text
+      , reqCloneRecipient :: HostName
+      , reqCloneDonor     :: Maybe HostName
       }
   deriving (Show, Eq, Generic)
 

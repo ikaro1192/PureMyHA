@@ -2,6 +2,7 @@
 module PureMyHA.Types
   ( NodeId (..)
   , ClusterName (..)
+  , HostName (..)
   , IORunning (..)
   , SQLThreadState (..)
   , ReplicaStatus (..)
@@ -42,8 +43,20 @@ instance FromJSON ClusterName where
 instance ToJSON ClusterName where
   toJSON (ClusterName t) = toJSON t
 
+newtype HostName = HostName { unHostName :: Text }
+  deriving (Eq, Ord, Show, Generic)
+
+instance IsString HostName where
+  fromString = HostName . T.pack
+
+instance FromJSON HostName where
+  parseJSON v = HostName <$> parseJSON v
+
+instance ToJSON HostName where
+  toJSON (HostName t) = toJSON t
+
 data NodeId = NodeId
-  { nodeHost :: Text
+  { nodeHost :: HostName
   , nodePort :: Int
   } deriving (Eq, Ord, Show, Generic)
 
@@ -54,7 +67,7 @@ data SQLThreadState = SQLRunning | SQLStopped
   deriving (Eq, Show, Generic)
 
 data ReplicaStatus = ReplicaStatus
-  { rsSourceHost          :: Text
+  { rsSourceHost          :: HostName
   , rsSourcePort          :: Int
   , rsReplicaIORunning    :: IORunning
   , rsReplicaSQLRunning   :: SQLThreadState
@@ -81,7 +94,7 @@ data NodeRole = Source | Replica
 isSource :: NodeState -> Bool
 isSource ns = nsRole ns == Source
 
-findNodeByHost :: Text -> Map NodeId NodeState -> Maybe NodeState
+findNodeByHost :: HostName -> Map NodeId NodeState -> Maybe NodeState
 findNodeByHost h nodes =
   case filter (\ns -> nodeHost (nsNodeId ns) == h) (Map.elems nodes) of
     (x:_) -> Just x
@@ -137,7 +150,7 @@ data DaemonState = DaemonState
 data ClusterStatus = ClusterStatus
   { csClusterName :: ClusterName
   , csHealth      :: NodeHealth
-  , csSourceHost  :: Maybe Text
+  , csSourceHost  :: Maybe HostName
   , csNodeCount   :: Int
   , csRecoveryBlockedUntil :: Maybe UTCTime
   , csPaused    :: Bool
@@ -149,7 +162,7 @@ data ClusterTopologyView = ClusterTopologyView
   } deriving (Show, Eq, Generic)
 
 data NodeStateView = NodeStateView
-  { nsvHost         :: Text
+  { nsvHost         :: HostName
   , nsvPort         :: Int
   , nsvIsSource     :: Bool
   , nsvHealth       :: NodeHealth

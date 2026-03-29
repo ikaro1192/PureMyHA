@@ -110,5 +110,5 @@ identifySource nodes =
 getSourceId :: NodeState -> Maybe NodeId
 getSourceId ns = case nsProbeResult ns of
   ProbeSuccess{prReplicaStatus = Just rs}
-    | rsSourceHost rs /= "" -> Just (NodeId (rsSourceHost rs) (rsSourcePort rs))
+    | unHostName (rsSourceHost rs) /= "" -> Just (NodeId (rsSourceHost rs) (rsSourcePort rs))
   _ -> Nothing

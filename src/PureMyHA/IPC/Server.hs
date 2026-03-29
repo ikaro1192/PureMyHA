@@ -137,7 +137,7 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
 
   ReqDemote mCluster host srcHost ->
     runClusterOp mCluster clusterMap
-      (\env -> runApp env $ runDemote host srcHost) ("Demote completed: " <> host <> " is now a replica")
+      (\env -> runApp env $ runDemote host srcHost) ("Demote completed: " <> unHostName host <> " is now a replica")
 
   ReqDiscovery mCluster ->
     case lookupByCluster mCluster discoveryMap of
@@ -150,11 +150,11 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
 
   ReqPauseReplica mCluster host ->
     runClusterOp mCluster clusterMap
-      (\env -> runApp env $ runPauseReplica host) ("Replication paused on " <> host)
+      (\env -> runApp env $ runPauseReplica host) ("Replication paused on " <> unHostName host)
 
   ReqResumeReplica mCluster host ->
     runClusterOp mCluster clusterMap
-      (\env -> runApp env $ runResumeReplica host) ("Replication resumed on " <> host)
+      (\env -> runApp env $ runResumeReplica host) ("Replication resumed on " <> unHostName host)
 
   ReqPauseFailover mCluster ->
     withClusterEnv mCluster clusterMap $ \env -> do
@@ -179,14 +179,14 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
       result <- runApp env (doUnfence host)
       pure $ RespOperation $ case result of
         Left err -> OperationFailure err
-        Right () -> OperationSuccess ("Node unfenced: " <> host)
+        Right () -> OperationSuccess ("Node unfenced: " <> unHostName host)
 
   ReqClone mCluster recipient mDonor ->
     withClusterEnv mCluster clusterMap $ \env -> do
       result <- runApp env (runClone recipient mDonor)
       pure $ RespOperation $ case result of
         Left err -> OperationFailure err
-        Right () -> OperationSuccess ("Clone completed: " <> recipient <> " re-seeded successfully")
+        Right () -> OperationSuccess ("Clone completed: " <> unHostName recipient <> " re-seeded successfully")
 
 filterClusters :: Maybe ClusterName -> Map ClusterName ClusterTopology -> [ClusterTopology]
 filterClusters Nothing  m = Map.elems m

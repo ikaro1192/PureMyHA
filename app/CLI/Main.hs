@@ -12,7 +12,7 @@ import PureMyHA.Config (loadConfig, validateConfig)
 import PureMyHA.IPC.Client
 import PureMyHA.IPC.Protocol
 import PureMyHA.IPC.Server (defaultSocketPath)
-import PureMyHA.Types (ClusterName (..))
+import PureMyHA.Types (ClusterName (..), HostName (..))
 
 data CLIOptions = CLIOptions
   { optSocketPath  :: FilePath
@@ -24,20 +24,20 @@ data CLIOptions = CLIOptions
 data Command
   = CmdStatus
   | CmdTopology
-  | CmdSwitchover (Maybe Text) Bool (Maybe Int)
+  | CmdSwitchover (Maybe HostName) Bool (Maybe Int)
   | CmdAckRecovery
   | CmdErrantGtid
   | CmdFixErrantGtid
-  | CmdDemote Text Text   -- host, source
+  | CmdDemote HostName HostName   -- host, source
   | CmdDiscovery
-  | CmdPauseReplica  Text
-  | CmdResumeReplica Text
+  | CmdPauseReplica  HostName
+  | CmdResumeReplica HostName
   | CmdPauseFailover
   | CmdResumeFailover
   | CmdSetLogLevel Text
   | CmdValidateConfig FilePath
-  | CmdUnfence Text
-  | CmdClone Text (Maybe Text)   -- recipient, donor?
+  | CmdUnfence HostName
+  | CmdClone HostName (Maybe HostName)   -- recipient, donor?
 
 cliOptions :: Parser CLIOptions
 cliOptions = CLIOptions
@@ -92,14 +92,14 @@ cliOptions = CLIOptions
 
 demoteCmd :: Parser Command
 demoteCmd = CmdDemote
-  <$> strOption (long "host"   <> metavar "HOST" <> help "Node to demote")
-  <*> strOption (long "source" <> metavar "HOST" <> help "New replication source host")
+  <$> (HostName <$> strOption (long "host"   <> metavar "HOST" <> help "Node to demote"))
+  <*> (HostName <$> strOption (long "source" <> metavar "HOST" <> help "New replication source host"))
 
 pauseReplicaCmd :: Parser Command
-pauseReplicaCmd = CmdPauseReplica <$> strOption (long "host" <> metavar "HOST" <> help "Node to pause")
+pauseReplicaCmd = CmdPauseReplica <$> (HostName <$> strOption (long "host" <> metavar "HOST" <> help "Node to pause"))
 
 resumeReplicaCmd :: Parser Command
-resumeReplicaCmd = CmdResumeReplica <$> strOption (long "host" <> metavar "HOST" <> help "Node to resume")
+resumeReplicaCmd = CmdResumeReplica <$> (HostName <$> strOption (long "host" <> metavar "HOST" <> help "Node to resume"))
 
 setLogLevelCmd :: Parser Command
 setLogLevelCmd = CmdSetLogLevel
@@ -107,13 +107,13 @@ setLogLevelCmd = CmdSetLogLevel
 
 unfenceCmd :: Parser Command
 unfenceCmd = CmdUnfence
-  <$> strOption (long "host" <> metavar "HOST" <> help "Host to unfence (clears super_read_only)")
+  <$> (HostName <$> strOption (long "host" <> metavar "HOST" <> help "Host to unfence (clears super_read_only)"))
 
 cloneCmd :: Parser Command
 cloneCmd = CmdClone
-  <$> strOption (long "recipient" <> metavar "HOST[:PORT]"
-        <> help "Replica node to re-seed")
-  <*> optional (strOption (long "donor" <> metavar "HOST[:PORT]"
+  <$> (HostName <$> strOption (long "recipient" <> metavar "HOST[:PORT]"
+        <> help "Replica node to re-seed"))
+  <*> optional (HostName <$> strOption (long "donor" <> metavar "HOST[:PORT]"
         <> help "Donor node (default: replica with most advanced GTID)"))
 
 validateConfigCmd :: Parser Command
@@ -127,7 +127,7 @@ validateConfigCmd = CmdValidateConfig
 
 switchoverCmd :: Parser Command
 switchoverCmd = CmdSwitchover
-  <$> optional (strOption
+  <$> optional (HostName <$> strOption
         ( long "to"
         <> metavar "HOST"
         <> help "Target host to promote" ))

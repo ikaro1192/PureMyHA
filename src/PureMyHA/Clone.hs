@@ -55,8 +55,10 @@ selectDonorAuto nodes recipientId =
 -- | Re-seed a replica using the MySQL CLONE plugin.
 -- Connects to the recipient and issues CLONE INSTANCE FROM <donor>.
 -- The recipient MySQL process will restart after cloning completes.
-runClone :: Text -> Maybe Text -> App (Either Text ())
-runClone recipientSpec mDonorSpec = do
+runClone :: HostName -> Maybe HostName -> App (Either Text ())
+runClone recipientSpec_ mDonorSpec_ = do
+  let recipientSpec = unHostName recipientSpec_
+      mDonorSpec    = fmap unHostName mDonorSpec_
   tvar          <- asks envDaemonState
   clusterName   <- getClusterName
   let clName    = unClusterName clusterName
@@ -66,7 +68,7 @@ runClone recipientSpec mDonorSpec = do
     Just topo -> do
       let nodes = ctNodes topo
           (recipientHost, _) = parseHostPort recipientSpec
-      case findNodeByHost recipientHost nodes of
+      case findNodeByHost (HostName recipientHost) nodes of
         Nothing -> pure $ Left $ "Recipient not found in cluster: " <> recipientHost
         Just recipientNs -> do
           let recipientId = nsNodeId recipientNs
@@ -79,7 +81,7 @@ runClone recipientSpec mDonorSpec = do
               eDonorId <- case mDonorSpec of
                 Just donorSpec -> do
                   let (donorHost, _) = parseHostPort donorSpec
-                  case findNodeByHost donorHost nodes of
+                  case findNodeByHost (HostName donorHost) nodes of
                     Nothing -> pure $ Left $ "Donor not found in cluster: " <> donorHost
                     Just donorNs
                       | nsNodeId donorNs == recipientId ->
@@ -91,7 +93,7 @@ runClone recipientSpec mDonorSpec = do
                 Right donorId -> do
                   mTls  <- getTLSConfig
                   creds <- getMonCredentials
-                  let donorHost     = nodeHost donorId
+                  let donorHost     = unHostName (nodeHost donorId)
                       donorPort     = nodePort donorId
                       donorCi       = makeConnectInfo donorId creds
                       recipientCi   = makeConnectInfo recipientId creds

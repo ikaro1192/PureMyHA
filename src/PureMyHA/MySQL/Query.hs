@@ -62,7 +62,7 @@ showReplicaStatus conn = do
 parseReplicaStatus :: [(Text, MySQLValue)] -> Maybe ReplicaStatus
 parseReplicaStatus kvs =
   Just ReplicaStatus
-    { rsSourceHost          = look "Source_Host"
+    { rsSourceHost          = HostName (look "Source_Host")
     , rsSourcePort          = intVal (raw "Source_Port")
     , rsReplicaIORunning    = parseIORunning (look "Replica_IO_Running")
     , rsReplicaSQLRunning   = if look "Replica_SQL_Running" == "Yes" then SQLRunning else SQLStopped
@@ -120,7 +120,7 @@ showReplicas conn defaultPort = do
   let allHosts = srHosts ++ plHosts
   nodes <- mapM (\h -> do
     ip <- resolveHostToIP h
-    pure (NodeId ip defaultPort)) allHosts
+    pure (NodeId (HostName ip) defaultPort)) allHosts
   let deduped = nubBy (\a b -> nodeHost a == nodeHost b && nodePort a == nodePort b) nodes
   pure (deduped, expectedCount, allHosts)
 

@@ -37,7 +37,7 @@ switchoverReconnectTargets nodes candidateId =
 
 -- | Execute a manual switchover
 runSwitchover
-  :: Maybe Text        -- ^ --to host
+  :: Maybe HostName    -- ^ --to host
   -> Maybe Int         -- ^ --drain-timeout seconds (Nothing = no drain)
   -> App (Either Text ())
 runSwitchover mToHost mDrainTimeout = do
@@ -56,14 +56,14 @@ runSwitchover mToHost mDrainTimeout = do
           pure (Left err)
         Right candidateId -> do
           let oldSourceId   = ctSourceNodeId topo
-              oldSourceHost = fmap nodeHost oldSourceId
+              oldSourceHost = fmap (unHostName . nodeHost) oldSourceId
 
           appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover started"
 
           -- Pre-switchover hook (blocking: non-zero exit aborts)
           mHooks <- getHooksConfig
           ts <- liftIO getCurrentTimestamp
-          let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts Nothing Nothing
+          let preEnv = HookEnv (ccName cc) (Just (unHostName (nodeHost candidateId))) oldSourceHost Nothing ts Nothing Nothing
           preResult <- liftIO $ runHookOrAbort mHooks hcPreSwitchover preEnv
           case preResult of
             Left err -> do
@@ -148,10 +148,10 @@ doSwitchover candidateId oldSourceId oldSourceHost topo mDrainTimeout = do
               -- Post-switchover hook (fire-and-forget)
               mHooks <- getHooksConfig
               ts <- liftIO getCurrentTimestamp
-              let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost Nothing ts Nothing Nothing
+              let postEnv = HookEnv (ccName cc) (Just (unHostName (nodeHost candidateId))) oldSourceHost Nothing ts Nothing Nothing
               liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
 
-              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover completed: new source is " <> nodeHost candidateId
+              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover completed: new source is " <> unHostName (nodeHost candidateId)
               pure (Right ())
 
 waitForCatchup :: Maybe TLSConfig -> ConnectInfo -> Maybe Text -> Int -> IO Bool
@@ -182,7 +182,7 @@ reconnectToNew newSourceId ns = do
   liftIO $ do
     _ <- withNodeConn mTls ci $ \conn -> do
       _ <- try @SomeException (stopReplica conn)
-      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replCreds mTls
+      changeReplicationSourceTo conn (unHostName (nodeHost newSourceId)) (nodePort newSourceId) replCreds mTls
       setReadOnly conn
       startReplica conn
     pure ()
@@ -220,7 +220,7 @@ waitThenKill mTls srcCi clusterName timeoutSecs = go timeoutSecs
 
 -- | Dry-run switchover: validate and select candidate without executing SQL
 dryRunSwitchover
-  :: Maybe Text          -- ^ --to host
+  :: Maybe HostName      -- ^ --to host
   -> App (Either Text Text)
 dryRunSwitchover mToHost = do
   tvar <- asks envDaemonState
@@ -233,4 +233,4 @@ dryRunSwitchover mToHost = do
       case selectCandidate (fcNeverPromote fc) (fmap unPositiveInt (fcMaxReplicaLagForCandidate fc)) (ctNodes topo) (fcCandidatePriority fc) mToHost of
         Left  err         -> pure (Left err)
         Right candidateId ->
-          pure (Right ("Dry run: would promote " <> nodeHost candidateId <> " to source"))
+          pure (Right ("Dry run: would promote " <> unHostName (nodeHost candidateId) <> " to source"))
