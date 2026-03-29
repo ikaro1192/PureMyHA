@@ -44,7 +44,7 @@ type WorkerRegistry = TVar (Map.Map NodeId (Async ()))
 startMonitorWorkers :: App (WorkerRegistry, [Async ()])
 startMonitorWorkers = do
   env <- ask
-  let nodes = map (\nc -> NodeId (ncHost nc) (unPort (ncPort nc))) (NE.toList (ccNodes (envCluster env)))
+  let nodes = map (\nc -> NodeId (HostName (ncHost nc)) (unPort (ncPort nc))) (NE.toList (ccNodes (envCluster env)))
   liftIO $ do
     reg <- newTVarIO Map.empty
     asyncs <- forM nodes $ \nid -> do
@@ -135,7 +135,7 @@ detectAndPruneStaleWorkers :: WorkerRegistry -> ClusterConfig -> Set.Set NodeId 
 detectAndPruneStaleWorkers reg cc discovered = do
   knownNodes <- Map.keysSet <$> readTVarIO reg
   let configuredNodes = Set.fromList
-        (map (\nc -> NodeId (ncHost nc) (unPort (ncPort nc))) (NE.toList (ccNodes cc)))
+        (map (\nc -> NodeId (HostName (ncHost nc)) (unPort (ncPort nc))) (NE.toList (ccNodes cc)))
       staleNodes = Set.toList (computeStaleNodes knownNodes discovered configuredNodes)
   pruneStaleWorkers reg staleNodes
   pure staleNodes
@@ -167,7 +167,7 @@ buildLagHookEnv clusterName nid ts =
            , hookFailureType = Nothing
            , hookTimestamp   = ts
            , hookLagSeconds  = Nothing
-           , hookNode        = Just (nodeHost nid)
+           , hookNode        = Just (unHostName (nodeHost nid))
            }
 
 -- | Perform a single monitoring cycle for a node
@@ -187,7 +187,7 @@ monitorNode nid = do
       backoff   = mcConnectRetryBackoff mc
       cap       = unPositiveDuration (mcConnectTimeout mc)
       logRetry msg = readTVarIO (envLogger env) >>= \l ->
-        logDebug l ("[" <> unClusterName (ccName cc) <> "] Node " <> nodeHost nid <> ": " <> msg)
+        logDebug l ("[" <> unClusterName (ccName cc) <> "] Node " <> unHostName (nodeHost nid) <> ": " <> msg)
   -- Read old state before connecting for prevFailures count
   mOldNs <- liftIO $ do
     mTopo <- getClusterTopology tvar (ccName cc)
@@ -244,7 +244,7 @@ monitorNode nid = do
   liftIO $ when (newFailures > 0 && newFailures < threshold) $ do
     logger <- readTVarIO (envLogger env)
     case result of
-      Left err -> logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Node " <> nodeHost nid
+      Left err -> logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Node " <> unHostName (nodeHost nid)
                     <> " probe failed (" <> T.pack (show newFailures) <> "/"
                     <> T.pack (show threshold) <> "): " <> err
       Right _  -> pure ()
@@ -286,7 +286,7 @@ logHealthChange nid mOld new = do
         liftIO $ logWarn logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " initial connect failed: " <> err
       _ -> pure ()
   where
-    host = nodeHost nid
+    host = unHostName (nodeHost nid)
 
 enrichErrantGtids :: NodeState -> App NodeState
 enrichErrantGtids ns = do

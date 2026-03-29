@@ -120,7 +120,7 @@ clusterLabels name = "cluster=" <> quoted (unClusterName name)
 nodeLabels :: ClusterName -> NodeState -> Text
 nodeLabels clusterName ns =
   "cluster=" <> quoted (unClusterName clusterName)
-  <> ",host=" <> quoted (nodeHost (nsNodeId ns))
+  <> ",host=" <> quoted (unHostName (nodeHost (nsNodeId ns)))
   <> ",port=" <> quoted (T.pack (show (nodePort (nsNodeId ns))))
 
 quoted :: Text -> Text

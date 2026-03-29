@@ -15,12 +15,12 @@ import Data.Time (NominalDiffTime)
 import Database.MySQL.Base (ConnectInfo (..), defaultConnectInfo, close, MySQLConn)
 import PureMyHA.Config (DbCredentials (..), TLSConfig)
 import PureMyHA.MySQL.Auth (connectWithAuth)
-import PureMyHA.Types (NodeId (..))
+import PureMyHA.Types (NodeId (..), HostName (..))
 
 -- | Build ConnectInfo from NodeId and credentials
 makeConnectInfo :: NodeId -> DbCredentials -> ConnectInfo
 makeConnectInfo NodeId{..} DbCredentials{..} = defaultConnectInfo
-  { ciHost     = T.unpack nodeHost
+  { ciHost     = T.unpack (unHostName nodeHost)
   , ciPort     = fromIntegral nodePort
   , ciUser     = TE.encodeUtf8 dbUser
   , ciPassword = TE.encodeUtf8 dbPassword

@@ -43,7 +43,7 @@ selectCandidate
   -> Maybe Int              -- ^ max lag in seconds for auto-select candidates (Nothing = no limit)
   -> Map NodeId NodeState
   -> [CandidatePriority]
-  -> Maybe Text             -- ^ explicit --to host override
+  -> Maybe HostName         -- ^ explicit --to host override
   -> Either Text NodeId
 selectCandidate neverPromote mMaxLag nodes priorities mToHost =
   case mToHost of
@@ -53,11 +53,11 @@ selectCandidate neverPromote mMaxLag nodes priorities mToHost =
             (\ns -> nodeHost (nsNodeId ns) == toHost && not (isSource ns))
             nodes
       in case matching of
-           []  -> Left $ "Host not found as replica: " <> toHost
+           []  -> Left $ "Host not found as replica: " <> unHostName toHost
            (ns:_)
-             | toHost `elem` neverPromote -> Left $ "Cannot promote: host is in never_promote list: " <> toHost
-             | hasErrantGtid ns -> Left $ "Cannot promote: node has errant GTIDs: " <> toHost
-             | hasConnectError ns -> Left $ "Cannot promote: node unreachable: " <> toHost
+             | unHostName toHost `elem` neverPromote -> Left $ "Cannot promote: host is in never_promote list: " <> unHostName toHost
+             | hasErrantGtid ns -> Left $ "Cannot promote: node has errant GTIDs: " <> unHostName toHost
+             | hasConnectError ns -> Left $ "Cannot promote: node unreachable: " <> unHostName toHost
              | otherwise -> Right (nsNodeId ns)
     Nothing ->
       -- Auto-select: filter, rank, pick best
@@ -80,7 +80,7 @@ isEligibleCandidate neverPromote mMaxLag ns =
   && not (hasConnectError ns)
   && not (isLagging ns)
   && not (exceedsMaxLag mMaxLag ns)
-  && nodeHost (nsNodeId ns) `notElem` neverPromote
+  && unHostName (nodeHost (nsNodeId ns)) `notElem` neverPromote
 
 isLagging :: NodeState -> Bool
 isLagging ns = case nsHealth ns of
@@ -103,7 +103,7 @@ hasConnectError ns = case nsProbeResult ns of
   ProbeSuccess{}                   -> False
 
 isNeverPromote :: [Text] -> NodeState -> Bool
-isNeverPromote neverPromote ns = nodeHost (nsNodeId ns) `elem` neverPromote
+isNeverPromote neverPromote ns = unHostName (nodeHost (nsNodeId ns)) `elem` neverPromote
 
 toCandidateInfo :: [CandidatePriority] -> NodeState -> CandidateInfo
 toCandidateInfo priorities ns = CandidateInfo
@@ -114,9 +114,9 @@ toCandidateInfo priorities ns = CandidateInfo
   , ciPriorityRank = priorityRank priorities (nodeHost (nsNodeId ns))
   }
 
-priorityRank :: [CandidatePriority] -> Text -> Int
+priorityRank :: [CandidatePriority] -> HostName -> Int
 priorityRank priorities host =
-  case mapMaybe (\(i, p) -> if cpHost p == host then Just i else Nothing)
+  case mapMaybe (\(i, p) -> if cpHost p == unHostName host then Just i else Nothing)
          (zip [0..] priorities) of
     (rank:_) -> rank
     []       -> maxBound
@@ -132,7 +132,7 @@ gtidScore = gtidTransactionCount . ciExecutedGtid
 -- Nodes in the never_promote list are excluded from survivor selection.
 selectSurvivor :: [Text] -> [CandidatePriority] -> [NodeState] -> Maybe NodeId
 selectSurvivor neverPromote _priorities nodes =
-  let eligible = filter (\ns -> nodeHost (nsNodeId ns) `notElem` neverPromote) nodes
+  let eligible = filter (\ns -> unHostName (nodeHost (nsNodeId ns)) `notElem` neverPromote) nodes
       infos    = map (toSourceCandidateInfo []) eligible
       ranked   = sortBy (comparing (Down . gtidScore)) infos
   in case ranked of

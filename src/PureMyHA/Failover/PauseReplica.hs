@@ -14,14 +14,14 @@ import PureMyHA.Types
 
 -- | Pause replication on a replica node for maintenance
 runPauseReplica
-  :: Text       -- ^ host to pause
+  :: HostName   -- ^ host to pause
   -> App (Either Text ())
 runPauseReplica targetHost =
   withTargetNode "Pausing" targetHost stopReplica (\ns -> ns { nsPaused = True })
 
 -- | Resume replication on a paused replica node
 runResumeReplica
-  :: Text       -- ^ host to resume
+  :: HostName   -- ^ host to resume
   -> App (Either Text ())
 runResumeReplica targetHost =
   withTargetNode "Resuming" targetHost startReplica (\ns -> ns { nsPaused = False })
@@ -29,7 +29,7 @@ runResumeReplica targetHost =
 -- | Common logic for pause/resume: find node, connect, run action, update state.
 withTargetNode
   :: Text                            -- ^ action name for logging (e.g. "Pausing")
-  -> Text                            -- ^ target host
+  -> HostName                        -- ^ target host
   -> (MySQLConn -> IO ())            -- ^ MySQL action to execute
   -> (NodeState -> NodeState)        -- ^ state update on success
   -> App (Either Text ())
@@ -43,10 +43,10 @@ withTargetNode actionName targetHost mysqlAction stateUpdate = do
     Nothing -> pure (Left "Cluster not found")
     Just topo ->
       case findNodeByHost targetHost (ctNodes topo) of
-        Nothing -> pure (Left $ "Node not found: " <> targetHost)
+        Nothing -> pure (Left $ "Node not found: " <> unHostName targetHost)
         Just targetNs -> do
           let ci = makeConnectInfo (nsNodeId targetNs) creds
-          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replication on " <> targetHost
+          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replication on " <> unHostName targetHost
           result <- liftIO $ withNodeConn mTls ci $ \conn -> mysqlAction conn
           case result of
             Left err -> do
@@ -54,7 +54,7 @@ withTargetNode actionName targetHost mysqlAction stateUpdate = do
               pure (Left err)
             Right () -> do
               liftIO $ atomically $ updateNodeState tvar (ccName cc) (stateUpdate targetNs)
-              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Replication " <> actionResult <> " on " <> targetHost
+              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Replication " <> actionResult <> " on " <> unHostName targetHost
               pure (Right ())
   where
     actionResult = case actionName of

@@ -90,26 +90,26 @@ executeFailover topo = runExceptT $ do
         appLogError (prefix <> "Auto-failover failed: " <> err)
         pure (Left err)
       Right c -> pure (Right c)
-  let oldSourceHost = fmap nodeHost (ctSourceNodeId topo)
+  let oldSourceHost = fmap (unHostName . nodeHost) (ctSourceNodeId topo)
       waitTimeout   = truncate (fcWaitRelayLogTimeout fc) :: Int
   ExceptT $ runPreFailoverHook candidateId oldSourceHost
-  lift $ appLogInfo $ prefix <> "Waiting for relay log apply on " <> nodeHost candidateId <> "..."
+  lift $ appLogInfo $ prefix <> "Waiting for relay log apply on " <> unHostName (nodeHost candidateId) <> "..."
   ExceptT $ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost
   lift $ reconnectOtherReplicas candidateId topo
   now <- liftIO getCurrentTime
   lift $ commitFailoverState candidateId topo now
   ts <- liftIO getCurrentTimestamp
   mHooks <- lift getHooksConfig
-  let postEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts Nothing Nothing
+  let postEnv = HookEnv (ccName cc) (Just (unHostName (nodeHost candidateId))) oldSourceHost (Just "DeadSource") ts Nothing Nothing
   liftIO $ runHookFireForget mHooks hcPostFailover postEnv
-  lift $ appLogInfo $ prefix <> "Auto-failover completed: new source is " <> nodeHost candidateId
+  lift $ appLogInfo $ prefix <> "Auto-failover completed: new source is " <> unHostName (nodeHost candidateId)
 
 runPreFailoverHook :: NodeId -> Maybe Text -> App (Either Text ())
 runPreFailoverHook candidateId oldSourceHost = do
   cc     <- asks envCluster
   mHooks <- getHooksConfig
   ts <- liftIO getCurrentTimestamp
-  let preEnv = HookEnv (ccName cc) (Just (nodeHost candidateId)) oldSourceHost (Just "DeadSource") ts Nothing Nothing
+  let preEnv = HookEnv (ccName cc) (Just (unHostName (nodeHost candidateId))) oldSourceHost (Just "DeadSource") ts Nothing Nothing
   preResult <- liftIO $ runHookOrAbort mHooks hcPreFailover preEnv
   case preResult of
     Left err -> do
@@ -126,7 +126,7 @@ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
       appLogError $ "[" <> unClusterName clusterName <> "] Auto-failover failed: Promote failed: " <> err
       ts <- liftIO getCurrentTimestamp
       mHooks <- getHooksConfig
-      let failEnv = HookEnv clusterName (Just (nodeHost candidateId)) oldSourceHost (Just "PromoteFailed") ts Nothing Nothing
+      let failEnv = HookEnv clusterName (Just (unHostName (nodeHost candidateId))) oldSourceHost (Just "PromoteFailed") ts Nothing Nothing
       liftIO $ runHookFireForget mHooks hcPostUnsuccessfulFailover failEnv
       pure (Left $ "Promote failed: " <> err)
     Right () -> pure (Right ())
@@ -164,8 +164,8 @@ promoteCandidate nid waitTimeout = do
     result <- withNodeConn mTls ci $ \conn -> do
       caughtUp <- waitForRelayLogApply conn waitTimeout
       if caughtUp
-        then logInfo logger $ "[" <> unClusterName clusterName <> "] Relay log apply completed on " <> nodeHost nid
-        else logError logger $ "[" <> unClusterName clusterName <> "] WARNING: Relay log apply timed out on " <> nodeHost nid <> ", proceeding with promotion"
+        then logInfo logger $ "[" <> unClusterName clusterName <> "] Relay log apply completed on " <> unHostName (nodeHost nid)
+        else logError logger $ "[" <> unClusterName clusterName <> "] WARNING: Relay log apply timed out on " <> unHostName (nodeHost nid) <> ", proceeding with promotion"
       stopReplica conn
       resetReplicaAll conn
       setReadWrite conn
@@ -182,7 +182,7 @@ reconnectReplica newSourceId ns = do
   liftIO $ do
     _ <- withNodeConn mTls ci $ \conn -> do
       stopReplica conn
-      changeReplicationSourceTo conn (nodeHost newSourceId) (nodePort newSourceId) replCreds mTls
+      changeReplicationSourceTo conn (unHostName (nodeHost newSourceId)) (nodePort newSourceId) replCreds mTls
       setReadOnly conn
       startReplica conn
     pure ()
@@ -225,7 +225,7 @@ doAutoFence = do
             Nothing -> appLogError $ prefix <> "Auto-fence: no survivor could be selected"
             Just survivorId -> do
               let toFence = filter (\ns -> nsNodeId ns /= survivorId) unfenced
-                  survivorHost = nodeHost survivorId
+                  survivorHost = unHostName (nodeHost survivorId)
               appLogInfo $ prefix <> "Auto-fence: split-brain detected, survivor=" <> survivorHost
                         <> ", fencing " <> T.pack (show (length toFence)) <> " node(s)"
               forM_ toFence $ \ns -> fenceNode clusterName survivorHost ns
@@ -245,16 +245,16 @@ fenceNode clusterName survivorHost ns = do
   result <- liftIO $ withNodeConnRetry 1 0 cap (const (pure ())) mTls ci setSuperReadOnly
   case result of
     Left err ->
-      appLogError $ prefix <> "Auto-fence failed on " <> nodeHost nid <> ": " <> err
+      appLogError $ prefix <> "Auto-fence failed on " <> unHostName (nodeHost nid) <> ": " <> err
     Right () -> do
       liftIO $ atomically $ updateNodeState tvar clusterName (ns { nsFenced = True })
-      appLogInfo $ prefix <> "Auto-fence: " <> nodeHost nid <> " fenced (super_read_only=ON)"
+      appLogInfo $ prefix <> "Auto-fence: " <> unHostName (nodeHost nid) <> " fenced (super_read_only=ON)"
       ts <- liftIO getCurrentTimestamp
-      let hookEnv = HookEnv clusterName (Just survivorHost) (Just (nodeHost nid)) Nothing ts Nothing Nothing
+      let hookEnv = HookEnv clusterName (Just survivorHost) (Just (unHostName (nodeHost nid))) Nothing ts Nothing Nothing
       liftIO $ runHookFireForget mHooks hcOnFence hookEnv
 
 -- | Unfence a node: clear super_read_only and reset fenced state in STM.
-doUnfence :: Text -> App (Either Text ())
+doUnfence :: HostName -> App (Either Text ())
 doUnfence host = do
   clusterName <- getClusterName
   tvar        <- asks envDaemonState
@@ -264,7 +264,7 @@ doUnfence host = do
     Nothing -> pure (Left "Cluster not found")
     Just topo ->
       case findNodeByHost host (ctNodes topo) of
-        Nothing -> pure (Left $ "Host not found in cluster: " <> host)
+        Nothing -> pure (Left $ "Host not found in cluster: " <> unHostName host)
         Just ns -> do
           creds <- getMonCredentials
           mTls  <- getTLSConfig
@@ -272,10 +272,10 @@ doUnfence host = do
           result <- liftIO $ withNodeConn mTls ci clearSuperReadOnly
           case result of
             Left err -> do
-              appLogError $ prefix <> "Unfence failed on " <> host <> ": " <> err
+              appLogError $ prefix <> "Unfence failed on " <> unHostName host <> ": " <> err
               pure (Left $ "Unfence failed: " <> err)
             Right () -> do
               liftIO $ atomically $ updateNodeState tvar clusterName (ns { nsFenced = False })
-              appLogInfo $ prefix <> "Unfenced " <> host
+              appLogInfo $ prefix <> "Unfenced " <> unHostName host
                         <> " (super_read_only cleared). WARNING: verify data consistency before resuming writes."
               pure (Right ())

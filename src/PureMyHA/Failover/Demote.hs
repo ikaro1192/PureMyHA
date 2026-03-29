@@ -14,8 +14,8 @@ import PureMyHA.Types
 
 -- | Demote a node to replica under a specified source
 runDemote
-  :: Text       -- ^ host to demote
-  -> Text       -- ^ new source host
+  :: HostName   -- ^ host to demote
+  -> HostName   -- ^ new source host
   -> App (Either Text ())
 runDemote demoteHost srcHost = do
   tvar      <- asks envDaemonState
@@ -28,18 +28,18 @@ runDemote demoteHost srcHost = do
     Nothing -> pure (Left "Cluster not found")
     Just topo ->
       case (findNodeByHost demoteHost (ctNodes topo), findNodeByHost srcHost (ctNodes topo)) of
-        (Nothing, _) -> pure (Left $ "Node not found: " <> demoteHost)
-        (_, Nothing) -> pure (Left $ "Node not found: " <> srcHost)
+        (Nothing, _) -> pure (Left $ "Node not found: " <> unHostName demoteHost)
+        (_, Nothing) -> pure (Left $ "Node not found: " <> unHostName srcHost)
         (Just demoteNs, Just srcNs) -> do
           let demoteId = nsNodeId demoteNs
               srcId    = nsNodeId srcNs
               ci       = makeConnectInfo demoteId monCreds
-          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Demoting " <> demoteHost
-                    <> " to replica under " <> srcHost
+          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Demoting " <> unHostName demoteHost
+                    <> " to replica under " <> unHostName srcHost
           result <- liftIO $ withNodeConn mTls ci $ \conn -> do
             stopReplica conn
             setReadOnly conn
-            changeReplicationSourceTo conn (nodeHost srcId) (nodePort srcId) replCreds mTls
+            changeReplicationSourceTo conn (unHostName (nodeHost srcId)) (nodePort srcId) replCreds mTls
             startReplica conn
           case result of
             Left err -> do
@@ -49,5 +49,5 @@ runDemote demoteHost srcHost = do
               liftIO $ atomically $ updateNodeState tvar (ccName cc)
                 (demoteNs { nsRole = Replica })
               appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Demote completed: "
-                        <> demoteHost <> " is now a replica"
+                        <> unHostName demoteHost <> " is now a replica"
               pure (Right ())

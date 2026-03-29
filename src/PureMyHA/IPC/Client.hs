@@ -57,7 +57,7 @@ printStatus False statuses = do
 printClusterStatus :: ClusterStatus -> IO ()
 printClusterStatus cs = do
   let health      = showHealth (csHealth cs)
-      source      = maybe "-" T.unpack (csSourceHost cs)
+      source      = maybe "-" (T.unpack . unHostName) (csSourceHost cs)
       nodes       = show (csNodeCount cs)
       paused      = if csPaused cs then "yes" else "no"
       blocked     = maybe "-" showTime (csRecoveryBlockedUntil cs)
@@ -86,7 +86,7 @@ printClusterTopology ctv = do
 printNode :: Bool -> NodeStateView -> IO ()
 printNode isSrc nsv = do
   let prefix = if isSrc then "[SOURCE] " else "  [REPLICA] "
-      host   = T.unpack (nsvHost nsv) <> ":" <> show (nsvPort nsv)
+      host   = T.unpack (unHostName (nsvHost nsv)) <> ":" <> show (nsvPort nsv)
       status = if nsvPaused nsv
                  then "[PAUSED]"
                  else "[" <> showHealth (nsvHealth nsv) <> "]"
@@ -113,7 +113,7 @@ printErrantGtids False infos = do
 
 printErrantGtidInfo :: ErrantGtidInfo -> IO ()
 printErrantGtidInfo eg =
-  TIO.putStrLn $ "  " <> nodeHost (egiNodeId eg) <> ":" <>
+  TIO.putStrLn $ "  " <> unHostName (nodeHost (egiNodeId eg)) <> ":" <>
     T.pack (show (nodePort (egiNodeId eg))) <> " -> " <> egiErrantGtid eg
 
 showHealth :: NodeHealth -> String

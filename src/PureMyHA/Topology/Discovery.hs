@@ -33,7 +33,7 @@ discoverTopology = do
   creds  <- getMonCredentials
   mTls   <- getTLSConfig
   logger <- asks envLogger >>= liftIO . readTVarIO
-  let seedNodes = map (\nc -> NodeId (ncHost nc) (unPort (ncPort nc))) (NE.toList (ccNodes cc))
+  let seedNodes = map (\nc -> NodeId (HostName (ncHost nc)) (unPort (ncPort nc))) (NE.toList (ccNodes cc))
   nodeStates <- liftIO $ discoverAll mTls creds (Set.fromList seedNodes) Set.empty Map.empty logger
   pure (buildClusterTopology (ccName cc) nodeStates)
 
@@ -73,7 +73,7 @@ discoverAll mTls creds queue visited acc logger
       logInfo logger $ "[discovery] Queue empty, discovery complete (" <> T.pack (show (Map.size acc)) <> " node(s))"
       pure acc
   | otherwise = do
-      logInfo logger $ "[discovery] Queue: " <> T.pack (show (map (\n -> nodeHost n <> ":" <> T.pack (show (nodePort n))) (Set.toList queue)))
+      logInfo logger $ "[discovery] Queue: " <> T.pack (show (map (\n -> unHostName (nodeHost n) <> ":" <> T.pack (show (nodePort n))) (Set.toList queue)))
       let (nid, rest) = Set.deleteFindMin queue
       if Set.member nid visited
         then discoverAll mTls creds rest visited acc logger
@@ -89,7 +89,7 @@ discoverAll mTls creds queue visited acc logger
 -- via SHOW PROCESSLIST (only populated when the node is a source).
 probeNode :: Maybe TLSConfig -> DbCredentials -> NodeId -> Logger -> IO (NodeState, [NodeId])
 probeNode mTls creds nid logger = do
-  logInfo logger $ "[discovery] Probing " <> nodeHost nid <> ":" <> T.pack (show (nodePort nid))
+  logInfo logger $ "[discovery] Probing " <> unHostName (nodeHost nid) <> ":" <> T.pack (show (nodePort nid))
   now <- getCurrentTime
   let ci = makeConnectInfo nid creds
   result <- withNodeConn mTls ci $ \conn -> do
@@ -97,25 +97,25 @@ probeNode mTls creds nid logger = do
     gtidExec       <- getGtidExecuted conn
     replicaIds <- case mReplicaStatus of
       Just rs -> do
-        logInfo logger $ "[discovery] " <> nodeHost nid <> " is a replica of " <> rsSourceHost rs <> ":" <> T.pack (show (rsSourcePort rs))
+        logInfo logger $ "[discovery] " <> unHostName (nodeHost nid) <> " is a replica of " <> unHostName (rsSourceHost rs) <> ":" <> T.pack (show (rsSourcePort rs))
         pure []
       Nothing -> do
         -- source node: discover downstream replicas via SHOW REPLICAS + SHOW PROCESSLIST
         (discovered, expected, rawHosts) <- showReplicas conn (nodePort nid)
-        logInfo logger $ "[" <> nodeHost nid <> "] Raw hosts from SHOW REPLICAS/PROCESSLIST: "
+        logInfo logger $ "[" <> unHostName (nodeHost nid) <> "] Raw hosts from SHOW REPLICAS/PROCESSLIST: "
           <> T.pack (show rawHosts)
-        logInfo logger $ "[" <> nodeHost nid <> "] Resolved replica NodeIds: "
-          <> T.pack (show (map (\n -> nodeHost n <> ":" <> T.pack (show (nodePort n))) discovered))
+        logInfo logger $ "[" <> unHostName (nodeHost nid) <> "] Resolved replica NodeIds: "
+          <> T.pack (show (map (\n -> unHostName (nodeHost n) <> ":" <> T.pack (show (nodePort n))) discovered))
           <> " (SHOW REPLICAS reports " <> T.pack (show expected) <> " replica(s))"
         when (length discovered < expected) $
-          logInfo logger $ "[" <> nodeHost nid <> "] WARNING: found "
+          logInfo logger $ "[" <> unHostName (nodeHost nid) <> "] WARNING: found "
             <> T.pack (show (length discovered)) <> " of " <> T.pack (show expected)
             <> " expected replica(s). Ensure the monitoring user has PROCESS privilege "
             <> "or set report_host on each replica."
         pure discovered
     pure (mReplicaStatus, gtidExec, replicaIds)
   case result of
-    Left err -> logInfo logger $ "[discovery] " <> nodeHost nid <> " probe failed: " <> err
+    Left err -> logInfo logger $ "[discovery] " <> unHostName (nodeHost nid) <> " probe failed: " <> err
     Right _  -> pure ()
   let (probeResult, discoveredReplicas) = case result of
         Left err                     -> (Left err, [])
@@ -160,7 +160,7 @@ nextDiscoveryTargets ns visited rest =
   case nsProbeResult ns of
     ProbeSuccess{prReplicaStatus = Just rs} ->
       let srcId = NodeId (rsSourceHost rs) (rsSourcePort rs)
-      in if Set.notMember srcId visited && rsSourceHost rs /= ""
+      in if Set.notMember srcId visited && unHostName (rsSourceHost rs) /= ""
            then Set.insert srcId rest
            else rest
     _ -> rest
