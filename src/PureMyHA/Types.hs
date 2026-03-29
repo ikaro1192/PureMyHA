@@ -1,8 +1,13 @@
 {-# LANGUAGE StrictData #-}
 module PureMyHA.Types
   ( NodeId (..)
+  , nodeHost
+  , nodeIPAddr
   , ClusterName (..)
   , HostName (..)
+  , IPAddr (..)
+  , HostInfo (..)
+  , mkHostInfoFromName
   , IORunning (..)
   , SQLThreadState (..)
   , ReplicaStatus (..)
@@ -55,10 +60,55 @@ instance FromJSON HostName where
 instance ToJSON HostName where
   toJSON (HostName t) = toJSON t
 
+newtype IPAddr = IPAddr { unIPAddr :: Text }
+  deriving (Eq, Ord, Show, Generic)
+
+instance IsString IPAddr where
+  fromString = IPAddr . T.pack
+
+instance FromJSON IPAddr where
+  parseJSON v = IPAddr <$> parseJSON v
+
+instance ToJSON IPAddr where
+  toJSON (IPAddr t) = toJSON t
+
+data HostInfo = HostInfo
+  { hiHostName :: HostName
+  , hiIPAddr   :: IPAddr
+  } deriving (Show, Generic)
+
+instance Eq HostInfo where
+  a == b = hiIPAddr a == hiIPAddr b
+
+instance Ord HostInfo where
+  compare a b = compare (hiIPAddr a) (hiIPAddr b)
+
+instance IsString HostInfo where
+  fromString = mkHostInfoFromName . fromString
+
+-- | Create a HostInfo using the hostname text as both hostname and IP.
+-- Used when DNS resolution is not available (pure contexts).
+mkHostInfoFromName :: HostName -> HostInfo
+mkHostInfoFromName h = HostInfo h (IPAddr (unHostName h))
+
 data NodeId = NodeId
-  { nodeHost :: HostName
-  , nodePort :: Int
-  } deriving (Eq, Ord, Show, Generic)
+  { nodeHostInfo :: HostInfo
+  , nodePort     :: Int
+  } deriving (Show, Generic)
+
+instance Eq NodeId where
+  a == b = hiIPAddr (nodeHostInfo a) == hiIPAddr (nodeHostInfo b) && nodePort a == nodePort b
+
+instance Ord NodeId where
+  compare a b = compare (hiIPAddr (nodeHostInfo a), nodePort a) (hiIPAddr (nodeHostInfo b), nodePort b)
+
+-- | Get the original hostname from a NodeId
+nodeHost :: NodeId -> HostName
+nodeHost = hiHostName . nodeHostInfo
+
+-- | Get the resolved IP address from a NodeId
+nodeIPAddr :: NodeId -> IPAddr
+nodeIPAddr = hiIPAddr . nodeHostInfo
 
 data IORunning = IOYes | IOConnecting | IONo
   deriving (Eq, Show, Generic)

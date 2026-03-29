@@ -44,7 +44,9 @@ type WorkerRegistry = TVar (Map.Map NodeId (Async ()))
 startMonitorWorkers :: App (WorkerRegistry, [Async ()])
 startMonitorWorkers = do
   env <- ask
-  let nodes = map (\nc -> NodeId (HostName (ncHost nc)) (unPort (ncPort nc))) (NE.toList (ccNodes (envCluster env)))
+  nodes <- liftIO $ mapM (\nc -> do
+        hi <- resolveHostInfo (HostName (ncHost nc))
+        pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes (envCluster env)))
   liftIO $ do
     reg <- newTVarIO Map.empty
     asyncs <- forM nodes $ \nid -> do
@@ -134,9 +136,11 @@ pruneStaleWorkers reg staleNodes =
 detectAndPruneStaleWorkers :: WorkerRegistry -> ClusterConfig -> Set.Set NodeId -> IO [NodeId]
 detectAndPruneStaleWorkers reg cc discovered = do
   knownNodes <- Map.keysSet <$> readTVarIO reg
-  let configuredNodes = Set.fromList
-        (map (\nc -> NodeId (HostName (ncHost nc)) (unPort (ncPort nc))) (NE.toList (ccNodes cc)))
-      staleNodes = Set.toList (computeStaleNodes knownNodes discovered configuredNodes)
+  configuredNodes <- Set.fromList <$>
+        mapM (\nc -> do
+          hi <- resolveHostInfo (HostName (ncHost nc))
+          pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
+  let staleNodes = Set.toList (computeStaleNodes knownNodes discovered configuredNodes)
   pruneStaleWorkers reg staleNodes
   pure staleNodes
 

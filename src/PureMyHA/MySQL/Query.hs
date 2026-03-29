@@ -22,6 +22,7 @@ module PureMyHA.MySQL.Query
   , showProcessList
   , isUserProcess
   , killConnection
+  , resolveHostInfo
   ) where
 
 import Data.Text (Text)
@@ -119,9 +120,9 @@ showReplicas conn defaultPort = do
   -- 3. Merge and deduplicate
   let allHosts = srHosts ++ plHosts
   nodes <- mapM (\h -> do
-    ip <- resolveHostToIP h
-    pure (NodeId (HostName ip) defaultPort)) allHosts
-  let deduped = nubBy (\a b -> nodeHost a == nodeHost b && nodePort a == nodePort b) nodes
+    hi <- resolveHostInfo (HostName h)
+    pure (NodeId hi defaultPort)) allHosts
+  let deduped = nubBy (\a b -> a == b) nodes
   pure (deduped, expectedCount, allHosts)
 
 -- | Get @@GLOBAL.gtid_executed
@@ -258,20 +259,22 @@ waitForRelayLogApply conn maxWaitSeconds = go 0
                       threadDelay 1000000  -- 1 second
                       go (elapsed + 1)
 
--- | Resolve a hostname to a numeric IP address.
--- If resolution fails (or the input is already an IP), returns the input unchanged.
-resolveHostToIP :: Text -> IO Text
-resolveHostToIP host = do
+-- | Resolve a hostname to a HostInfo with numeric IP.
+-- If resolution fails (or the input is already an IP), the original hostname
+-- text is used as the IP fallback.
+resolveHostInfo :: HostName -> IO HostInfo
+resolveHostInfo (HostName host) = do
   result <- try @SomeException $ do
     infos <- getAddrInfo (Just defaultHints) (Just (T.unpack host)) Nothing
     case infos of
       (ai:_) -> do
         (Just numericHost, _) <- getNameInfo [NI_NUMERICHOST] True False (addrAddress ai)
-        pure (T.pack numericHost)
-      [] -> pure host
-  pure $ case result of
-    Left _   -> host
-    Right ip -> ip
+        pure (IPAddr (T.pack numericHost))
+      [] -> pure (IPAddr host)
+  let ip = case result of
+              Left _    -> IPAddr host
+              Right ip' -> ip'
+  pure (HostInfo (HostName host) ip)
 
 -- Helpers
 textVal :: MySQLValue -> Text

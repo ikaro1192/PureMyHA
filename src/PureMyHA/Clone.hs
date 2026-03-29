@@ -93,7 +93,7 @@ runClone recipientSpec_ mDonorSpec_ = do
                 Right donorId -> do
                   mTls  <- getTLSConfig
                   creds <- getMonCredentials
-                  let donorHost     = unHostName (nodeHost donorId)
+                  let donorHost     = unIPAddr (nodeIPAddr donorId)
                       donorPort     = nodePort donorId
                       donorCi       = makeConnectInfo donorId creds
                       recipientCi   = makeConnectInfo recipientId creds

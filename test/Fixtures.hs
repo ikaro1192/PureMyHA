@@ -28,7 +28,7 @@ fixedTime :: UTCTime
 fixedTime = UTCTime (fromGregorian 2024 1 1) 0
 
 mkNodeId :: Text -> Int -> NodeId
-mkNodeId h p = NodeId (HostName h) p
+mkNodeId h p = NodeId (mkHostInfoFromName (HostName h)) p
 
 mkReplicaStatus :: Text -> Int -> IORunning -> Text -> ReplicaStatus
 mkReplicaStatus srcHost srcPort ioRunning execGtid = ReplicaStatus
@@ -110,7 +110,7 @@ unreachableNode nid = NodeState
   }
 
 unreachableReplica :: NodeState
-unreachableReplica = unreachableNode (NodeId (HostName "db5") 3306)
+unreachableReplica = unreachableNode (NodeId (mkHostInfoFromName "db5") 3306)
 
 -- | Cluster where source is unreachable, replicas show IO=No
 clusterWithDeadSource :: Map NodeId NodeState
