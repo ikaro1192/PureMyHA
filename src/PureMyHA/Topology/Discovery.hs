@@ -4,6 +4,7 @@ module PureMyHA.Topology.Discovery
   , buildNodeStateFromProbe
   , buildClusterTopology
   , nextDiscoveryTargets
+  , deduplicateByHostname
   ) where
 
 import Control.Concurrent.STM (readTVarIO)
@@ -22,7 +23,7 @@ import PureMyHA.Config (ClusterConfig (..), DbCredentials, NodeConfig (..), Port
 import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getTLSConfig)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
-import PureMyHA.MySQL.Query
+import PureMyHA.MySQL.Query (showReplicaStatus, showReplicas, getGtidExecuted, resolveHostInfo)
 import PureMyHA.Types
 import PureMyHA.Monitor.Detector (identifySource, detectClusterHealth)
 
@@ -33,7 +34,9 @@ discoverTopology = do
   creds  <- getMonCredentials
   mTls   <- getTLSConfig
   logger <- asks envLogger >>= liftIO . readTVarIO
-  let seedNodes = map (\nc -> NodeId (HostName (ncHost nc)) (unPort (ncPort nc))) (NE.toList (ccNodes cc))
+  seedNodes <- liftIO $ mapM (\nc -> do
+    hi <- resolveHostInfo (HostName (ncHost nc))
+    pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
   nodeStates <- liftIO $ discoverAll mTls creds (Set.fromList seedNodes) Set.empty Map.empty logger
   pure (buildClusterTopology (ccName cc) nodeStates)
 
@@ -74,7 +77,10 @@ discoverAll mTls creds queue visited acc logger
       pure acc
   | otherwise = do
       logInfo logger $ "[discovery] Queue: " <> T.pack (show (map (\n -> unHostName (nodeHost n) <> ":" <> T.pack (show (nodePort n))) (Set.toList queue)))
-      let (nid, rest) = Set.deleteFindMin queue
+      let (nid0, rest) = Set.deleteFindMin queue
+      -- Resolve hostname to IP so that queue entries from nextDiscoveryTargets
+      -- (which use hostname-as-IP fallback) match already-visited resolved nodes.
+      nid <- resolveQueueEntry nid0
       if Set.member nid visited
         then discoverAll mTls creds rest visited acc logger
         else do
@@ -159,11 +165,34 @@ nextDiscoveryTargets
 nextDiscoveryTargets ns visited rest =
   case nsProbeResult ns of
     ProbeSuccess{prReplicaStatus = Just rs} ->
-      let srcId = NodeId (rsSourceHost rs) (rsSourcePort rs)
+      let srcId = NodeId (mkHostInfoFromName (rsSourceHost rs)) (rsSourcePort rs)
       in if Set.notMember srcId visited && unHostName (rsSourceHost rs) /= ""
            then Set.insert srcId rest
            else rest
     _ -> rest
+
+-- | Resolve the hostname in a NodeId to ensure IP-based deduplication works.
+resolveQueueEntry :: NodeId -> IO NodeId
+resolveQueueEntry nid = do
+  hi <- resolveHostInfo (nodeHost nid)
+  pure (NodeId hi (nodePort nid))
+
+-- | Remove duplicate nodes that represent the same hostname:port with different
+-- IP representations. Prefers the entry with a resolved IP (IP text differs
+-- from hostname text) over hostname-as-IP fallbacks. This can happen when
+-- DNS resolution fails for a stopped node: the fallback produces a different
+-- NodeId than the previously-resolved entry already in the topology.
+deduplicateByHostname :: Map NodeId NodeState -> Map NodeId NodeState
+deduplicateByHostname nodes =
+  Map.fromList . map selectBest . groupByHostPort . Map.toList $ nodes
+  where
+    hostPort nid   = (nodeHost nid, nodePort nid)
+    isResolved nid = unIPAddr (nodeIPAddr nid) /= unHostName (nodeHost nid)
+    groupByHostPort =
+      Map.elems . foldr (\e m -> Map.insertWith (++) (hostPort (fst e)) [e] m) Map.empty
+    selectBest xs  = case filter (isResolved . fst) xs of
+      (best:_) -> best
+      []       -> head xs
 
 -- | Build an initial (empty) topology from config
 buildInitialTopology :: ClusterConfig -> ClusterTopology

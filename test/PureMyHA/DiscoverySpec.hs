@@ -12,6 +12,7 @@ import PureMyHA.Topology.Discovery
   , buildClusterTopology
   , nextDiscoveryTargets
   , buildInitialTopology
+  , deduplicateByHostname
   )
 import PureMyHA.Types
 
@@ -140,3 +141,37 @@ spec = do
       ctNodes  topo `shouldBe` Map.empty
       ctHealth topo `shouldBe` NeedsAttention "Initializing"
       ctClusterName topo `shouldBe` "test-cluster"
+
+  describe "deduplicateByHostname" $ do
+
+    it "keeps a single node unchanged" $ do
+      let nid = NodeId (mkHostInfoFromName "db1") 3306
+          ns  = healthySource { nsNodeId = nid }
+          m   = Map.singleton nid ns
+      deduplicateByHostname m `shouldBe` m
+
+    it "prefers resolved IP over hostname-as-IP fallback for same hostname:port" $ do
+      -- resolved: IP = "10.0.0.1" (differs from hostname "db1")
+      let resolvedNid  = NodeId (HostInfo "db1" "10.0.0.1") 3306
+          -- unresolved: IP = "db1" (hostname-as-IP fallback from DNS failure)
+          unresolvedNid = NodeId (mkHostInfoFromName "db1") 3306
+          ns1 = healthySource { nsNodeId = resolvedNid }
+          ns2 = (unreachableNode unresolvedNid) { nsNodeId = unresolvedNid }
+          m   = Map.fromList [(resolvedNid, ns1), (unresolvedNid, ns2)]
+          result = deduplicateByHostname m
+      Map.size result `shouldBe` 1
+      Map.member resolvedNid result `shouldBe` True
+
+    it "keeps both nodes when they have different hostname:port" $ do
+      let nid1 = NodeId (HostInfo "db1" "10.0.0.1") 3306
+          nid2 = NodeId (HostInfo "db2" "10.0.0.2") 3306
+          ns1  = healthySource  { nsNodeId = nid1 }
+          ns2  = healthyReplica { nsNodeId = nid2 }
+          m    = Map.fromList [(nid1, ns1), (nid2, ns2)]
+      Map.size (deduplicateByHostname m) `shouldBe` 2
+
+    it "falls back to any entry when no resolved IP exists" $ do
+      let nid = NodeId (mkHostInfoFromName "db1") 3306
+          ns  = unreachableNode nid
+          m   = Map.singleton nid ns
+      Map.size (deduplicateByHostname m) `shouldBe` 1

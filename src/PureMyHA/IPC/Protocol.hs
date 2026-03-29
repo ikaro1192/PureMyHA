@@ -23,15 +23,18 @@ import PureMyHA.Types
   , OperationResult (..)
   , ErrantGtidInfo (..)
   , NodeId (..)
+  , mkHostInfoFromName
+  , nodeHost
+  , nodePort
   )
 -- JSON instances for core types
 
 instance ToJSON NodeId where
-  toJSON NodeId{..} = object ["host" .= nodeHost, "port" .= nodePort]
+  toJSON nid = object ["host" .= nodeHost nid, "port" .= nodePort nid]
 
 instance FromJSON NodeId where
   parseJSON = withObject "NodeId" $ \o ->
-    NodeId <$> o .: "host" <*> o .: "port"
+    NodeId <$> (mkHostInfoFromName <$> o .: "host") <*> o .: "port"
 
 instance ToJSON NodeHealth where
   toJSON Healthy                    = String "Healthy"

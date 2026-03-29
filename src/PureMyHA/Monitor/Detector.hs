@@ -94,7 +94,7 @@ detectReplicaHealth mLagThreshold rs
 -- | Identify which node is the source based on topology
 identifySource :: [NodeState] -> Maybe NodeId
 identifySource nodes =
-  let replicaSourceIds = nub $ mapMaybe getSourceId nodes
+  let replicaSourcePairs = nub $ mapMaybe getSourceId nodes
       -- A source is a node that is NOT referenced as a replica's source
       -- OR is explicitly marked as source
       explicitSources = filter isSource nodes
@@ -102,13 +102,15 @@ identifySource nodes =
        [s] -> Just (nsNodeId s)
        _   ->
          -- Fall back: node that appears as a source of others
-         let allSources = filter (\n -> nsNodeId n `notElem` replicaSourceIds) nodes
+         let isNotReferenced n =
+               (nodeHost (nsNodeId n), nodePort (nsNodeId n)) `notElem` replicaSourcePairs
+             allSources = filter isNotReferenced nodes
          in case allSources of
               [s] -> Just (nsNodeId s)
               _   -> Nothing
 
-getSourceId :: NodeState -> Maybe NodeId
+getSourceId :: NodeState -> Maybe (HostName, Int)
 getSourceId ns = case nsProbeResult ns of
   ProbeSuccess{prReplicaStatus = Just rs}
-    | unHostName (rsSourceHost rs) /= "" -> Just (NodeId (rsSourceHost rs) (rsSourcePort rs))
+    | unHostName (rsSourceHost rs) /= "" -> Just (rsSourceHost rs, rsSourcePort rs)
   _ -> Nothing
