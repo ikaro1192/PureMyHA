@@ -104,3 +104,12 @@ kill -HUP $(pidof puremyhad)      # direct signal (non-systemd)
 # Graceful stop
 kill -TERM $(pidof puremyhad)
 ```
+
+## Examples
+
+The end-to-end test scripts under `e2e/tests/` serve as worked usage examples for
+every major scenario (failover, switchover, clone, errant-GTID handling, etc.).
+
+To understand which CLI commands are available and how they map to helper functions
+used in tests, see `e2e/lib/helpers.sh` — the CLI wrapper section defines one
+function per `puremyha` subcommand.
