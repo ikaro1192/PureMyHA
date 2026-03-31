@@ -90,7 +90,7 @@ executeFailover topo = runExceptT $ do
         appLogError (prefix <> "Auto-failover failed: " <> err)
         pure (Left err)
       Right c -> pure (Right c)
-  let oldSourceHost = fmap (unHostName . nodeHost) (ctSourceNodeId topo)
+  let oldSourceHost = fmap nodeHostInfo (ctSourceNodeId topo)
       waitTimeout   = truncate (fcWaitRelayLogTimeout fc) :: Int
   ExceptT $ runPreFailoverHook candidateId oldSourceHost
   lift $ appLogInfo $ prefix <> "Waiting for relay log apply on " <> unHostName (nodeHost candidateId) <> "..."
@@ -101,7 +101,7 @@ executeFailover topo = runExceptT $ do
   ts <- liftIO getCurrentTimestamp
   mHooks <- lift getHooksConfig
   let postEnv = HookEnv { hookClusterName  = ccName cc
-                        , hookNewSource    = Just (unHostName (nodeHost candidateId))
+                        , hookNewSource    = Just (nodeHostInfo candidateId)
                         , hookOldSource    = oldSourceHost
                         , hookFailureType  = Just "DeadSource"
                         , hookTimestamp    = ts
@@ -113,13 +113,13 @@ executeFailover topo = runExceptT $ do
   liftIO $ runHookFireForget mHooks hcPostFailover postEnv
   lift $ appLogInfo $ prefix <> "Auto-failover completed: new source is " <> unHostName (nodeHost candidateId)
 
-runPreFailoverHook :: NodeId -> Maybe Text -> App (Either Text ())
+runPreFailoverHook :: NodeId -> Maybe HostInfo -> App (Either Text ())
 runPreFailoverHook candidateId oldSourceHost = do
   cc     <- asks envCluster
   mHooks <- getHooksConfig
   ts <- liftIO getCurrentTimestamp
   let preEnv = HookEnv { hookClusterName  = ccName cc
-                       , hookNewSource    = Just (unHostName (nodeHost candidateId))
+                       , hookNewSource    = Just (nodeHostInfo candidateId)
                        , hookOldSource    = oldSourceHost
                        , hookFailureType  = Just "DeadSource"
                        , hookTimestamp    = ts
@@ -135,7 +135,7 @@ runPreFailoverHook candidateId oldSourceHost = do
       pure (Left $ "Pre-failover hook failed: " <> err)
     Right () -> pure (Right ())
 
-promoteWithOnFailureHook :: NodeId -> Int -> Maybe Text -> App (Either Text ())
+promoteWithOnFailureHook :: NodeId -> Int -> Maybe HostInfo -> App (Either Text ())
 promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
   clusterName <- getClusterName
   promoteResult <- promoteCandidate candidateId waitTimeout
@@ -145,7 +145,7 @@ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
       ts <- liftIO getCurrentTimestamp
       mHooks <- getHooksConfig
       let failEnv = HookEnv { hookClusterName  = clusterName
-                             , hookNewSource    = Just (unHostName (nodeHost candidateId))
+                             , hookNewSource    = Just (nodeHostInfo candidateId)
                              , hookOldSource    = oldSourceHost
                              , hookFailureType  = Just "PromoteFailed"
                              , hookTimestamp    = ts
@@ -252,13 +252,13 @@ doAutoFence = do
             Nothing -> appLogError $ prefix <> "Auto-fence: no survivor could be selected"
             Just survivorId -> do
               let toFence = filter (\ns -> nsNodeId ns /= survivorId) unfenced
-                  survivorHost = unHostName (nodeHost survivorId)
-              appLogInfo $ prefix <> "Auto-fence: split-brain detected, survivor=" <> survivorHost
+                  survivorHI = nodeHostInfo survivorId
+              appLogInfo $ prefix <> "Auto-fence: split-brain detected, survivor=" <> unHostName (hiHostName survivorHI)
                         <> ", fencing " <> T.pack (show (length toFence)) <> " node(s)"
-              forM_ toFence $ \ns -> fenceNode clusterName survivorHost ns
+              forM_ toFence $ \ns -> fenceNode clusterName survivorHI ns
 
 -- | Apply super_read_only to a single node and record fenced state.
-fenceNode :: ClusterName -> Text -> NodeState -> App ()
+fenceNode :: ClusterName -> HostInfo -> NodeState -> App ()
 fenceNode clusterName survivorHost ns = do
   creds  <- getMonCredentials
   mTls   <- getTLSConfig
@@ -279,7 +279,7 @@ fenceNode clusterName survivorHost ns = do
       ts <- liftIO getCurrentTimestamp
       let hookEnv = HookEnv { hookClusterName  = clusterName
                              , hookNewSource    = Just survivorHost
-                             , hookOldSource    = Just (unHostName (nodeHost nid))
+                             , hookOldSource    = Just (nodeHostInfo nid)
                              , hookFailureType  = Nothing
                              , hookTimestamp    = ts
                              , hookLagSeconds   = Nothing

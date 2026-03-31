@@ -58,7 +58,7 @@ runSwitchover mToHost mDrainTimeout = do
           pure (Left err)
         Right candidateId -> do
           let oldSourceId   = ctSourceNodeId topo
-              oldSourceHost = fmap (unHostName . nodeHost) oldSourceId
+              oldSourceHost = fmap nodeHostInfo oldSourceId
 
           appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover started"
 
@@ -66,7 +66,7 @@ runSwitchover mToHost mDrainTimeout = do
           mHooks <- getHooksConfig
           ts <- liftIO getCurrentTimestamp
           let preEnv = HookEnv { hookClusterName  = ccName cc
-                               , hookNewSource    = Just (unHostName (nodeHost candidateId))
+                               , hookNewSource    = Just (nodeHostInfo candidateId)
                                , hookOldSource    = oldSourceHost
                                , hookFailureType  = Nothing
                                , hookTimestamp    = ts
@@ -86,7 +86,7 @@ runSwitchover mToHost mDrainTimeout = do
 doSwitchover
   :: NodeId
   -> Maybe NodeId
-  -> Maybe Text
+  -> Maybe HostInfo
   -> ClusterTopology
   -> Maybe Int         -- ^ drain timeout seconds
   -> App (Either Text ())
@@ -155,7 +155,7 @@ promoteCandidate candidateId mOldGtid mTls creds clName = do
 
 -- | Update topology roles, reconnect replicas, and fire post-switchover hook
 finalizeSwitchover
-  :: NodeId -> Maybe NodeId -> Maybe Text -> ClusterTopology
+  :: NodeId -> Maybe NodeId -> Maybe HostInfo -> ClusterTopology
   -> App ()
 finalizeSwitchover candidateId oldSourceId oldSourceHost topo = do
   cc   <- asks envCluster
@@ -182,7 +182,7 @@ finalizeSwitchover candidateId oldSourceId oldSourceHost topo = do
   mHooks <- getHooksConfig
   ts <- liftIO getCurrentTimestamp
   let postEnv = HookEnv { hookClusterName  = clName
-                        , hookNewSource    = Just (unHostName (nodeHost candidateId))
+                        , hookNewSource    = Just (nodeHostInfo candidateId)
                         , hookOldSource    = oldSourceHost
                         , hookFailureType  = Nothing
                         , hookTimestamp    = ts

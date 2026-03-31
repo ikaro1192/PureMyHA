@@ -15,12 +15,12 @@ import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
 import System.Exit (ExitCode (..))
 import System.Process (createProcess, proc, waitForProcess, env)
 import PureMyHA.Config (HooksConfig (..))
-import PureMyHA.Types (ClusterName, unClusterName)
+import PureMyHA.Types (ClusterName, unClusterName, HostInfo, hiHostName, HostName (..))
 
 data HookEnv = HookEnv
   { hookClusterName  :: ClusterName
-  , hookNewSource    :: Maybe Text
-  , hookOldSource    :: Maybe Text
+  , hookNewSource    :: Maybe HostInfo
+  , hookOldSource    :: Maybe HostInfo
   , hookFailureType  :: Maybe Text   -- e.g. "DeadSource", "PromoteFailed"
   , hookTimestamp    :: Text         -- ISO-8601 UTC: "2026-03-17T12:00:00Z"
   , hookLagSeconds   :: Maybe Int    -- e.g. 45 when on_lag_threshold_exceeded fires
@@ -40,8 +40,8 @@ runHook scriptPath hookEnv = do
   let envVars =
         [ ("PUREMYHA_CLUSTER", T.unpack (unClusterName (hookClusterName hookEnv)))
         ] ++
-        maybe [] (\h -> [("PUREMYHA_NEW_SOURCE", T.unpack h)]) (hookNewSource hookEnv) ++
-        maybe [] (\h -> [("PUREMYHA_OLD_SOURCE", T.unpack h)]) (hookOldSource hookEnv) ++
+        maybe [] (\h -> [("PUREMYHA_NEW_SOURCE", T.unpack (unHostName (hiHostName h)))]) (hookNewSource hookEnv) ++
+        maybe [] (\h -> [("PUREMYHA_OLD_SOURCE", T.unpack (unHostName (hiHostName h)))]) (hookOldSource hookEnv) ++
         maybe [] (\ft -> [("PUREMYHA_FAILURE_TYPE", T.unpack ft)]) (hookFailureType hookEnv) ++
         maybe [] (\s  -> [("PUREMYHA_LAG_SECONDS", show s)]) (hookLagSeconds hookEnv) ++
         maybe [] (\n  -> [("PUREMYHA_NODE",        T.unpack n)]) (hookNode hookEnv) ++
