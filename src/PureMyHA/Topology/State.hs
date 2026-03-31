@@ -5,6 +5,7 @@ module PureMyHA.Topology.State
   , updateNodeStatePreserveRole
   , updateClusterTopology
   , getClusterTopology
+  , getClusterTopologySTM
   , setRecoveryBlock
   , clearRecoveryBlock
   , recordFailover
@@ -98,6 +99,11 @@ getClusterTopology tvar name = do
   case Map.lookup name clusters of
     Nothing    -> pure Nothing
     Just ctVar -> Just <$> readTVarIO ctVar
+
+getClusterTopologySTM :: TVarDaemonState -> ClusterName -> STM (Maybe ClusterTopology)
+getClusterTopologySTM tvar name = do
+  mctVar <- lookupClusterTVar tvar name
+  traverse readTVar mctVar
 
 setRecoveryBlock :: TVarDaemonState -> ClusterName -> UTCTime -> NominalDiffTime -> STM ()
 setRecoveryBlock tvar clusterName now period =

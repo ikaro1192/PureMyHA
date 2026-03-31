@@ -17,7 +17,7 @@ module PureMyHA.Monitor.Worker
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, wait, cancel, waitCatch, Async)
+import Control.Concurrent.Async (async, wait, cancel, waitCatch, withAsync, Async)
 import Control.Concurrent.STM (atomically, TVar, newTVarIO, modifyTVar', readTVarIO)
 import Control.Exception (SomeException, catch)
 import System.Timeout (timeout)
@@ -130,8 +130,10 @@ runTopologyRefresh reg = do
       minReplicas     = fcMinReplicasForFailover (ccFailover cc)
       driftConditions = detectTopologyDrift configuredHosts discoveredHosts minReplicas healthyReplicas
       hasDrift        = not (null driftConditions)
-  let wasInDrift = maybe False ctTopologyDrift mOldTopo
-  liftIO $ atomically $ updateClusterTopologyDrift tvar (ccName cc) hasDrift
+  wasInDrift <- liftIO $ atomically $ do
+    mTopo <- getClusterTopologySTM tvar (ccName cc)
+    updateClusterTopologyDrift tvar (ccName cc) hasDrift
+    pure (maybe False ctTopologyDrift mTopo)
   -- Fire hook only on False→True transition to avoid repeated firings
   liftIO $ when (hasDrift && not wasInDrift) $ do
     mHooks <- readTVarIO (envHooks env)
@@ -397,9 +399,9 @@ enrichErrantGtids ns = do
                         ProbeSuccess{prGtidExecuted = g} -> g
                         ProbeFailure{} -> ""
                       ci = makeConnectInfo srcId creds
-                  errantAsync <- async $ withNodeConn mTls ci $ \conn ->
-                    gtidSubtract conn replicaGtid sourceGtid
-                  mResult <- timeout tMicros (waitCatch errantAsync)
+                  mResult <- withAsync (withNodeConn mTls ci $ \conn ->
+                    gtidSubtract conn replicaGtid sourceGtid) $ \errantAsync ->
+                      timeout tMicros (waitCatch errantAsync)
                   case mResult of
                     Nothing                       -> pure ns
                     Just (Left _)                 -> pure ns
@@ -426,12 +428,30 @@ recomputeClusterHealth = do
           DeadSource -> do
             mHooks <- readTVarIO (envHooks env)
             ts <- getCurrentTimestamp
-            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSource") ts Nothing Nothing Nothing Nothing
+            let hookEnv = HookEnv { hookClusterName  = ccName cc
+                                   , hookNewSource    = Nothing
+                                   , hookOldSource    = Nothing
+                                   , hookFailureType  = Just "DeadSource"
+                                   , hookTimestamp    = ts
+                                   , hookLagSeconds   = Nothing
+                                   , hookNode         = Nothing
+                                   , hookDriftType    = Nothing
+                                   , hookDriftDetails = Nothing
+                                   }
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           DeadSourceAndAllReplicas -> do
             mHooks <- readTVarIO (envHooks env)
             ts <- getCurrentTimestamp
-            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSourceAndAllReplicas") ts Nothing Nothing Nothing Nothing
+            let hookEnv = HookEnv { hookClusterName  = ccName cc
+                                   , hookNewSource    = Nothing
+                                   , hookOldSource    = Nothing
+                                   , hookFailureType  = Just "DeadSourceAndAllReplicas"
+                                   , hookTimestamp    = ts
+                                   , hookLagSeconds   = Nothing
+                                   , hookNode         = Nothing
+                                   , hookDriftType    = Nothing
+                                   , hookDriftDetails = Nothing
+                                   }
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           _ -> pure ()
       -- Log all health transitions for observability

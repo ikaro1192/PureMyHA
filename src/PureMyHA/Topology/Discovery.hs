@@ -7,7 +7,7 @@ module PureMyHA.Topology.Discovery
   , deduplicateByHostname
   ) where
 
-import Control.Concurrent.Async (async, waitCatch)
+import Control.Concurrent.Async (withAsync, waitCatch)
 import Control.Concurrent.STM (readTVarIO)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
@@ -106,7 +106,7 @@ probeNode mTls creds tMicros nid logger = do
   logInfo logger $ "[discovery] Probing " <> unHostName (nodeHost nid) <> ":" <> T.pack (show (nodePort nid))
   now <- getCurrentTime
   let ci = makeConnectInfo nid creds
-  probeAsync <- async $ withNodeConn mTls ci $ \conn -> do
+  mEither <- withAsync (withNodeConn mTls ci $ \conn -> do
     mReplicaStatus <- showReplicaStatus conn
     gtidExec       <- getGtidExecuted conn
     replicaIds <- case mReplicaStatus of
@@ -127,8 +127,8 @@ probeNode mTls creds tMicros nid logger = do
             <> " expected replica(s). Ensure the monitoring user has PROCESS privilege "
             <> "or set report_host on each replica."
         pure discovered
-    pure (mReplicaStatus, gtidExec, replicaIds)
-  mEither <- timeout tMicros (waitCatch probeAsync)
+    pure (mReplicaStatus, gtidExec, replicaIds)) $ \probeAsync ->
+    timeout tMicros (waitCatch probeAsync)
   let result = case mEither of
         Nothing                  -> Left "probe timeout"
         Just (Left e)            -> Left (T.pack (show e))
