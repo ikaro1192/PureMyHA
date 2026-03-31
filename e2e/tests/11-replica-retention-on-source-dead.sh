@@ -11,6 +11,7 @@ COMPOSE_OVERRIDE="${E2E_DIR}/docker-compose.source-only.yml"
 # Always restore the original puremyhad config on exit so subsequent tests
 # are not left running against the source-only config (no HTTP, no hooks).
 restore_puremyhad() {
+  $COMPOSE start mysql-source 2>/dev/null || true
   $COMPOSE up -d --no-deps --force-recreate puremyhad 2>/dev/null || true
 }
 trap restore_puremyhad EXIT
@@ -52,6 +53,7 @@ assert_eq "Replicas retained after source death + topology refresh" "3" "$count_
 
 # 7. Restore original config
 echo "  Restoring original puremyhad config..."
+$COMPOSE start mysql-source
 $COMPOSE up -d --no-deps --force-recreate puremyhad
 reset_cluster
 
