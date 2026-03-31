@@ -29,7 +29,7 @@ detectNoSource :: [NodeState] -> [NodeState] -> NodeHealth
 detectNoSource nodeList reachableNodes
   | null reachableNodes = DeadSourceAndAllReplicas
   | null nodeList       = NeedsAttention "No nodes configured"
-  | otherwise           = NeedsAttention "No source node detected"
+  | otherwise           = NoSourceDetected
 
 detectSingleSource :: [NodeState] -> [NodeState] -> NodeState -> NodeHealth
 detectSingleSource nodeList reachableNodes src
@@ -68,23 +68,23 @@ hasIoConnecting = any $ \ns -> case nsProbeResult ns of
 -- | Detect health for a single node
 detectNodeHealth :: Maybe Int -> NodeState -> NodeHealth
 detectNodeHealth mLagThreshold ns = case nsProbeResult ns of
-  ProbeFailure{prConnectError = e} -> NeedsAttention e
+  ProbeFailure{prConnectError = e} -> NodeUnreachable e
   ProbeSuccess{prReplicaStatus = mrs}
     | not (T.null (nsErrantGtids ns)) ->
-        NeedsAttention ("Errant GTIDs: " <> nsErrantGtids ns)
+        ErrantGtidDetected (nsErrantGtids ns)
     | Just rs <- mrs -> detectReplicaHealth mLagThreshold rs
     | otherwise      -> Healthy  -- source or standalone
 
 detectReplicaHealth :: Maybe Int -> ReplicaStatus -> NodeHealth
 detectReplicaHealth mLagThreshold rs
   | rsReplicaIORunning rs == IONo && not (T.null (rsLastIOError rs)) =
-      NeedsAttention ("IO error: " <> rsLastIOError rs)
+      ReplicaIOStopped (rsLastIOError rs)
   | rsReplicaIORunning rs == IONo =
-      NeedsAttention "Replica IO not running"
+      ReplicaIOStopped ""
   | rsReplicaIORunning rs == IOConnecting =
-      NeedsAttention "Replica IO thread not connected (Connecting)"
+      ReplicaIOConnecting
   | rsReplicaSQLRunning rs == SQLStopped =
-      NeedsAttention ("SQL error: " <> rsLastSQLError rs)
+      ReplicaSQLStopped (rsLastSQLError rs)
   | Just lag <- rsSecondsBehindSource rs
   , Just threshold <- mLagThreshold
   , lag >= threshold =

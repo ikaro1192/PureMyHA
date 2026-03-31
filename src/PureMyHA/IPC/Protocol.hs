@@ -42,6 +42,12 @@ instance ToJSON NodeHealth where
   toJSON UnreachableSource          = String "UnreachableSource"
   toJSON DeadSourceAndAllReplicas   = String "DeadSourceAndAllReplicas"
   toJSON SplitBrainSuspected        = String "SplitBrainSuspected"
+  toJSON (NodeUnreachable msg)      = object ["NodeUnreachable" .= msg]
+  toJSON (ReplicaIOStopped msg)     = object ["ReplicaIOStopped" .= msg]
+  toJSON ReplicaIOConnecting        = String "ReplicaIOConnecting"
+  toJSON (ReplicaSQLStopped msg)    = object ["ReplicaSQLStopped" .= msg]
+  toJSON (ErrantGtidDetected g)     = object ["ErrantGtidDetected" .= g]
+  toJSON NoSourceDetected           = String "NoSourceDetected"
   toJSON (NeedsAttention msg)       = object ["NeedsAttention" .= msg]
   toJSON (Lagging s)                = object ["Lagging" .= s]
 
@@ -51,7 +57,13 @@ instance FromJSON NodeHealth where
   parseJSON (String "UnreachableSource")        = pure UnreachableSource
   parseJSON (String "DeadSourceAndAllReplicas") = pure DeadSourceAndAllReplicas
   parseJSON (String "SplitBrainSuspected")      = pure SplitBrainSuspected
+  parseJSON (String "ReplicaIOConnecting")      = pure ReplicaIOConnecting
+  parseJSON (String "NoSourceDetected")         = pure NoSourceDetected
   parseJSON (Object o)                          = (Lagging <$> o .: "Lagging")
+                                              <|> (NodeUnreachable <$> o .: "NodeUnreachable")
+                                              <|> (ReplicaIOStopped <$> o .: "ReplicaIOStopped")
+                                              <|> (ReplicaSQLStopped <$> o .: "ReplicaSQLStopped")
+                                              <|> (ErrantGtidDetected <$> o .: "ErrantGtidDetected")
                                               <|> (NeedsAttention <$> o .: "NeedsAttention")
   parseJSON _                                   = fail "Invalid NodeHealth"
 

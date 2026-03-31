@@ -43,9 +43,9 @@ spec = do
 
   describe "buildNodeStateFromProbe" $ do
 
-    it "connection failure sets NeedsAttention health and ProbeFailure" $ do
+    it "connection failure sets NodeUnreachable health and ProbeFailure" $ do
       let ns = buildNodeStateFromProbe testNid now (Left "Connection refused")
-      nsHealth ns `shouldBe` NeedsAttention "Connection refused"
+      nsHealth ns `shouldBe` NodeUnreachable "Connection refused"
       nsProbeResult ns `shouldBe` ProbeFailure "Connection refused"
 
     it "success with replica status sets role=Replica" $ do

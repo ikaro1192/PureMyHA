@@ -93,7 +93,7 @@ spec = do
   describe "suppressBelowThreshold" $ do
     let threshold = 3
         errNs     = healthySource
-                      { nsHealth              = NeedsAttention "refused"
+                      { nsHealth              = NodeUnreachable "refused"
                       , nsProbeResult         = ProbeFailure "refused"
                       , nsConsecutiveFailures = 1
                       }
@@ -102,13 +102,13 @@ spec = do
       suppressBelowThreshold threshold 1 (Just healthySource) errNs
         `shouldBe` errNs { nsHealth = Healthy }
 
-    it "applies NeedsAttention when failCount equals threshold" $
+    it "applies unhealthy state when failCount equals threshold" $
       suppressBelowThreshold threshold 3 (Just healthySource) errNs
-        `shouldBe` errNs { nsHealth = NeedsAttention "refused" }
+        `shouldBe` errNs { nsHealth = NodeUnreachable "refused" }
 
-    it "applies NeedsAttention when failCount exceeds threshold" $
+    it "applies unhealthy state when failCount exceeds threshold" $
       suppressBelowThreshold threshold 5 (Just healthySource) errNs
-        `shouldBe` errNs { nsHealth = NeedsAttention "refused" }
+        `shouldBe` errNs { nsHealth = NodeUnreachable "refused" }
 
     it "uses Healthy as fallback when no previous state (first probe)" $
       suppressBelowThreshold threshold 1 Nothing errNs
@@ -118,15 +118,15 @@ spec = do
       suppressBelowThreshold threshold 0 (Just healthySource) healthySource
         `shouldBe` healthySource
 
-    it "resets to Healthy on success after previous NeedsAttention" $ do
-      let prev = healthySource { nsHealth = NeedsAttention "err", nsConsecutiveFailures = 2 }
+    it "resets to Healthy on success after previous unhealthy state" $ do
+      let prev = healthySource { nsHealth = NodeUnreachable "err", nsConsecutiveFailures = 2 }
           curr = healthySource { nsConsecutiveFailures = 0 }
       suppressBelowThreshold threshold 0 (Just prev) curr `shouldBe` curr
 
-    it "preserves NeedsAttention from previous state when below threshold" $ do
-      let prev = healthySource { nsHealth = NeedsAttention "prior err", nsConsecutiveFailures = 2 }
+    it "preserves previous unhealthy state when below threshold" $ do
+      let prev = healthySource { nsHealth = NodeUnreachable "prior err", nsConsecutiveFailures = 2 }
       suppressBelowThreshold threshold 2 (Just prev) errNs
-        `shouldBe` errNs { nsHealth = NeedsAttention "prior err" }
+        `shouldBe` errNs { nsHealth = NodeUnreachable "prior err" }
 
   describe "computeStaleNodes" $ do
     let db1 = NodeId "db1" 3306

@@ -21,7 +21,13 @@ When `DeadSource` is detected, the daemon automatically:
 | `UnreachableSource` | Source unreachable from PureMyHA, but replicas can still reach it (possible network partition) |
 | `DeadSourceAndAllReplicas` | Source and all replicas are unresponsive |
 | `SplitBrainSuspected` | Multiple nodes appear to be acting as source |
-| `NeedsAttention` | Other anomaly (errant GTIDs, stale replication, etc.) |
+| `NodeUnreachable` | Probe connect failure (node is not responding) |
+| `ReplicaIOStopped` | Replica IO thread stopped (with or without error) |
+| `ReplicaIOConnecting` | Replica IO thread in Connecting state (transient) |
+| `ReplicaSQLStopped` | Replica SQL thread stopped |
+| `ErrantGtidDetected` | Errant GTIDs detected on the node |
+| `NoSourceDetected` | No node has the source role in the cluster |
+| `NeedsAttention` | Other unclassified anomaly (escape hatch) |
 
 ## Anti-Flap Protection
 

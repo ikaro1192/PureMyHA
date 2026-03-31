@@ -186,7 +186,7 @@ probeTimeoutMicros :: NominalDiffTime -> Int -> Int
 probeTimeoutMicros cap retries =
   round (realToFrac cap * fromIntegral (2 * retries + 1) * 1_000_000 :: Double)
 
--- | Suppress NeedsAttention health state when consecutive failure count is below
+-- | Suppress unhealthy health state when consecutive failure count is below
 -- the configured threshold. Falls back to previous health (or Healthy if no prior state).
 suppressBelowThreshold :: Int -> Int -> Maybe NodeState -> NodeState -> NodeState
 suppressBelowThreshold threshold failCount mOldNs ns
@@ -297,7 +297,7 @@ monitorNode nid = do
           NodeState
             { nsNodeId              = nid
             , nsRole                = maybe Replica nsRole mOldNs  -- preserve existing role on error
-            , nsHealth              = NeedsAttention err
+            , nsHealth              = NodeUnreachable err
             , nsProbeResult         = ProbeFailure err
             , nsErrantGtids         = ""
             , nsPaused              = False    -- actual value read atomically at write time
@@ -319,7 +319,7 @@ monitorNode nid = do
   ns' <- enrichErrantGtids ns
   let lagThreshold = Just (round (realToFrac (mcReplicationLagCritical mc) :: Double) :: Int)
       ns''  = ns' { nsHealth = detectNodeHealth lagThreshold ns' }
-  -- Apply consecutive failure threshold: suppress NeedsAttention until N consecutive failures
+  -- Apply consecutive failure threshold: suppress unhealthy state until N consecutive failures
   let ns''' = suppressBelowThreshold threshold newFailures mOldNs ns''
   -- Log below-threshold failures for observability
   liftIO $ when (newFailures > 0 && newFailures < threshold) $ do
@@ -359,11 +359,11 @@ logHealthChange nid mOld new = do
   if nsPaused new
     then pure ()
     else case (fmap nsHealth mOld, nsHealth new) of
-      (Just Healthy, NeedsAttention err) ->
+      (Just Healthy, newH) | Just err <- healthErrorMessage newH ->
         liftIO $ logWarn logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " unreachable: " <> err
-      (Just (NeedsAttention _), Healthy) ->
+      (Just oldH, Healthy) | isUnhealthy oldH ->
         liftIO $ logInfo logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " recovered"
-      (Nothing, NeedsAttention err) ->
+      (Nothing, newH) | Just err <- healthErrorMessage newH ->
         liftIO $ logWarn logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " initial connect failed: " <> err
       _ -> pure ()
   where

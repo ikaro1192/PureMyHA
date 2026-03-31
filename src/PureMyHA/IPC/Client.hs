@@ -122,6 +122,12 @@ showHealth DeadSource               = "DeadSource"
 showHealth UnreachableSource        = "UnreachableSource"
 showHealth DeadSourceAndAllReplicas = "DeadSourceAndAllReplicas"
 showHealth SplitBrainSuspected      = "SplitBrainSuspected"
+showHealth (NodeUnreachable msg)    = "NodeUnreachable: " <> T.unpack msg
+showHealth (ReplicaIOStopped msg)   = "ReplicaIOStopped" <> if T.null msg then "" else ": " <> T.unpack msg
+showHealth ReplicaIOConnecting      = "ReplicaIOConnecting"
+showHealth (ReplicaSQLStopped msg)  = "ReplicaSQLStopped: " <> T.unpack msg
+showHealth (ErrantGtidDetected g)   = "ErrantGtidDetected: " <> T.unpack g
+showHealth NoSourceDetected         = "NoSourceDetected"
 showHealth (NeedsAttention msg)     = "NeedsAttention: " <> T.unpack msg
 showHealth (Lagging n)              = "Lagging: " <> show n <> "s"
 
