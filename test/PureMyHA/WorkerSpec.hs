@@ -11,7 +11,7 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
 import PureMyHA.Env (runApp)
 import qualified Data.Set as Set
-import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv)
+import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv, mergeNodeState, detectTopologyDrift, DriftCondition (..))
 import PureMyHA.Hook (HookEnv (..))
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
@@ -260,3 +260,57 @@ spec = do
     it "sets hookTimestamp correctly" $
       hookTimestamp (buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z")
         `shouldBe` "2026-01-01T00:00:00Z"
+
+  describe "detectTopologyDrift" $ do
+    let db1 = HostName "db1"
+        db2 = HostName "db2"
+        db3 = HostName "db3"
+
+    it "returns [] when configured and discovered sets match and replicas >= threshold" $
+      detectTopologyDrift (Set.fromList [db1, db2]) (Set.fromList [db1, db2]) 1 1
+        `shouldBe` []
+
+    it "returns [] when replica count equals threshold exactly" $
+      detectTopologyDrift (Set.fromList [db1]) (Set.fromList [db1]) 1 1
+        `shouldBe` []
+
+    it "returns [MissingNode] when a configured node is not discovered" $
+      detectTopologyDrift (Set.fromList [db1, db2]) (Set.fromList [db1]) 1 1
+        `shouldBe` [MissingNode db2]
+
+    it "returns [UnexpectedNode] when a discovered node is not in config" $
+      detectTopologyDrift (Set.fromList [db1]) (Set.fromList [db1, db3]) 1 1
+        `shouldBe` [UnexpectedNode db3]
+
+    it "returns [ReplicaCountBelowThreshold] when healthy replicas < min" $
+      detectTopologyDrift (Set.fromList [db1, db2]) (Set.fromList [db1, db2]) 1 0
+        `shouldBe` [ReplicaCountBelowThreshold 0 1]
+
+    it "returns multiple conditions when missing node and below threshold" $ do
+      let result = detectTopologyDrift (Set.fromList [db1, db2]) (Set.fromList [db1]) 1 0
+      result `shouldContain` [MissingNode db2]
+      result `shouldContain` [ReplicaCountBelowThreshold 0 1]
+
+    it "returns [] when min_replicas_for_failover=0 and no replicas present" $
+      detectTopologyDrift (Set.fromList [db1]) (Set.fromList [db1]) 0 0
+        `shouldBe` []
+
+  describe "mergeNodeState" $ do
+
+    it "preserves Source role from old when new has ProbeFailure (Replica)" $ do
+      -- Simulates topology refresh discovering the dead source as Replica
+      let new = (unreachableNode (NodeId (mkHostInfoFromName "db1") 3306))
+                  { nsRole = Replica }
+          old = healthySource
+      nsRole (mergeNodeState new old) `shouldBe` Source
+
+    it "preserves Source role from old even when new probe succeeded as Replica" $ do
+      -- Ensures topology refresh never overrides monitoring-worker role assignment
+      let new = healthyReplica { nsNodeId = nsNodeId healthySource }
+          old = healthySource
+      nsRole (mergeNodeState new old) `shouldBe` Source
+
+    it "preserves Replica role from old" $ do
+      let new = healthySource { nsNodeId = nsNodeId healthyReplica, nsRole = Source }
+          old = healthyReplica
+      nsRole (mergeNodeState new old) `shouldBe` Replica

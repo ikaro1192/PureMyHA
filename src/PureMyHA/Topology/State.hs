@@ -5,10 +5,12 @@ module PureMyHA.Topology.State
   , updateNodeStatePreserveRole
   , updateClusterTopology
   , getClusterTopology
+  , getClusterTopologySTM
   , setRecoveryBlock
   , clearRecoveryBlock
   , recordFailover
   , updateClusterHealthFields
+  , updateClusterTopologyDrift
   , setClusterPause
   , clearClusterPause
   , TVarDaemonState
@@ -84,8 +86,11 @@ updateClusterTopology tvar ct = do
       ctVar <- newTVar ct
       writeTVar tvar (Map.insert name ctVar clusters)
     Just ctVar -> modifyTVar' ctVar $ \prevCt ->
-      ct { ctObservedHealthy = ctObservedHealthy prevCt || ctObservedHealthy ct
-         , ctPaused = ctPaused prevCt
+      ct { ctObservedHealthy      = ctObservedHealthy prevCt || ctObservedHealthy ct
+         , ctPaused               = ctPaused prevCt
+         , ctTopologyDrift        = ctTopologyDrift prevCt
+         , ctRecoveryBlockedUntil = ctRecoveryBlockedUntil prevCt
+         , ctHealth               = ctHealth prevCt
          }
 
 getClusterTopology :: TVarDaemonState -> ClusterName -> IO (Maybe ClusterTopology)
@@ -94,6 +99,11 @@ getClusterTopology tvar name = do
   case Map.lookup name clusters of
     Nothing    -> pure Nothing
     Just ctVar -> Just <$> readTVarIO ctVar
+
+getClusterTopologySTM :: TVarDaemonState -> ClusterName -> STM (Maybe ClusterTopology)
+getClusterTopologySTM tvar name = do
+  mctVar <- lookupClusterTVar tvar name
+  traverse readTVar mctVar
 
 setRecoveryBlock :: TVarDaemonState -> ClusterName -> UTCTime -> NominalDiffTime -> STM ()
 setRecoveryBlock tvar clusterName now period =
@@ -140,3 +150,9 @@ clearClusterPause :: TVarDaemonState -> ClusterName -> STM ()
 clearClusterPause tvar clusterName =
   withClusterTVar tvar clusterName $ \ctVar ->
     modifyTVar' ctVar $ \ct -> ct { ctPaused = False }
+
+-- | Update only the topology drift flag for a cluster.
+updateClusterTopologyDrift :: TVarDaemonState -> ClusterName -> Bool -> STM ()
+updateClusterTopologyDrift tvar clusterName drift =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct -> ct { ctTopologyDrift = drift }

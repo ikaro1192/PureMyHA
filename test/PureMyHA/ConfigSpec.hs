@@ -264,6 +264,44 @@ spec = do
             Nothing -> expectationFailure "expected global hooks to be inherited"
             Just h  -> hcPreFailover h `shouldBe` Just "/global/pre_failover.sh"
 
+    it "parses on_topology_drift hook path" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    hooks:"
+            , "      on_topology_drift: /etc/puremyha/hooks/on_topology_drift.sh"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg ->
+          case ccHooks (NE.head (cfgClusters cfg)) of
+            Nothing -> expectationFailure "expected hooks to be set"
+            Just h  -> hcOnTopologyDrift h `shouldBe` Just "/etc/puremyha/hooks/on_topology_drift.sh"
+
+    it "on_topology_drift defaults to Nothing when absent" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    hooks:"
+            , "      pre_failover: /etc/puremyha/hooks/pre_failover.sh"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg ->
+          case ccHooks (NE.head (cfgClusters cfg)) of
+            Nothing -> expectationFailure "expected hooks to be set"
+            Just h  -> hcOnTopologyDrift h `shouldSatisfy` isNothing
+
     it "fails when monitoring is absent from both cluster and global" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"

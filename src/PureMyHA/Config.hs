@@ -206,6 +206,7 @@ data HooksConfig = HooksConfig
   , hcOnFence                     :: Maybe FilePath
   , hcOnLagThresholdExceeded      :: Maybe FilePath  -- ^ Fired when a replica transitions to Lagging health
   , hcOnLagThresholdRecovered     :: Maybe FilePath  -- ^ Fired when a replica recovers from Lagging health
+  , hcOnTopologyDrift             :: Maybe FilePath  -- ^ Fired on transition to topology drift state
   } deriving (Show, Generic)
 
 -- | A TCP/IP port number in the range 1–65535.
@@ -452,6 +453,7 @@ instance FromJSON HooksConfig where
       <*> o .:? "on_fence"
       <*> o .:? "on_lag_threshold_exceeded"
       <*> o .:? "on_lag_threshold_recovered"
+      <*> o .:? "on_topology_drift"
 
 loadConfig :: FilePath -> IO (Either String Config)
 loadConfig path = do

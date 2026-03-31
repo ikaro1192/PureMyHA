@@ -294,7 +294,8 @@ setup_replication() {
           SOURCE_USER='repl',
           SOURCE_PASSWORD='repl_pass',
           SOURCE_AUTO_POSITION=1,
-          GET_SOURCE_PUBLIC_KEY=1;
+          GET_SOURCE_PUBLIC_KEY=1,
+          SOURCE_CONNECT_RETRY=1;
         START REPLICA;
       "; then
         ok=1
@@ -356,7 +357,8 @@ reset_cluster() {
         SOURCE_USER='repl',
         SOURCE_PASSWORD='repl_pass',
         SOURCE_AUTO_POSITION=1,
-        GET_SOURCE_PUBLIC_KEY=1;
+        GET_SOURCE_PUBLIC_KEY=1,
+        SOURCE_CONNECT_RETRY=1;
       START REPLICA;
     " || true
   done

@@ -7,6 +7,7 @@ module PureMyHA.Topology.Discovery
   , deduplicateByHostname
   ) where
 
+import Control.Concurrent.Async (withAsync, waitCatch)
 import Control.Concurrent.STM (readTVarIO)
 import Control.Monad (when)
 import Control.Monad.IO.Class (liftIO)
@@ -19,8 +20,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.List.NonEmpty as NE
-import PureMyHA.Config (ClusterConfig (..), DbCredentials, NodeConfig (..), Port (..), TLSConfig)
-import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getTLSConfig)
+import System.Timeout (timeout)
+import PureMyHA.Config (ClusterConfig (..), DbCredentials, MonitoringConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), TLSConfig)
+import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getMonitoringConfig, getTLSConfig)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query (showReplicaStatus, showReplicas, getGtidExecuted, resolveHostInfo)
@@ -34,10 +36,12 @@ discoverTopology = do
   creds  <- getMonCredentials
   mTls   <- getTLSConfig
   logger <- asks envLogger >>= liftIO . readTVarIO
+  mc     <- getMonitoringConfig
+  let tMicros = round (realToFrac (unPositiveDuration (mcConnectTimeout mc)) * 1_000_000 :: Double) :: Int
   seedNodes <- liftIO $ mapM (\nc -> do
     hi <- resolveHostInfo (HostName (ncHost nc))
     pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
-  nodeStates <- liftIO $ discoverAll mTls creds (Set.fromList seedNodes) Set.empty Map.empty logger
+  nodeStates <- liftIO $ discoverAll mTls creds tMicros (Set.fromList seedNodes) Set.empty Map.empty logger
   pure (buildClusterTopology (ccName cc) nodeStates)
 
 -- | Build a ClusterTopology from discovered node states (pure)
@@ -60,18 +64,20 @@ buildClusterTopology name nodeStates =
        , ctRecoveryBlockedUntil = Nothing
        , ctLastFailoverAt       = Nothing
        , ctPaused               = False
+       , ctTopologyDrift        = False
        }
 
 -- | Recursively discover nodes
 discoverAll
   :: Maybe TLSConfig   -- ^ TLS configuration
   -> DbCredentials     -- ^ credentials
+  -> Int               -- ^ connect timeout in microseconds
   -> Set NodeId        -- ^ queue
   -> Set NodeId        -- ^ visited
   -> Map NodeId NodeState
   -> Logger
   -> IO (Map NodeId NodeState)
-discoverAll mTls creds queue visited acc logger
+discoverAll mTls creds tMicros queue visited acc logger
   | Set.null queue = do
       logInfo logger $ "[discovery] Queue empty, discovery complete (" <> T.pack (show (Map.size acc)) <> " node(s))"
       pure acc
@@ -82,23 +88,25 @@ discoverAll mTls creds queue visited acc logger
       -- (which use hostname-as-IP fallback) match already-visited resolved nodes.
       nid <- resolveQueueEntry nid0
       if Set.member nid visited
-        then discoverAll mTls creds rest visited acc logger
+        then discoverAll mTls creds tMicros rest visited acc logger
         else do
-          (ns, replicaIds) <- probeNode mTls creds nid logger
+          (ns, replicaIds) <- probeNode mTls creds tMicros nid logger
           let visited'  = Set.insert nid visited
               acc'      = Map.insert nid ns acc
               fromRs    = nextDiscoveryTargets ns visited' rest
               newQueue  = foldr (\rid q -> if Set.notMember rid visited' then Set.insert rid q else q) fromRs replicaIds
-          discoverAll mTls creds newQueue visited' acc' logger
+          discoverAll mTls creds tMicros newQueue visited' acc' logger
 
 -- | Probe a single node and return its NodeState plus any replicas discovered
 -- via SHOW PROCESSLIST (only populated when the node is a source).
-probeNode :: Maybe TLSConfig -> DbCredentials -> NodeId -> Logger -> IO (NodeState, [NodeId])
-probeNode mTls creds nid logger = do
+-- Uses async + timeout to bound the probe duration; a stopped node that causes
+-- TCP to hang will be treated as a failed probe after tMicros microseconds.
+probeNode :: Maybe TLSConfig -> DbCredentials -> Int -> NodeId -> Logger -> IO (NodeState, [NodeId])
+probeNode mTls creds tMicros nid logger = do
   logInfo logger $ "[discovery] Probing " <> unHostName (nodeHost nid) <> ":" <> T.pack (show (nodePort nid))
   now <- getCurrentTime
   let ci = makeConnectInfo nid creds
-  result <- withNodeConn mTls ci $ \conn -> do
+  mEither <- withAsync (withNodeConn mTls ci $ \conn -> do
     mReplicaStatus <- showReplicaStatus conn
     gtidExec       <- getGtidExecuted conn
     replicaIds <- case mReplicaStatus of
@@ -119,7 +127,13 @@ probeNode mTls creds nid logger = do
             <> " expected replica(s). Ensure the monitoring user has PROCESS privilege "
             <> "or set report_host on each replica."
         pure discovered
-    pure (mReplicaStatus, gtidExec, replicaIds)
+    pure (mReplicaStatus, gtidExec, replicaIds)) $ \probeAsync ->
+    timeout tMicros (waitCatch probeAsync)
+  let result = case mEither of
+        Nothing                  -> Left "probe timeout"
+        Just (Left e)            -> Left (T.pack (show e))
+        Just (Right (Left err))  -> Left err
+        Just (Right (Right r))   -> Right r
   case result of
     Left err -> logInfo logger $ "[discovery] " <> unHostName (nodeHost nid) <> " probe failed: " <> err
     Right _  -> pure ()
@@ -205,4 +219,5 @@ buildInitialTopology cc = ClusterTopology
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
   , ctPaused               = False
+  , ctTopologyDrift        = False
   }

@@ -11,10 +11,13 @@ module PureMyHA.Monitor.Worker
   , pruneStaleWorkers
   , detectAndPruneStaleWorkers
   , probeTimeoutMicros
+  , mergeNodeState
+  , DriftCondition (..)
+  , detectTopologyDrift
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.Async (async, wait, cancel, waitCatch, Async)
+import Control.Concurrent.Async (async, wait, cancel, waitCatch, withAsync, Async)
 import Control.Concurrent.STM (atomically, TVar, newTVarIO, modifyTVar', readTVarIO)
 import Control.Exception (SomeException, catch)
 import System.Timeout (timeout)
@@ -101,7 +104,7 @@ runTopologyRefresh reg = do
         Nothing      -> newTopo
         Just oldTopo ->
           newTopo { ctNodes = deduplicateByHostname
-                      (Map.union (ctNodes newTopo) (ctNodes oldTopo)) }
+                      (Map.unionWith mergeNodeState (ctNodes newTopo) (ctNodes oldTopo)) }
   liftIO $ atomically $ updateClusterTopology tvar mergedTopo
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes mergedTopo)
@@ -118,6 +121,36 @@ runTopologyRefresh reg = do
   unless (null staleNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: pruning "
       <> T.pack (show (length staleNodes)) <> " stale worker(s)"
+  -- Topology drift detection: use reachability so that stopped nodes register
+  -- as missing even though they remain in the topology with a failed probe result.
+  let configuredHosts = Set.fromList $ map (HostName . ncHost) (NE.toList (ccNodes cc))
+      reachableNodes  = filter nsIsReachable (Map.elems (ctNodes mergedTopo))
+      discoveredHosts = Set.fromList $ map (nodeHost . nsNodeId) reachableNodes
+      healthyReplicas = length $ filter (\ns -> nsRole ns == Replica) reachableNodes
+      minReplicas     = fcMinReplicasForFailover (ccFailover cc)
+      driftConditions = detectTopologyDrift configuredHosts discoveredHosts minReplicas healthyReplicas
+      hasDrift        = not (null driftConditions)
+  wasInDrift <- liftIO $ atomically $ do
+    mTopo <- getClusterTopologySTM tvar (ccName cc)
+    updateClusterTopologyDrift tvar (ccName cc) hasDrift
+    pure (maybe False ctTopologyDrift mTopo)
+  -- Fire hook only on False→True transition to avoid repeated firings
+  liftIO $ when (hasDrift && not wasInDrift) $ do
+    mHooks <- readTVarIO (envHooks env)
+    ts     <- getCurrentTimestamp
+    forM_ driftConditions $ \dc -> do
+      let (dt, dd) = renderDriftCondition dc
+      runHookFireForget mHooks hcOnTopologyDrift
+        HookEnv { hookClusterName  = ccName cc
+                , hookNewSource    = Nothing
+                , hookOldSource    = Nothing
+                , hookFailureType  = Nothing
+                , hookTimestamp    = ts
+                , hookLagSeconds   = Nothing
+                , hookNode         = Nothing
+                , hookDriftType    = Just dt
+                , hookDriftDetails = Just dd
+                }
 
 -- | Compute nodes to prune: those in the registry but absent from both
 -- the merged topology and the configured seed list.
@@ -161,18 +194,61 @@ suppressBelowThreshold threshold failCount mOldNs ns
       ns { nsHealth = maybe Healthy nsHealth mOldNs }
   | otherwise = ns
 
+-- | Conditions representing a topology drift from the expected state.
+data DriftCondition
+  = MissingNode HostName                  -- ^ A configured node not found in discovered topology
+  | UnexpectedNode HostName               -- ^ A discovered node not present in config
+  | ReplicaCountBelowThreshold Int Int    -- ^ (actual healthy replicas, min_replicas_for_failover)
+  deriving (Eq, Show)
+
+-- | Pure: detect topology drift by comparing configured and discovered host sets
+-- and checking healthy replica count against the failover threshold.
+detectTopologyDrift
+  :: Set.Set HostName  -- ^ Configured hosts (from ccNodes)
+  -> Set.Set HostName  -- ^ Discovered hosts (from merged topology)
+  -> Int               -- ^ min_replicas_for_failover
+  -> Int               -- ^ Current healthy replica count
+  -> [DriftCondition]
+detectTopologyDrift configured discovered minReplicas healthyReplicas =
+  [ MissingNode h    | h <- Set.toList (Set.difference configured discovered) ]
+  ++ [ UnexpectedNode h | h <- Set.toList (Set.difference discovered configured) ]
+  ++ [ ReplicaCountBelowThreshold healthyReplicas minReplicas
+     | healthyReplicas < minReplicas ]
+
+-- | When merging topology discovery results with existing state, preserve
+-- daemon-managed node fields. The monitoring workers are the authoritative
+-- source for nsHealth, nsPaused, nsFenced, and nsConsecutiveFailures;
+-- topology-refresh probes must not overwrite these for existing nodes.
+mergeNodeState :: NodeState -> NodeState -> NodeState
+mergeNodeState new old = new
+  { nsHealth              = nsHealth old
+  , nsPaused              = nsPaused old
+  , nsFenced              = nsFenced old
+  , nsConsecutiveFailures = nsConsecutiveFailures old
+  , nsRole                = nsRole old
+  }
+
+-- | Render a DriftCondition as (PUREMYHA_DRIFT_TYPE, PUREMYHA_DRIFT_DETAILS).
+renderDriftCondition :: DriftCondition -> (T.Text, T.Text)
+renderDriftCondition (MissingNode h)                      = ("missing_node", unHostName h)
+renderDriftCondition (UnexpectedNode h)                   = ("unexpected_node", unHostName h)
+renderDriftCondition (ReplicaCountBelowThreshold act thr) =
+  ("replica_count_below_threshold", T.pack (show act) <> " < " <> T.pack (show thr))
+
 -- | Build the base HookEnv for lag threshold hooks.
 -- Sets hookNode to the replica's hostname so hook scripts can identify
 -- which replica is lagging in multi-replica topologies.
 buildLagHookEnv :: ClusterName -> NodeId -> T.Text -> HookEnv
 buildLagHookEnv clusterName nid ts =
-  HookEnv { hookClusterName = clusterName
-           , hookNewSource   = Nothing
-           , hookOldSource   = Nothing
-           , hookFailureType = Nothing
-           , hookTimestamp   = ts
-           , hookLagSeconds  = Nothing
-           , hookNode        = Just (unHostName (nodeHost nid))
+  HookEnv { hookClusterName  = clusterName
+           , hookNewSource    = Nothing
+           , hookOldSource    = Nothing
+           , hookFailureType  = Nothing
+           , hookTimestamp    = ts
+           , hookLagSeconds   = Nothing
+           , hookNode         = Just (unHostName (nodeHost nid))
+           , hookDriftType    = Nothing
+           , hookDriftDetails = Nothing
            }
 
 -- | Perform a single monitoring cycle for a node
@@ -323,9 +399,9 @@ enrichErrantGtids ns = do
                         ProbeSuccess{prGtidExecuted = g} -> g
                         ProbeFailure{} -> ""
                       ci = makeConnectInfo srcId creds
-                  errantAsync <- async $ withNodeConn mTls ci $ \conn ->
-                    gtidSubtract conn replicaGtid sourceGtid
-                  mResult <- timeout tMicros (waitCatch errantAsync)
+                  mResult <- withAsync (withNodeConn mTls ci $ \conn ->
+                    gtidSubtract conn replicaGtid sourceGtid) $ \errantAsync ->
+                      timeout tMicros (waitCatch errantAsync)
                   case mResult of
                     Nothing                       -> pure ns
                     Just (Left _)                 -> pure ns
@@ -352,12 +428,30 @@ recomputeClusterHealth = do
           DeadSource -> do
             mHooks <- readTVarIO (envHooks env)
             ts <- getCurrentTimestamp
-            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSource") ts Nothing Nothing
+            let hookEnv = HookEnv { hookClusterName  = ccName cc
+                                   , hookNewSource    = Nothing
+                                   , hookOldSource    = Nothing
+                                   , hookFailureType  = Just "DeadSource"
+                                   , hookTimestamp    = ts
+                                   , hookLagSeconds   = Nothing
+                                   , hookNode         = Nothing
+                                   , hookDriftType    = Nothing
+                                   , hookDriftDetails = Nothing
+                                   }
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           DeadSourceAndAllReplicas -> do
             mHooks <- readTVarIO (envHooks env)
             ts <- getCurrentTimestamp
-            let hookEnv = HookEnv (ccName cc) Nothing Nothing (Just "DeadSourceAndAllReplicas") ts Nothing Nothing
+            let hookEnv = HookEnv { hookClusterName  = ccName cc
+                                   , hookNewSource    = Nothing
+                                   , hookOldSource    = Nothing
+                                   , hookFailureType  = Just "DeadSourceAndAllReplicas"
+                                   , hookTimestamp    = ts
+                                   , hookLagSeconds   = Nothing
+                                   , hookNode         = Nothing
+                                   , hookDriftType    = Nothing
+                                   , hookDriftDetails = Nothing
+                                   }
             runHookFireForget mHooks hcOnFailureDetection hookEnv
           _ -> pure ()
       -- Log all health transitions for observability

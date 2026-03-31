@@ -190,6 +190,7 @@ data ClusterTopology = ClusterTopology
   , ctRecoveryBlockedUntil  :: Maybe UTCTime
   , ctLastFailoverAt        :: Maybe UTCTime
   , ctPaused                :: Bool
+  , ctTopologyDrift         :: Bool             -- True if topology drift is currently detected
   } deriving (Show, Generic)
 
 data DaemonState = DaemonState

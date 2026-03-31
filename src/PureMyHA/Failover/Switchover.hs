@@ -65,7 +65,16 @@ runSwitchover mToHost mDrainTimeout = do
           -- Pre-switchover hook (blocking: non-zero exit aborts)
           mHooks <- getHooksConfig
           ts <- liftIO getCurrentTimestamp
-          let preEnv = HookEnv (ccName cc) (Just (unHostName (nodeHost candidateId))) oldSourceHost Nothing ts Nothing Nothing
+          let preEnv = HookEnv { hookClusterName  = ccName cc
+                               , hookNewSource    = Just (unHostName (nodeHost candidateId))
+                               , hookOldSource    = oldSourceHost
+                               , hookFailureType  = Nothing
+                               , hookTimestamp    = ts
+                               , hookLagSeconds   = Nothing
+                               , hookNode         = Nothing
+                               , hookDriftType    = Nothing
+                               , hookDriftDetails = Nothing
+                               }
           preResult <- liftIO $ runHookOrAbort mHooks hcPreSwitchover preEnv
           case preResult of
             Left err -> do
@@ -172,7 +181,16 @@ finalizeSwitchover candidateId oldSourceId oldSourceHost topo = do
   -- Post-switchover hook (fire-and-forget)
   mHooks <- getHooksConfig
   ts <- liftIO getCurrentTimestamp
-  let postEnv = HookEnv clName (Just (unHostName (nodeHost candidateId))) oldSourceHost Nothing ts Nothing Nothing
+  let postEnv = HookEnv { hookClusterName  = clName
+                        , hookNewSource    = Just (unHostName (nodeHost candidateId))
+                        , hookOldSource    = oldSourceHost
+                        , hookFailureType  = Nothing
+                        , hookTimestamp    = ts
+                        , hookLagSeconds   = Nothing
+                        , hookNode         = Nothing
+                        , hookDriftType    = Nothing
+                        , hookDriftDetails = Nothing
+                        }
   liftIO $ runHookFireForget mHooks hcPostSwitchover postEnv
 
   appLogInfo $ "[" <> unClusterName clName <> "] Switchover completed: new source is " <> unHostName (nodeHost candidateId)
