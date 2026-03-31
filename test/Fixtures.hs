@@ -88,20 +88,20 @@ healthyReplica = mkNodeState (mkNodeId "db2" 3306) Replica
 replicaWithErrantGtid :: NodeState
 replicaWithErrantGtid = (mkNodeState (mkNodeId "db3" 3306) Replica
   (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100"))
-  (NeedsAttention "Errant GTIDs: uuid3:1"))
+  (ErrantGtidDetected "uuid3:1"))
   { nsErrantGtids = "uuid3:1" }
 
 replicaWithIOError :: NodeState
 replicaWithIOError = mkNodeState (mkNodeId "db4" 3306) Replica
   (Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-50")
     { rsLastIOError = "Access denied" })
-  (NeedsAttention "IO error: Access denied")
+  (ReplicaIOStopped "Access denied")
 
 unreachableNode :: NodeId -> NodeState
 unreachableNode nid = NodeState
   { nsNodeId              = nid
   , nsRole                = Replica
-  , nsHealth              = NeedsAttention "Connection refused"
+  , nsHealth              = NodeUnreachable "Connection refused"
   , nsProbeResult         = ProbeFailure "Connection refused"
   , nsErrantGtids         = ""
   , nsPaused              = False

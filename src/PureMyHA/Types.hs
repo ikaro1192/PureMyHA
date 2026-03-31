@@ -12,6 +12,8 @@ module PureMyHA.Types
   , SQLThreadState (..)
   , ReplicaStatus (..)
   , NodeHealth (..)
+  , healthErrorMessage
+  , isUnhealthy
   , NodeRole (..)
   , isSource
   , findNodeByHost
@@ -134,9 +136,38 @@ data NodeHealth
   | UnreachableSource
   | DeadSourceAndAllReplicas
   | SplitBrainSuspected
-  | NeedsAttention Text
+  | NodeUnreachable Text         -- ^ Probe connect failure (Text = error message)
+  | ReplicaIOStopped Text        -- ^ IO thread = No (Text = last IO error, may be empty)
+  | ReplicaIOConnecting          -- ^ IO thread = Connecting (not yet established)
+  | ReplicaSQLStopped Text       -- ^ SQL thread stopped (Text = last SQL error)
+  | ErrantGtidDetected Text      -- ^ Errant GTIDs present (Text = GTID set)
+  | NoSourceDetected             -- ^ Cluster-level: no node has source role
+  | NeedsAttention Text          -- ^ Escape hatch for truly unexpected/unclassified conditions
   | Lagging Int
   deriving (Eq, Show, Generic)
+
+-- | Extract a human-readable error message from an unhealthy state, if any.
+healthErrorMessage :: NodeHealth -> Maybe Text
+healthErrorMessage (NodeUnreachable msg)   = Just msg
+healthErrorMessage (ReplicaIOStopped msg)
+  | T.null msg = Just "Replica IO not running"
+  | otherwise  = Just ("IO error: " <> msg)
+healthErrorMessage ReplicaIOConnecting     = Just "Replica IO connecting"
+healthErrorMessage (ReplicaSQLStopped msg) = Just ("SQL error: " <> msg)
+healthErrorMessage (ErrantGtidDetected g)  = Just ("Errant GTIDs: " <> g)
+healthErrorMessage NoSourceDetected        = Just "No source detected"
+healthErrorMessage (NeedsAttention msg)    = Just msg
+healthErrorMessage (Lagging n)             = Just ("Lagging " <> T.pack (show n) <> "s")
+healthErrorMessage DeadSource              = Just "Dead source"
+healthErrorMessage UnreachableSource       = Just "Unreachable source"
+healthErrorMessage DeadSourceAndAllReplicas = Just "Dead source and all replicas"
+healthErrorMessage SplitBrainSuspected     = Just "Split brain suspected"
+healthErrorMessage Healthy                 = Nothing
+
+-- | Is this health state considered unhealthy?
+isUnhealthy :: NodeHealth -> Bool
+isUnhealthy Healthy = False
+isUnhealthy _       = True
 
 data NodeRole = Source | Replica
   deriving (Eq, Show, Generic)

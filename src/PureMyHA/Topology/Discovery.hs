@@ -152,7 +152,7 @@ buildNodeStateFromProbe
 buildNodeStateFromProbe nid _ (Left err) = NodeState
   { nsNodeId              = nid
   , nsRole                = Replica
-  , nsHealth              = NeedsAttention err
+  , nsHealth              = NodeUnreachable err
   , nsProbeResult         = ProbeFailure err
   , nsErrantGtids         = ""
   , nsPaused              = False

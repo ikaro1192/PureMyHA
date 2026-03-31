@@ -64,38 +64,38 @@ spec = do
             ]
       detectClusterHealth cluster `shouldBe` UnreachableSource
 
-    it "returns NeedsAttention 'No source node detected' when no node is marked as source" $ do
+    it "returns NoSourceDetected when no node is marked as source" $ do
       let cluster = Map.fromList
             [ (NodeId "db1" 3306, healthySource { nsRole = Replica })
             ]
-      detectClusterHealth cluster `shouldBe` NeedsAttention "No source node detected"
+      detectClusterHealth cluster `shouldBe` NoSourceDetected
 
   describe "detectNodeHealth" $ do
-    it "returns NeedsAttention when connect error is present" $ do
+    it "returns NodeUnreachable when connect error is present" $ do
       let ns = healthySource { nsProbeResult = ProbeFailure "refused" }
-      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "refused"
+      detectNodeHealth Nothing ns `shouldBe` NodeUnreachable "refused"
 
-    it "returns NeedsAttention when errant GTIDs are present" $ do
+    it "returns ErrantGtidDetected when errant GTIDs are present" $ do
       let ns = healthySource { nsErrantGtids = "uuid3:1" }
-      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "Errant GTIDs: uuid3:1"
+      detectNodeHealth Nothing ns `shouldBe` ErrantGtidDetected "uuid3:1"
 
     it "returns Healthy for a source node with no errors" $
       detectNodeHealth Nothing healthySource `shouldBe` Healthy
 
-    it "returns NeedsAttention IO error when replica IO=No with error message" $ do
+    it "returns ReplicaIOStopped when replica IO=No with error message" $ do
       let rs = (mkReplicaStatus "db1" 3306 IONo "") { rsLastIOError = "Access denied" }
           ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
-      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "IO error: Access denied"
+      detectNodeHealth Nothing ns `shouldBe` ReplicaIOStopped "Access denied"
 
-    it "returns NeedsAttention 'Replica IO not running' when IO=No with no error" $ do
+    it "returns ReplicaIOStopped with empty text when IO=No with no error" $ do
       let rs = mkReplicaStatus "db1" 3306 IONo ""
           ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
-      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "Replica IO not running"
+      detectNodeHealth Nothing ns `shouldBe` ReplicaIOStopped ""
 
-    it "returns NeedsAttention SQL error when SQL thread is stopped" $ do
+    it "returns ReplicaSQLStopped when SQL thread is stopped" $ do
       let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsReplicaSQLRunning = SQLStopped, rsLastSQLError = "err" }
           ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
-      detectNodeHealth Nothing ns `shouldBe` NeedsAttention "SQL error: err"
+      detectNodeHealth Nothing ns `shouldBe` ReplicaSQLStopped "err"
 
     it "returns Healthy for a normal replica" $
       detectNodeHealth Nothing healthyReplica `shouldBe` Healthy
@@ -145,7 +145,7 @@ spec = do
 
     it "IO error takes precedence over lag threshold" $ do
       let rs = (mkReplicaStatus "db1" 3306 IONo "") { rsLastIOError = "err", rsSecondsBehindSource = Just 100 }
-      detectReplicaHealth (Just 30) rs `shouldBe` NeedsAttention "IO error: err"
+      detectReplicaHealth (Just 30) rs `shouldBe` ReplicaIOStopped "err"
 
   describe "identifySource" $ do
     it "identifies the source node" $

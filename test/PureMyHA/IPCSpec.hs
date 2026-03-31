@@ -100,6 +100,34 @@ spec = do
       roundTripHealth (NeedsAttention "test msg")
         `shouldBe` Just (NeedsAttention "test msg")
 
+    it "round-trips NodeUnreachable" $
+      roundTripHealth (NodeUnreachable "conn refused")
+        `shouldBe` Just (NodeUnreachable "conn refused")
+
+    it "round-trips ReplicaIOStopped with error" $
+      roundTripHealth (ReplicaIOStopped "Access denied")
+        `shouldBe` Just (ReplicaIOStopped "Access denied")
+
+    it "round-trips ReplicaIOStopped with empty text" $
+      roundTripHealth (ReplicaIOStopped "")
+        `shouldBe` Just (ReplicaIOStopped "")
+
+    it "round-trips ReplicaIOConnecting" $
+      roundTripHealth ReplicaIOConnecting
+        `shouldBe` Just ReplicaIOConnecting
+
+    it "round-trips ReplicaSQLStopped" $
+      roundTripHealth (ReplicaSQLStopped "duplicate key")
+        `shouldBe` Just (ReplicaSQLStopped "duplicate key")
+
+    it "round-trips ErrantGtidDetected" $
+      roundTripHealth (ErrantGtidDetected "uuid3:1")
+        `shouldBe` Just (ErrantGtidDetected "uuid3:1")
+
+    it "round-trips NoSourceDetected" $
+      roundTripHealth NoSourceDetected
+        `shouldBe` Just NoSourceDetected
+
     it "round-trips Lagging" $
       roundTripHealth (Lagging 42) `shouldBe` Just (Lagging 42)
 

@@ -34,8 +34,8 @@ docker pause e2e-source
 #   probe 1 timeout:  6s  → failCount=1 (suppressed below threshold=3)
 #   probe 2 timeout: +7s  → failCount=2 (still suppressed)
 #   replica IO detects no heartbeat: ~10s (replica_net_timeout=10)
-#   probe 3 timeout: +7s  → failCount=3 → NeedsAttention fires
-#   detectClusterHealth: source=NeedsAttention + replicas IO=No → DeadSource
+#   probe 3 timeout: +7s  → failCount=3 → NodeUnreachable fires
+#   detectClusterHealth: source=NodeUnreachable + replicas IO=No → DeadSource
 #   auto-failover executes (wait_for_relay_log_apply_timeout=10s) → ~10s
 #   total: ~40s; wait up to 90s for safety
 #

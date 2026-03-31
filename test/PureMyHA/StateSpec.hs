@@ -96,14 +96,14 @@ spec = do
       tvar <- newDaemonState
       seedCluster tvar emptyTopo
       atomically $ updateNodeState tvar "test" healthySource
-      let updated = healthySource { nsHealth = NeedsAttention "err" }
+      let updated = healthySource { nsHealth = NodeUnreachable "err" }
       atomically $ updateNodeState tvar "test" updated
       mct <- getClusterTopology tvar "test"
       case mct of
         Nothing -> expectationFailure "cluster not found"
         Just ct -> case Map.lookup (NodeId "db1" 3306) (ctNodes ct) of
           Nothing -> expectationFailure "node not found"
-          Just ns -> nsHealth ns `shouldBe` NeedsAttention "err"
+          Just ns -> nsHealth ns `shouldBe` NodeUnreachable "err"
 
     it "does nothing for unknown cluster" $ do
       tvar <- newDaemonState
