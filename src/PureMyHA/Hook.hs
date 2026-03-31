@@ -18,13 +18,15 @@ import PureMyHA.Config (HooksConfig (..))
 import PureMyHA.Types (ClusterName, unClusterName)
 
 data HookEnv = HookEnv
-  { hookClusterName :: ClusterName
-  , hookNewSource   :: Maybe Text
-  , hookOldSource   :: Maybe Text
-  , hookFailureType :: Maybe Text   -- e.g. "DeadSource", "PromoteFailed"
-  , hookTimestamp   :: Text         -- ISO-8601 UTC: "2026-03-17T12:00:00Z"
-  , hookLagSeconds  :: Maybe Int    -- e.g. 45 when on_lag_threshold_exceeded fires
-  , hookNode        :: Maybe Text   -- hostname of the replica for lag threshold hooks
+  { hookClusterName  :: ClusterName
+  , hookNewSource    :: Maybe Text
+  , hookOldSource    :: Maybe Text
+  , hookFailureType  :: Maybe Text   -- e.g. "DeadSource", "PromoteFailed"
+  , hookTimestamp    :: Text         -- ISO-8601 UTC: "2026-03-17T12:00:00Z"
+  , hookLagSeconds   :: Maybe Int    -- e.g. 45 when on_lag_threshold_exceeded fires
+  , hookNode         :: Maybe Text   -- hostname of the replica for lag threshold hooks
+  , hookDriftType    :: Maybe Text   -- e.g. "missing_node" for on_topology_drift
+  , hookDriftDetails :: Maybe Text   -- human-readable description of the drift
   }
 
 getCurrentTimestamp :: IO Text
@@ -43,6 +45,8 @@ runHook scriptPath hookEnv = do
         maybe [] (\ft -> [("PUREMYHA_FAILURE_TYPE", T.unpack ft)]) (hookFailureType hookEnv) ++
         maybe [] (\s  -> [("PUREMYHA_LAG_SECONDS", show s)]) (hookLagSeconds hookEnv) ++
         maybe [] (\n  -> [("PUREMYHA_NODE",        T.unpack n)]) (hookNode hookEnv) ++
+        maybe [] (\dt -> [("PUREMYHA_DRIFT_TYPE",    T.unpack dt)]) (hookDriftType    hookEnv) ++
+        maybe [] (\dd -> [("PUREMYHA_DRIFT_DETAILS", T.unpack dd)]) (hookDriftDetails hookEnv) ++
         [("PUREMYHA_TIMESTAMP", T.unpack (hookTimestamp hookEnv))]
   result <- try @SomeException $ do
     (_, _, _, ph) <- createProcess (proc scriptPath [T.unpack (unClusterName (hookClusterName hookEnv))])

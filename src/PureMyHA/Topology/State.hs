@@ -9,6 +9,7 @@ module PureMyHA.Topology.State
   , clearRecoveryBlock
   , recordFailover
   , updateClusterHealthFields
+  , updateClusterTopologyDrift
   , setClusterPause
   , clearClusterPause
   , TVarDaemonState
@@ -84,8 +85,11 @@ updateClusterTopology tvar ct = do
       ctVar <- newTVar ct
       writeTVar tvar (Map.insert name ctVar clusters)
     Just ctVar -> modifyTVar' ctVar $ \prevCt ->
-      ct { ctObservedHealthy = ctObservedHealthy prevCt || ctObservedHealthy ct
-         , ctPaused = ctPaused prevCt
+      ct { ctObservedHealthy      = ctObservedHealthy prevCt || ctObservedHealthy ct
+         , ctPaused               = ctPaused prevCt
+         , ctTopologyDrift        = ctTopologyDrift prevCt
+         , ctRecoveryBlockedUntil = ctRecoveryBlockedUntil prevCt
+         , ctHealth               = ctHealth prevCt
          }
 
 getClusterTopology :: TVarDaemonState -> ClusterName -> IO (Maybe ClusterTopology)
@@ -140,3 +144,9 @@ clearClusterPause :: TVarDaemonState -> ClusterName -> STM ()
 clearClusterPause tvar clusterName =
   withClusterTVar tvar clusterName $ \ctVar ->
     modifyTVar' ctVar $ \ct -> ct { ctPaused = False }
+
+-- | Update only the topology drift flag for a cluster.
+updateClusterTopologyDrift :: TVarDaemonState -> ClusterName -> Bool -> STM ()
+updateClusterTopologyDrift tvar clusterName drift =
+  withClusterTVar tvar clusterName $ \ctVar ->
+    modifyTVar' ctVar $ \ct -> ct { ctTopologyDrift = drift }

@@ -73,6 +73,10 @@ clusterMetrics =
       (MetricName "puremyha_cluster_paused")
       (MetricHelp "1 if automatic failover is paused")
       (\_ ct -> boolVal (ctPaused ct))
+  , ClusterMetric
+      (MetricName "puremyha_cluster_topology_drift")
+      (MetricHelp "Whether topology drift is detected (1 = drift, 0 = normal)")
+      (\_ ct -> boolVal (ctTopologyDrift ct))
   ]
 
 nodeMetrics :: [NodeMetric]

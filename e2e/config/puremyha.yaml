@@ -23,6 +23,7 @@ clusters:
       post_switchover: /etc/puremyha/hooks/post_switchover.sh
       on_lag_threshold_exceeded: /etc/puremyha/hooks/on_lag_threshold_exceeded.sh
       on_lag_threshold_recovered: /etc/puremyha/hooks/on_lag_threshold_recovered.sh
+      on_topology_drift: /etc/puremyha/hooks/on_topology_drift.sh
 
 http:
   enabled: true
@@ -38,6 +39,7 @@ global:
     connect_timeout: 2s
     replication_lag_warning: 5s
     replication_lag_critical: 10s
+    discovery_interval: 5s
   failure_detection:
     recovery_block_period: 30s
   failover:

@@ -21,6 +21,7 @@ emptyTopo = ClusterTopology
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
   , ctPaused               = False
+  , ctTopologyDrift        = False
   }
 
 healthyTopo :: ClusterTopology
@@ -65,6 +66,14 @@ spec = do
       atomically $ updateClusterTopology tvar emptyTopo { ctPaused = False }
       mct <- getClusterTopology tvar "test"
       fmap ctPaused mct `shouldBe` Just True
+
+    it "preserves ctHealth from previous topology (monitoring workers own health)" $ do
+      tvar <- newDaemonState
+      seedCluster tvar emptyTopo { ctHealth = DeadSource }
+      -- topology refresh brings in a topology with stale NeedsAttention health
+      atomically $ updateClusterTopology tvar emptyTopo { ctHealth = NeedsAttention "stale" }
+      mct <- getClusterTopology tvar "test"
+      fmap ctHealth mct `shouldBe` Just DeadSource
 
   describe "readDaemonState" $
     it "reads multiple clusters" $ do
@@ -209,3 +218,14 @@ spec = do
       atomically $ clearClusterPause tvar "test"
       mct2 <- getClusterTopology tvar "test"
       fmap ctPaused mct2 `shouldBe` Just False
+
+  describe "updateClusterTopologyDrift" $
+    it "sets and clears ctTopologyDrift" $ do
+      tvar <- newDaemonState
+      seedCluster tvar emptyTopo
+      atomically $ updateClusterTopologyDrift tvar "test" True
+      mct1 <- getClusterTopology tvar "test"
+      fmap ctTopologyDrift mct1 `shouldBe` Just True
+      atomically $ updateClusterTopologyDrift tvar "test" False
+      mct2 <- getClusterTopology tvar "test"
+      fmap ctTopologyDrift mct2 `shouldBe` Just False

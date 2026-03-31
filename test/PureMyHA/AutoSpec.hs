@@ -21,6 +21,7 @@ deadSourceTopo = ClusterTopology
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
   , ctPaused               = False
+  , ctTopologyDrift        = False
   }
 
 healthyTopo :: ClusterTopology

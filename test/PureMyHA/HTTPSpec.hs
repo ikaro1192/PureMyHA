@@ -38,6 +38,7 @@ spec = do
                 , ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt       = Nothing
                 , ctPaused               = False
+                , ctTopologyDrift        = False
                 }
         ds     = DaemonState (Map.singleton "test" ct)
         output = BSL8.unpack (renderMetrics ds)
@@ -79,6 +80,15 @@ spec = do
           out    = BSL8.unpack (renderMetrics ds')
       out `shouldContain` "puremyha_cluster_healthy{cluster=\"test\"} 0"
 
+    it "reports topology_drift=0 when no drift" $
+      output `shouldContain` "puremyha_cluster_topology_drift{cluster=\"test\"} 0"
+
+    it "reports topology_drift=1 when drift is detected" $ do
+      let driftCt = ct { ctTopologyDrift = True }
+          ds'     = DaemonState (Map.singleton "test" driftCt)
+          out     = BSL8.unpack (renderMetrics ds')
+      out `shouldContain` "puremyha_cluster_topology_drift{cluster=\"test\"} 1"
+
   describe "httpApp routing" $ do
 
     it "returns 405 for POST request" $ do
@@ -104,7 +114,8 @@ spec = do
                 { ctClusterName = "test", ctNodes = clusterWithDeadSource
                 , ctSourceNodeId = Nothing, ctHealth = DeadSource
                 , ctObservedHealthy = False, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False }
+                , ctLastFailoverAt = Nothing, ctPaused = False
+                , ctTopologyDrift = False }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["health"] }
       resp <- runApp (httpApp tvar) req
@@ -116,7 +127,8 @@ spec = do
                 { ctClusterName = "test", ctNodes = clusterHealthy
                 , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
                 , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False }
+                , ctLastFailoverAt = Nothing, ctPaused = False
+                , ctTopologyDrift = False }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "status"] }
       resp <- runApp (httpApp tvar) req
@@ -134,7 +146,8 @@ spec = do
                 { ctClusterName = "test", ctNodes = clusterHealthy
                 , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
                 , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False }
+                , ctLastFailoverAt = Nothing, ctPaused = False
+                , ctTopologyDrift = False }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "topology"] }
       resp <- runApp (httpApp tvar) req
@@ -164,7 +177,8 @@ spec = do
                 , ctObservedHealthy = True
                 , ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing
-                , ctPaused = False }
+                , ctPaused = False
+                , ctTopologyDrift = False }
           ds = DaemonState (Map.singleton "test" ct)
           out = BSL8.unpack (renderMetrics ds)
       out `shouldContain` "puremyha_node_replication_lag_seconds{cluster=\"test\",host=\"db2\",port=\"3306\"} -1"

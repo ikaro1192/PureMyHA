@@ -67,6 +67,9 @@ global:
                                                                                     # Env: PUREMYHA_CLUSTER, PUREMYHA_NODE, PUREMYHA_LAG_SECONDS, PUREMYHA_TIMESTAMP
     on_lag_threshold_recovered: /etc/puremyha/hooks/on_lag_threshold_recovered.sh  # optional; fired when a replica recovers from Lagging health
                                                                                     # Env: PUREMYHA_CLUSTER, PUREMYHA_NODE, PUREMYHA_TIMESTAMP
+    on_topology_drift: /etc/puremyha/hooks/on_topology_drift.sh                    # optional; fired on transition to topology drift state (False→True only)
+                                                                                    # Env: PUREMYHA_CLUSTER, PUREMYHA_DRIFT_TYPE (missing_node|unexpected_node|replica_count_below_threshold),
+                                                                                    #      PUREMYHA_DRIFT_DETAILS, PUREMYHA_TIMESTAMP
 
 logging:                               # optional logging configuration
   log_file: /var/log/puremyha.log    # default: /var/log/puremyha.log
