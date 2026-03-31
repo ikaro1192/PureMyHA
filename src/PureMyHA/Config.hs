@@ -43,7 +43,7 @@ import Data.Time (NominalDiffTime)
 import Data.Yaml (decodeFileEither)
 import GHC.Generics (Generic)
 import Text.Read (readMaybe)
-import PureMyHA.Types (ClusterName (..), unClusterName)
+import PureMyHA.Types (ClusterName (..), unClusterName, HostInfo, HostName (..), mkHostInfoFromName, hiHostName)
 
 data Config = Config
   { cfgClusters :: NonEmpty ClusterConfig
@@ -176,7 +176,7 @@ data FailoverConfig = FailoverConfig
   , fcWaitRelayLogTimeout         :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
   , fcAutoFence                   :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
   , fcMaxReplicaLagForCandidate   :: Maybe PositiveInt -- ^ Max lag in seconds for failover candidates; lagging nodes are excluded (default Nothing)
-  , fcNeverPromote                :: [Text]           -- ^ Hosts permanently excluded from promotion; they continue to replicate but are never selected as candidates (default [])
+  , fcNeverPromote                :: [HostInfo]        -- ^ Hosts permanently excluded from promotion; they continue to replicate but are never selected as candidates (default [])
   } deriving (Show, Generic)
 
 data CandidatePriority = CandidatePriority
@@ -281,7 +281,7 @@ resolveFailover clusterRaw globalRaw = FailoverConfig
   , fcWaitRelayLogTimeout       = fromMaybe 60    (pick rfcWaitRelayLogTimeout)
   , fcAutoFence                 = fromMaybe False (pick rfcAutoFence)
   , fcMaxReplicaLagForCandidate = pick rfcMaxReplicaLagForCandidate
-  , fcNeverPromote              = maybe [] rfcNeverPromote clusterRaw
+  , fcNeverPromote              = map (mkHostInfoFromName . HostName) (maybe [] rfcNeverPromote clusterRaw)
   }
   where
     pick :: (RawFailoverConfig -> Maybe a) -> Maybe a
@@ -501,8 +501,8 @@ validateConfig cfg = clusterErrors
 
         fc = ccFailover cc
         fcErrors =
-          [ prefix <> "failover.never_promote host '" <> T.unpack h <> "' is not listed in nodes"
-          | h <- fcNeverPromote fc, h `notElem` hosts ]
+          [ prefix <> "failover.never_promote host '" <> T.unpack (unHostName (hiHostName h)) <> "' is not listed in nodes"
+          | h <- fcNeverPromote fc, unHostName (hiHostName h) `notElem` hosts ]
 
 -- | Return elements that appear more than once in the list.
 duplicates :: Ord a => [a] -> [a]
