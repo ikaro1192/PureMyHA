@@ -37,7 +37,7 @@ data CandidateInfo = CandidateInfo
 --   - nodes in the never_promote list
 -- Ranks by:
 --   1. candidate_priority config order (lower index = higher priority)
---   2. Executed_Gtid_Set (we use text length as a rough proxy; real comparison is done by MySQL)
+--   2. Executed_Gtid_Set (ranked by total transaction count via gtidTransactionCount)
 selectCandidate
   :: [HostInfo]             -- ^ hosts permanently excluded from promotion (never_promote list)
   -> Maybe Int              -- ^ max lag in seconds for auto-select candidates (Nothing = no limit)
