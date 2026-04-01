@@ -75,6 +75,21 @@ spec = do
       mct <- getClusterTopology tvar "test"
       fmap ctHealth mct `shouldBe` Just DeadSource
 
+    it "preserves ctSourceNodeId from previous topology" $ do
+      tvar <- newDaemonState
+      seedCluster tvar healthyTopo  -- ctSourceNodeId = Just (NodeId "db1" 3306)
+      atomically $ updateClusterTopology tvar emptyTopo  -- ctSourceNodeId = Nothing
+      mct <- getClusterTopology tvar "test"
+      fmap ctSourceNodeId mct `shouldBe` Just (Just (NodeId "db1" 3306))
+
+    it "preserves ctLastFailoverAt from previous topology" $ do
+      tvar <- newDaemonState
+      seedCluster tvar emptyTopo
+      atomically $ recordFailover tvar "test" fixedTime
+      atomically $ updateClusterTopology tvar emptyTopo  -- ctLastFailoverAt = Nothing
+      mct <- getClusterTopology tvar "test"
+      fmap ctLastFailoverAt mct `shouldBe` Just (Just fixedTime)
+
   describe "readDaemonState" $
     it "reads multiple clusters" $ do
       tvar <- newDaemonState
