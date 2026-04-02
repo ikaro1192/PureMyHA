@@ -27,6 +27,8 @@ module PureMyHA.Types
   , NodeStateView (..)
   , OperationResult (..)
   , ErrantGtidInfo (..)
+  , HookEvent (..)
+  , ClusterAction (..)
   ) where
 
 import Data.Aeson (FromJSON (..), ToJSON (..))
@@ -262,6 +264,17 @@ data OperationResult
   = OperationSuccess Text
   | OperationFailure Text
   deriving (Show, Eq, Generic)
+
+data HookEvent
+  = OnFailureDetection Text   -- ^ hookFailureType string ("DeadSource" etc.)
+  deriving (Eq, Show)
+
+data ClusterAction
+  = TriggerAutoFailover
+  | TriggerAutoFence
+  | TriggerEmergencyReplicaCheck
+  | FireHook HookEvent
+  deriving (Eq, Show)
 
 data ErrantGtidInfo = ErrantGtidInfo
   { egiNodeId     :: NodeId

@@ -14,6 +14,7 @@ module PureMyHA.Monitor.Worker
   , mergeNodeState
   , DriftCondition (..)
   , detectTopologyDrift
+  , decideClusterActions
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -406,6 +407,31 @@ enrichErrantGtids ns = do
                     Just (Right (Left _))         -> pure ns
                     Just (Right (Right errant))   -> pure ns { nsErrantGtids = errant }
 
+-- | Pure decision function: given the current config, previous topology snapshot,
+-- and the newly computed cluster health, return the list of actions to execute.
+-- This separates "what to do" (pure) from "how to do it" (IO).
+decideClusterActions :: FailoverConfig -> ClusterTopology -> NodeHealth -> [ClusterAction]
+decideClusterActions fc topo newHealth =
+  let transitioned    = ctHealth topo /= newHealth
+      observedHealthy = ctObservedHealthy topo || newHealth == Healthy
+      hookActions
+        | transitioned = case newHealth of
+            DeadSource               -> [FireHook (OnFailureDetection "DeadSource")]
+            InsufficientQuorum       -> [FireHook (OnFailureDetection "InsufficientQuorum")]
+            DeadSourceAndAllReplicas -> [FireHook (OnFailureDetection "DeadSourceAndAllReplicas")]
+            _                        -> []
+        | otherwise = []
+      failoverActions =
+        [ TriggerAutoFailover
+        | newHealth == DeadSource, fcAutoFailover fc, observedHealthy ]
+      fenceActions =
+        [ TriggerAutoFence
+        | transitioned, newHealth == SplitBrainSuspected, fcAutoFence fc, observedHealthy ]
+      replicaCheckActions =
+        [ TriggerEmergencyReplicaCheck
+        | transitioned, newHealth == UnreachableSource ]
+  in hookActions ++ failoverActions ++ fenceActions ++ replicaCheckActions
+
 recomputeClusterHealth :: App ()
 recomputeClusterHealth = do
   tvar <- asks envDaemonState
@@ -417,76 +443,38 @@ recomputeClusterHealth = do
     Nothing -> pure ()
     Just topo -> do
       let minReplicas = fcMinReplicasForFailover fc
-          newHealth = detectClusterHealth minReplicas (ctNodes topo)
-          newSrcId  = identifySource (Map.elems (ctNodes topo))
-      let transitioned     = ctHealth topo /= newHealth
-          observedHealthy  = ctObservedHealthy topo || newHealth == Healthy
-      -- Fire on_failure_detection hook on transition to a dead state
-      liftIO $ when transitioned $
-        case newHealth of
-          DeadSource -> do
-            mHooks <- readTVarIO (envHooks env)
-            ts <- getCurrentTimestamp
-            let hookEnv = HookEnv { hookClusterName  = ccName cc
-                                   , hookNewSource    = Nothing
-                                   , hookOldSource    = Nothing
-                                   , hookFailureType  = Just "DeadSource"
-                                   , hookTimestamp    = ts
-                                   , hookLagSeconds   = Nothing
-                                   , hookNode         = Nothing
-                                   , hookDriftType    = Nothing
-                                   , hookDriftDetails = Nothing
-                                   }
-            runHookFireForget mHooks hcOnFailureDetection hookEnv
-          InsufficientQuorum -> do
-            mHooks <- readTVarIO (envHooks env)
-            ts <- getCurrentTimestamp
-            let hookEnv = HookEnv { hookClusterName  = ccName cc
-                                   , hookNewSource    = Nothing
-                                   , hookOldSource    = Nothing
-                                   , hookFailureType  = Just "InsufficientQuorum"
-                                   , hookTimestamp    = ts
-                                   , hookLagSeconds   = Nothing
-                                   , hookNode         = Nothing
-                                   , hookDriftType    = Nothing
-                                   , hookDriftDetails = Nothing
-                                   }
-            runHookFireForget mHooks hcOnFailureDetection hookEnv
-          DeadSourceAndAllReplicas -> do
-            mHooks <- readTVarIO (envHooks env)
-            ts <- getCurrentTimestamp
-            let hookEnv = HookEnv { hookClusterName  = ccName cc
-                                   , hookNewSource    = Nothing
-                                   , hookOldSource    = Nothing
-                                   , hookFailureType  = Just "DeadSourceAndAllReplicas"
-                                   , hookTimestamp    = ts
-                                   , hookLagSeconds   = Nothing
-                                   , hookNode         = Nothing
-                                   , hookDriftType    = Nothing
-                                   , hookDriftDetails = Nothing
-                                   }
-            runHookFireForget mHooks hcOnFailureDetection hookEnv
-          _ -> pure ()
+          newHealth   = detectClusterHealth minReplicas (ctNodes topo)
+          newSrcId    = identifySource (Map.elems (ctNodes topo))
+          actions     = decideClusterActions fc topo newHealth
+      let transitioned    = ctHealth topo /= newHealth
+          observedHealthy = ctObservedHealthy topo || newHealth == Healthy
+      -- Fire on_failure_detection hooks (decided by decideClusterActions)
+      liftIO $ forM_ [ft | FireHook (OnFailureDetection ft) <- actions] $ \ft -> do
+        mHooks <- readTVarIO (envHooks env)
+        ts <- getCurrentTimestamp
+        let hookEnv = HookEnv { hookClusterName  = ccName cc
+                               , hookNewSource    = Nothing
+                               , hookOldSource    = Nothing
+                               , hookFailureType  = Just ft
+                               , hookTimestamp    = ts
+                               , hookLagSeconds   = Nothing
+                               , hookNode         = Nothing
+                               , hookDriftType    = Nothing
+                               , hookDriftDetails = Nothing
+                               }
+        runHookFireForget mHooks hcOnFailureDetection hookEnv
       -- Log all health transitions for observability
       when transitioned $ liftIO $ do
         logger <- readTVarIO (envLogger env)
         logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Cluster health: "
           <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
       liftIO $ atomically $ updateClusterHealthFields tvar (ccName cc) newHealth newSrcId observedHealthy
-      -- Trigger auto-failover when DeadSource (not just on transition, so resume-failover works)
-      -- The failover lock prevents concurrent execution; anti-flap block prevents repeated failovers
-      liftIO $ when (newHealth == DeadSource && fcAutoFailover fc && observedHealthy) $ do
-        _ <- async (runApp env runAutoFailover)
-        pure ()
-      -- Trigger auto-fence on first transition to SplitBrainSuspected only.
-      -- Firing only on transition prevents re-fencing after the operator runs `unfence`.
-      liftIO $ when (transitioned && newHealth == SplitBrainSuspected && fcAutoFence fc && observedHealthy) $ do
-        _ <- async (runApp env runAutoFence)
-        pure ()
-      -- Emergency re-check on first transition to UnreachableSource
-      liftIO $ when (transitioned && newHealth == UnreachableSource) $ do
-        _ <- async (runApp env emergencyReplicaCheck)
-        pure ()
+      -- Execute triggered actions (decided by decideClusterActions)
+      liftIO $ forM_ actions $ \action -> case action of
+        TriggerAutoFailover          -> do { _ <- async (runApp env runAutoFailover); pure () }
+        TriggerAutoFence             -> do { _ <- async (runApp env runAutoFence); pure () }
+        TriggerEmergencyReplicaCheck -> do { _ <- async (runApp env emergencyReplicaCheck); pure () }
+        FireHook _                   -> pure ()  -- already handled above
 
 -- | When UnreachableSource is first detected, immediately re-probe IOYes replicas
 -- to confirm whether they can actually reach the source (Orchestrator-style).

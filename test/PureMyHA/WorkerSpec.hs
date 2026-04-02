@@ -11,7 +11,7 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
 import PureMyHA.Env (runApp)
 import qualified Data.Set as Set
-import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv, mergeNodeState, detectTopologyDrift, DriftCondition (..))
+import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv, mergeNodeState, detectTopologyDrift, DriftCondition (..), decideClusterActions)
 import PureMyHA.Hook (HookEnv (..))
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
@@ -314,3 +314,79 @@ spec = do
       let new = healthySource { nsNodeId = nsNodeId healthyReplica, nsRole = Source }
           old = healthyReplica
       nsRole (mergeNodeState new old) `shouldBe` Replica
+
+  describe "decideClusterActions" $ do
+    let mkTopo :: NodeHealth -> Bool -> ClusterTopology
+        mkTopo health obs = ClusterTopology
+          { ctClusterName          = "test"
+          , ctNodes                = Map.empty
+          , ctSourceNodeId         = Nothing
+          , ctHealth               = health
+          , ctObservedHealthy      = obs
+          , ctRecoveryBlockedUntil = Nothing
+          , ctLastFailoverAt       = Nothing
+          , ctPaused               = False
+          , ctTopologyDrift        = False
+          }
+        fcWithFence = testFC { fcAutoFence = True }
+
+    -- FireHook tests (transition only)
+    it "fires OnFailureDetection hook on transition to DeadSource" $
+      decideClusterActions testFC (mkTopo Healthy True) DeadSource
+        `shouldContain` [FireHook (OnFailureDetection "DeadSource")]
+
+    it "fires OnFailureDetection hook on transition to InsufficientQuorum" $
+      decideClusterActions testFC (mkTopo Healthy True) InsufficientQuorum
+        `shouldContain` [FireHook (OnFailureDetection "InsufficientQuorum")]
+
+    it "fires OnFailureDetection hook on transition to DeadSourceAndAllReplicas" $
+      decideClusterActions testFC (mkTopo Healthy True) DeadSourceAndAllReplicas
+        `shouldContain` [FireHook (OnFailureDetection "DeadSourceAndAllReplicas")]
+
+    it "does not fire hook when health has not transitioned" $
+      filter isFireHook (decideClusterActions testFC (mkTopo DeadSource True) DeadSource)
+        `shouldBe` []
+
+    -- TriggerAutoFailover tests
+    it "triggers auto-failover on transition to DeadSource when enabled and observed healthy" $
+      decideClusterActions testFC (mkTopo Healthy True) DeadSource
+        `shouldContain` [TriggerAutoFailover]
+
+    it "triggers auto-failover even without transition (resume-failover)" $
+      decideClusterActions testFC (mkTopo DeadSource True) DeadSource
+        `shouldContain` [TriggerAutoFailover]
+
+    it "does not trigger auto-failover when disabled" $
+      decideClusterActions (testFC { fcAutoFailover = False }) (mkTopo Healthy True) DeadSource
+        `shouldNotContain` [TriggerAutoFailover]
+
+    it "does not trigger auto-failover when not observed healthy" $
+      decideClusterActions testFC (mkTopo (NodeUnreachable "err") False) DeadSource
+        `shouldNotContain` [TriggerAutoFailover]
+
+    -- TriggerAutoFence tests
+    it "triggers auto-fence on transition to SplitBrainSuspected when enabled and observed healthy" $
+      decideClusterActions fcWithFence (mkTopo Healthy True) SplitBrainSuspected
+        `shouldContain` [TriggerAutoFence]
+
+    it "does not trigger auto-fence without transition" $
+      decideClusterActions fcWithFence (mkTopo SplitBrainSuspected True) SplitBrainSuspected
+        `shouldNotContain` [TriggerAutoFence]
+
+    -- TriggerEmergencyReplicaCheck tests
+    it "triggers emergency replica check on transition to UnreachableSource" $
+      decideClusterActions testFC (mkTopo Healthy True) UnreachableSource
+        `shouldContain` [TriggerEmergencyReplicaCheck]
+
+    it "does not trigger emergency replica check without transition" $
+      decideClusterActions testFC (mkTopo UnreachableSource True) UnreachableSource
+        `shouldNotContain` [TriggerEmergencyReplicaCheck]
+
+    -- Empty actions
+    it "returns empty list when health stays Healthy" $
+      decideClusterActions testFC (mkTopo Healthy True) Healthy
+        `shouldBe` []
+
+isFireHook :: ClusterAction -> Bool
+isFireHook (FireHook _) = True
+isFireHook _            = False
