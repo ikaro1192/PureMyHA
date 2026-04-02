@@ -25,6 +25,7 @@ import PureMyHA.Config (ClusterConfig (..), DbCredentials, MonitoringConfig (..)
 import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getMonitoringConfig, getTLSConfig)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
+import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet)
 import PureMyHA.MySQL.Query (showReplicaStatus, showReplicas, getGtidExecuted, resolveHostInfo)
 import PureMyHA.Types
 import PureMyHA.Monitor.Detector (identifySource, detectClusterHealth)
@@ -147,14 +148,14 @@ probeNode mTls creds tMicros nid logger = do
 buildNodeStateFromProbe
   :: NodeId
   -> UTCTime
-  -> Either Text (Maybe ReplicaStatus, Text)
+  -> Either Text (Maybe ReplicaStatus, GtidSet)
   -> NodeState
 buildNodeStateFromProbe nid _ (Left err) = NodeState
   { nsNodeId              = nid
   , nsRole                = Replica
   , nsHealth              = NodeUnreachable err
   , nsProbeResult         = ProbeFailure err
-  , nsErrantGtids         = ""
+  , nsErrantGtids         = emptyGtidSet
   , nsPaused              = False
   , nsConsecutiveFailures = 0
   , nsFenced              = False
@@ -164,7 +165,7 @@ buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
   , nsRole                = if mRs == Nothing then Source else Replica  -- no replica status = potential source
   , nsHealth              = Healthy
   , nsProbeResult         = ProbeSuccess now mRs gtidExec
-  , nsErrantGtids         = ""
+  , nsErrantGtids         = emptyGtidSet
   , nsPaused              = False
   , nsConsecutiveFailures = 0
   , nsFenced              = False

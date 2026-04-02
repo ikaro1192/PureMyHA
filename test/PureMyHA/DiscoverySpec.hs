@@ -49,19 +49,19 @@ spec = do
       nsProbeResult ns `shouldBe` ProbeFailure "Connection refused"
 
     it "success with replica status sets role=Replica" $ do
-      let ns = buildNodeStateFromProbe testNid now (Right (Just testRs, "uuid1:1-100"))
+      let ns = buildNodeStateFromProbe testNid now (Right (Just testRs, unsafeParseGtidSet "uuid1:1-100"))
       nsRole ns `shouldBe` Replica
       prReplicaStatus (nsProbeResult ns) `shouldBe` Just testRs
       prLastSeen (nsProbeResult ns) `shouldBe` now
 
     it "success without replica status sets role=Source" $ do
-      let ns = buildNodeStateFromProbe testNid now (Right (Nothing, "uuid1:1-100"))
+      let ns = buildNodeStateFromProbe testNid now (Right (Nothing, unsafeParseGtidSet "uuid1:1-100"))
       nsRole ns `shouldBe` Source
       prReplicaStatus (nsProbeResult ns) `shouldBe` Nothing
 
     it "success records the provided timestamp in prLastSeen" $ do
       let t  = UTCTime (fromGregorian 2025 12 31) 3600
-          ns = buildNodeStateFromProbe testNid t (Right (Nothing, "uuid1:1-5"))
+          ns = buildNodeStateFromProbe testNid t (Right (Nothing, unsafeParseGtidSet "uuid1:1-5"))
       prLastSeen (nsProbeResult ns) `shouldBe` t
 
   describe "buildClusterTopology" $ do

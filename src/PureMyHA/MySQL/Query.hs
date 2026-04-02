@@ -41,6 +41,7 @@ import Database.MySQL.Base
 import Database.MySQL.Protocol.Packet (ERR (..))
 import qualified System.IO.Streams as S
 import PureMyHA.Config (DbCredentials (..), TLSConfig (..), TLSMode (..))
+import PureMyHA.MySQL.GTID (GtidSet, GtidEntry, emptyGtidSet, isEmptyGtidSet, parseGtidSet, renderGtidSet, renderGtidEntry)
 import PureMyHA.Types
 
 -- | Convert a lazy ByteString SQL to a Query
@@ -68,8 +69,8 @@ parseReplicaStatus kvs =
     , rsReplicaIORunning    = parseIORunning (look "Replica_IO_Running")
     , rsReplicaSQLRunning   = if look "Replica_SQL_Running" == "Yes" then SQLRunning else SQLStopped
     , rsSecondsBehindSource = maybeIntVal (raw "Seconds_Behind_Source")
-    , rsExecutedGtidSet     = look "Executed_Gtid_Set"
-    , rsRetrievedGtidSet    = look "Retrieved_Gtid_Set"
+    , rsExecutedGtidSet     = parseGtidOrEmpty (look "Executed_Gtid_Set")
+    , rsRetrievedGtidSet    = parseGtidOrEmpty (look "Retrieved_Gtid_Set")
     , rsLastIOError         = look "Last_IO_Error"
     , rsLastSQLError        = look "Last_SQL_Error"
     }
@@ -125,14 +126,20 @@ showReplicas conn defaultPort = do
   let deduped = nubBy (\a b -> a == b) nodes
   pure (deduped, expectedCount, allHosts)
 
+-- | Parse a GTID set from Text, returning emptyGtidSet on failure.
+parseGtidOrEmpty :: Text -> GtidSet
+parseGtidOrEmpty t = case parseGtidSet t of
+  Right gs -> gs
+  Left _   -> emptyGtidSet
+
 -- | Get @@GLOBAL.gtid_executed
-getGtidExecuted :: MySQLConn -> IO Text
+getGtidExecuted :: MySQLConn -> IO GtidSet
 getGtidExecuted conn = do
   (_, stream) <- query_ conn "SELECT @@GLOBAL.gtid_executed"
   rows <- consumeRows stream
   case rows of
-    ((v:_):_) -> pure (textVal v)
-    _         -> pure ""
+    ((v:_):_) -> pure (parseGtidOrEmpty (textVal v))
+    _         -> pure emptyGtidSet
 
 -- | Returns True when GET_SOURCE_PUBLIC_KEY=1 should be included in
 --   CHANGE REPLICATION SOURCE TO. This is needed when TLS is not in use;
@@ -204,19 +211,19 @@ clearSuperReadOnly conn = do
   pure ()
 
 -- | Use MySQL GTID_SUBTRACT to find errant GTIDs
-gtidSubtract :: MySQLConn -> Text -> Text -> IO Text
+gtidSubtract :: MySQLConn -> GtidSet -> GtidSet -> IO GtidSet
 gtidSubtract conn replicaGtid sourceGtid = do
-  let sql = "SELECT GTID_SUBTRACT('" <> replicaGtid <> "', '" <> sourceGtid <> "')"
+  let sql = "SELECT GTID_SUBTRACT('" <> renderGtidSet replicaGtid <> "', '" <> renderGtidSet sourceGtid <> "')"
   (_, stream) <- query_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
   rows <- consumeRows stream
   case rows of
-    [[v]] -> pure (textVal v)
-    _     -> pure ""
+    [[v]] -> pure (parseGtidOrEmpty (textVal v))
+    _     -> pure emptyGtidSet
 
 -- | Use MySQL GTID_SUBSET to check if replicaGtid is a subset of sourceGtid
-gtidSubset :: MySQLConn -> Text -> Text -> IO Bool
+gtidSubset :: MySQLConn -> GtidSet -> GtidSet -> IO Bool
 gtidSubset conn replicaGtid sourceGtid = do
-  let sql = "SELECT GTID_SUBSET('" <> replicaGtid <> "', '" <> sourceGtid <> "')"
+  let sql = "SELECT GTID_SUBSET('" <> renderGtidSet replicaGtid <> "', '" <> renderGtidSet sourceGtid <> "')"
   (_, stream) <- query_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
   rows <- consumeRows stream
   case rows of
@@ -224,9 +231,9 @@ gtidSubset conn replicaGtid sourceGtid = do
     _     -> pure False
 
 -- | Inject an empty transaction for a given GTID (for errant GTID repair)
-injectEmptyTransaction :: MySQLConn -> Text -> IO ()
+injectEmptyTransaction :: MySQLConn -> GtidEntry -> IO ()
 injectEmptyTransaction conn gtid = do
-  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 ("SET GTID_NEXT='" <> gtid <> "'"))))
+  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 ("SET GTID_NEXT='" <> renderGtidEntry gtid <> "'"))))
   _ <- execute_ conn "BEGIN"
   _ <- execute_ conn "COMMIT"
   _ <- execute_ conn "SET GTID_NEXT='AUTOMATIC'"
@@ -248,7 +255,7 @@ waitForRelayLogApply conn maxWaitSeconds = go 0
             Just rs -> do
               let retrieved = rsRetrievedGtidSet rs
                   executed  = rsExecutedGtidSet rs
-              if T.null retrieved || retrieved == executed
+              if isEmptyGtidSet retrieved || retrieved == executed
                 then pure True
                 else do
                   -- Check GTID_SUBSET(Retrieved_Gtid_Set, Executed_Gtid_Set)

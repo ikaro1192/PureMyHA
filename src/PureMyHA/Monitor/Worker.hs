@@ -35,6 +35,7 @@ import PureMyHA.Failover.Auto (runAutoFailover, runAutoFence)
 import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
 import PureMyHA.Logger (logDebug, logInfo, logWarn)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
+import PureMyHA.MySQL.GTID (emptyGtidSet)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.Discovery (discoverTopology, deduplicateByHostname)
 import PureMyHA.Topology.State
@@ -299,7 +300,7 @@ monitorNode nid = do
             , nsRole                = maybe Replica nsRole mOldNs  -- preserve existing role on error
             , nsHealth              = NodeUnreachable err
             , nsProbeResult         = ProbeFailure err
-            , nsErrantGtids         = ""
+            , nsErrantGtids         = emptyGtidSet
             , nsPaused              = False    -- actual value read atomically at write time
             , nsConsecutiveFailures = newFailures
             , nsFenced              = False    -- actual value read atomically at write time
@@ -310,7 +311,7 @@ monitorNode nid = do
             , nsRole                = if mRs == Nothing then Source else Replica
             , nsHealth              = Healthy
             , nsProbeResult         = ProbeSuccess now mRs gtidExec
-            , nsErrantGtids         = ""
+            , nsErrantGtids         = emptyGtidSet
             , nsPaused              = False    -- actual value read atomically at write time
             , nsConsecutiveFailures = 0
             , nsFenced              = False    -- actual value read atomically at write time
@@ -394,10 +395,10 @@ enrichErrantGtids ns = do
                 else do
                   let replicaGtid = case nsProbeResult ns of
                         ProbeSuccess{prReplicaStatus = Just rs} -> rsExecutedGtidSet rs
-                        _ -> ""
+                        _ -> emptyGtidSet
                       sourceGtid = case nsProbeResult srcNs of
                         ProbeSuccess{prGtidExecuted = g} -> g
-                        ProbeFailure{} -> ""
+                        ProbeFailure{} -> emptyGtidSet
                       ci = makeConnectInfo srcId creds
                   mResult <- withAsync (withNodeConn mTls ci $ \conn ->
                     gtidSubtract conn replicaGtid sourceGtid) $ \errantAsync ->

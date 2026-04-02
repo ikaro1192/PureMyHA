@@ -37,6 +37,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (UTCTime)
 import GHC.Generics (Generic)
+import PureMyHA.MySQL.GTID (GtidSet, renderGtidSet)
 
 newtype ClusterName = ClusterName { unClusterName :: Text }
   deriving (Eq, Ord, Show, Generic)
@@ -124,8 +125,8 @@ data ReplicaStatus = ReplicaStatus
   , rsReplicaIORunning    :: IORunning
   , rsReplicaSQLRunning   :: SQLThreadState
   , rsSecondsBehindSource :: Maybe Int
-  , rsExecutedGtidSet     :: Text
-  , rsRetrievedGtidSet    :: Text
+  , rsExecutedGtidSet     :: GtidSet
+  , rsRetrievedGtidSet    :: GtidSet
   , rsLastIOError         :: Text
   , rsLastSQLError        :: Text
   } deriving (Eq, Show, Generic)
@@ -140,7 +141,7 @@ data NodeHealth
   | ReplicaIOStopped Text        -- ^ IO thread = No (Text = last IO error, may be empty)
   | ReplicaIOConnecting          -- ^ IO thread = Connecting (not yet established)
   | ReplicaSQLStopped Text       -- ^ SQL thread stopped (Text = last SQL error)
-  | ErrantGtidDetected Text      -- ^ Errant GTIDs present (Text = GTID set)
+  | ErrantGtidDetected GtidSet    -- ^ Errant GTIDs present
   | NoSourceDetected             -- ^ Cluster-level: no node has source role
   | NeedsAttention Text          -- ^ Escape hatch for truly unexpected/unclassified conditions
   | Lagging Int
@@ -154,7 +155,7 @@ healthErrorMessage (ReplicaIOStopped msg)
   | otherwise  = Just ("IO error: " <> msg)
 healthErrorMessage ReplicaIOConnecting     = Just "Replica IO connecting"
 healthErrorMessage (ReplicaSQLStopped msg) = Just ("SQL error: " <> msg)
-healthErrorMessage (ErrantGtidDetected g)  = Just ("Errant GTIDs: " <> g)
+healthErrorMessage (ErrantGtidDetected g)  = Just ("Errant GTIDs: " <> renderGtidSet g)
 healthErrorMessage NoSourceDetected        = Just "No source detected"
 healthErrorMessage (NeedsAttention msg)    = Just msg
 healthErrorMessage (Lagging n)             = Just ("Lagging " <> T.pack (show n) <> "s")
@@ -188,7 +189,7 @@ data ProbeResult
   = ProbeSuccess
       { prLastSeen      :: UTCTime
       , prReplicaStatus :: Maybe ReplicaStatus
-      , prGtidExecuted  :: Text
+      , prGtidExecuted  :: GtidSet
       }
   | ProbeFailure
       { prConnectError  :: Text
@@ -200,7 +201,7 @@ data NodeState = NodeState
   , nsRole                :: NodeRole
   , nsHealth              :: NodeHealth
   , nsProbeResult         :: ProbeResult
-  , nsErrantGtids         :: Text
+  , nsErrantGtids         :: GtidSet
   , nsPaused              :: Bool
   , nsConsecutiveFailures :: Int    -- ^ Number of consecutive probe failures; resets to 0 on success
   , nsFenced              :: Bool   -- ^ True if super_read_only was set by auto-fence
@@ -249,7 +250,7 @@ data NodeStateView = NodeStateView
   , nsvIsSource     :: Bool
   , nsvHealth       :: NodeHealth
   , nsvLagSeconds   :: Maybe Int
-  , nsvErrantGtids  :: Text
+  , nsvErrantGtids  :: GtidSet
   , nsvConnectError :: Maybe Text
   , nsvPaused       :: Bool
   , nsvFenced       :: Bool
@@ -262,6 +263,6 @@ data OperationResult
 
 data ErrantGtidInfo = ErrantGtidInfo
   { egiNodeId     :: NodeId
-  , egiErrantGtid :: Text
+  , egiErrantGtid :: GtidSet
   } deriving (Show, Eq, Generic)
 

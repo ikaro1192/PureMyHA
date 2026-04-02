@@ -17,6 +17,7 @@ import Data.Time (UTCTime, formatTime, defaultTimeLocale)
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 import PureMyHA.IPC.Protocol
+import PureMyHA.MySQL.GTID (isEmptyGtidSet, renderGtidSet)
 import qualified PureMyHA.IPC.Socket as IPCSocket
 import PureMyHA.Types
 
@@ -93,7 +94,7 @@ printNode isSrc nsv = do
       lag    = case nsvLagSeconds nsv of
         Nothing -> ""
         Just s  -> " lag=" <> show s <> "s"
-      errant = if nsvErrantGtids nsv == "" then "" else " ERRANT_GTID"
+      errant = if isEmptyGtidSet (nsvErrantGtids nsv) then "" else " ERRANT_GTID"
       fenced = if nsvFenced nsv then " FENCED" else ""
   putStrLn $ prefix <> host <> " " <> status <> lag <> errant <> fenced
 
@@ -114,7 +115,7 @@ printErrantGtids False infos = do
 printErrantGtidInfo :: ErrantGtidInfo -> IO ()
 printErrantGtidInfo eg =
   TIO.putStrLn $ "  " <> unHostName (nodeHost (egiNodeId eg)) <> ":" <>
-    T.pack (show (nodePort (egiNodeId eg))) <> " -> " <> egiErrantGtid eg
+    T.pack (show (nodePort (egiNodeId eg))) <> " -> " <> renderGtidSet (egiErrantGtid eg)
 
 showHealth :: NodeHealth -> String
 showHealth Healthy                  = "Healthy"
@@ -126,7 +127,7 @@ showHealth (NodeUnreachable msg)    = "NodeUnreachable: " <> T.unpack msg
 showHealth (ReplicaIOStopped msg)   = "ReplicaIOStopped" <> if T.null msg then "" else ": " <> T.unpack msg
 showHealth ReplicaIOConnecting      = "ReplicaIOConnecting"
 showHealth (ReplicaSQLStopped msg)  = "ReplicaSQLStopped: " <> T.unpack msg
-showHealth (ErrantGtidDetected g)   = "ErrantGtidDetected: " <> T.unpack g
+showHealth (ErrantGtidDetected g)   = "ErrantGtidDetected: " <> T.unpack (renderGtidSet g)
 showHealth NoSourceDetected         = "NoSourceDetected"
 showHealth (NeedsAttention msg)     = "NeedsAttention: " <> T.unpack msg
 showHealth (Lagging n)              = "Lagging: " <> show n <> "s"
