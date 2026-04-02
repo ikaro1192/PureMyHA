@@ -14,8 +14,8 @@ import PureMyHA.MySQL.GTID (isEmptyGtidSet)
 import PureMyHA.Types
 
 -- | Detect the overall health of a cluster based on node states
-detectClusterHealth :: Map NodeId NodeState -> NodeHealth
-detectClusterHealth nodes
+detectClusterHealth :: Int -> Map NodeId NodeState -> NodeHealth
+detectClusterHealth minReplicas nodes
   | Map.null nodes = NeedsAttention "No nodes in cluster"
   | otherwise =
       let nodeList = Map.elems nodes
@@ -23,7 +23,7 @@ detectClusterHealth nodes
           reachableNodes = filter nsIsReachable nodeList
       in case sourceCandidates of
            [] -> detectNoSource nodeList reachableNodes
-           [_src] -> detectSingleSource nodeList reachableNodes _src
+           [_src] -> detectSingleSource minReplicas nodeList reachableNodes _src
            _  -> SplitBrainSuspected
 
 detectNoSource :: [NodeState] -> [NodeState] -> NodeHealth
@@ -32,24 +32,28 @@ detectNoSource nodeList reachableNodes
   | null nodeList       = NeedsAttention "No nodes configured"
   | otherwise           = NoSourceDetected
 
-detectSingleSource :: [NodeState] -> [NodeState] -> NodeState -> NodeHealth
-detectSingleSource nodeList reachableNodes src
+detectSingleSource :: Int -> [NodeState] -> [NodeState] -> NodeState -> NodeHealth
+detectSingleSource minReplicas nodeList reachableNodes src
   | null reachableNodes           = DeadSourceAndAllReplicas
-  | not (nsIsReachable src)       = detectDeadSource nodeList
+  | not (nsIsReachable src)       = detectDeadSource minReplicas nodeList
   | hasIoError nodeList           = NeedsAttention "Replica IO errors detected"
   | hasIoConnecting nodeList      = NeedsAttention "Replica IO thread not connected"
   | otherwise                     = Healthy
 
-detectDeadSource :: [NodeState] -> NodeHealth
-detectDeadSource nodeList =
+detectDeadSource :: Int -> [NodeState] -> NodeHealth
+detectDeadSource minReplicas nodeList =
   let replicas = filter (not . isSource) nodeList
       reachableReplicas = filter nsIsReachable replicas
       replicasWithIONo = filter replicaIOStopped reachableReplicas
+      unanimous = length replicasWithIONo == length reachableReplicas
+      quorum    = length replicasWithIONo >= minReplicas
   in if null reachableReplicas
        then DeadSourceAndAllReplicas
-       else if length replicasWithIONo == length reachableReplicas
-              then DeadSource
-              else UnreachableSource
+       else if not unanimous
+              then UnreachableSource
+              else if quorum
+                     then DeadSource
+                     else InsufficientQuorum
 
 replicaIOStopped :: NodeState -> Bool
 replicaIOStopped ns = case nsProbeResult ns of

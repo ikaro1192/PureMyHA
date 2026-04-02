@@ -44,7 +44,9 @@ global:
     consecutive_failures_for_dead: 3  # require N consecutive probe failures before marking a node dead (default: 3)
   failover:
     auto_failover: true
-    min_replicas_for_failover: 1
+    min_replicas_for_failover: 1  # quorum: minimum number of replicas that must unanimously confirm IO=No
+                                  # before declaring DeadSource. If fewer witnesses are available the cluster
+                                  # enters InsufficientQuorum and failover is withheld. Default: 1
     wait_for_relay_log_apply_timeout: 60s  # optional; default: 60s
     auto_fence: false              # optional; set to true to automatically fence split-brain nodes. Default: false
                                    # When enabled, on SplitBrainSuspected the node with the highest GTID count

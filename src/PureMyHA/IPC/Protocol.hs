@@ -39,6 +39,7 @@ instance FromJSON NodeId where
 instance ToJSON NodeHealth where
   toJSON Healthy                    = String "Healthy"
   toJSON DeadSource                 = String "DeadSource"
+  toJSON InsufficientQuorum         = String "InsufficientQuorum"
   toJSON UnreachableSource          = String "UnreachableSource"
   toJSON DeadSourceAndAllReplicas   = String "DeadSourceAndAllReplicas"
   toJSON SplitBrainSuspected        = String "SplitBrainSuspected"
@@ -54,6 +55,7 @@ instance ToJSON NodeHealth where
 instance FromJSON NodeHealth where
   parseJSON (String "Healthy")                  = pure Healthy
   parseJSON (String "DeadSource")               = pure DeadSource
+  parseJSON (String "InsufficientQuorum")       = pure InsufficientQuorum
   parseJSON (String "UnreachableSource")        = pure UnreachableSource
   parseJSON (String "DeadSourceAndAllReplicas") = pure DeadSourceAndAllReplicas
   parseJSON (String "SplitBrainSuspected")      = pure SplitBrainSuspected

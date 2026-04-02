@@ -210,15 +210,18 @@ clearSuperReadOnly conn = do
   _ <- execute_ conn "SET GLOBAL read_only = OFF"
   pure ()
 
--- | Use MySQL GTID_SUBTRACT to find errant GTIDs
-gtidSubtract :: MySQLConn -> GtidSet -> GtidSet -> IO GtidSet
-gtidSubtract conn replicaGtid sourceGtid = do
-  let sql = "SELECT GTID_SUBTRACT('" <> renderGtidSet replicaGtid <> "', '" <> renderGtidSet sourceGtid <> "')"
+-- | Use MySQL GTID_SUBTRACT to find errant GTIDs.
+-- The source side uses @@GLOBAL.gtid_executed queried live from the source
+-- connection, so the result is always fresh regardless of the cached topology.
+gtidSubtract :: MySQLConn -> GtidSet -> IO GtidSet
+gtidSubtract conn replicaGtid = do
+  let sql = "SELECT GTID_SUBTRACT('" <> renderGtidSet replicaGtid <> "', @@GLOBAL.gtid_executed)"
   (_, stream) <- query_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
   rows <- consumeRows stream
   case rows of
     [[v]] -> pure (parseGtidOrEmpty (textVal v))
     _     -> pure emptyGtidSet
+
 
 -- | Use MySQL GTID_SUBSET to check if replicaGtid is a subset of sourceGtid
 gtidSubset :: MySQLConn -> GtidSet -> GtidSet -> IO Bool

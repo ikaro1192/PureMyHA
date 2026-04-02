@@ -67,18 +67,18 @@ spec = do
   describe "buildClusterTopology" $ do
 
     it "healthy cluster has Healthy health and correct source" $ do
-      let topo = buildClusterTopology "prod" clusterHealthy
+      let topo = buildClusterTopology 1 "prod" clusterHealthy
       ctHealth          topo `shouldBe` Healthy
       ctSourceNodeId    topo `shouldBe` Just (NodeId "db1" 3306)
       ctObservedHealthy topo `shouldBe` True
 
     it "cluster with dead source has DeadSource health" $ do
-      let topo = buildClusterTopology "prod" clusterWithDeadSource
+      let topo = buildClusterTopology 1 "prod" clusterWithDeadSource
       ctHealth          topo `shouldBe` DeadSource
       ctObservedHealthy topo `shouldBe` False
 
     it "empty cluster has NeedsAttention health and no source" $ do
-      let topo = buildClusterTopology "empty" Map.empty
+      let topo = buildClusterTopology 1 "empty" Map.empty
       ctSourceNodeId topo `shouldBe` Nothing
       case ctHealth topo of
         NeedsAttention _ -> pure ()
@@ -117,12 +117,12 @@ spec = do
             [ (NodeId "db1" 3306, unreachableNode (NodeId "db1" 3306))
             , (NodeId "db2" 3306, unreachableNode (NodeId "db2" 3306))
             ]
-          topo = buildClusterTopology "prod" nodes
+          topo = buildClusterTopology 1 "prod" nodes
       ctHealth topo `shouldBe` DeadSourceAndAllReplicas
 
     it "single source only is Healthy" $ do
       let nodes = Map.singleton (NodeId "db1" 3306) healthySource
-          topo = buildClusterTopology "prod" nodes
+          topo = buildClusterTopology 1 "prod" nodes
       ctHealth topo `shouldBe` Healthy
       ctSourceNodeId topo `shouldBe` Just (NodeId "db1" 3306)
 
@@ -131,7 +131,7 @@ spec = do
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db3" 3306, replicaWithErrantGtid)
             ]
-          topo = buildClusterTopology "prod" nodes
+          topo = buildClusterTopology 1 "prod" nodes
       ctHealth topo `shouldBe` Healthy
 
   describe "buildInitialTopology" $ do

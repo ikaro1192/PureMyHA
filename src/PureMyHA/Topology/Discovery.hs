@@ -21,7 +21,7 @@ import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.List.NonEmpty as NE
 import System.Timeout (timeout)
-import PureMyHA.Config (ClusterConfig (..), DbCredentials, MonitoringConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), TLSConfig)
+import PureMyHA.Config (ClusterConfig (..), DbCredentials, FailoverConfig (..), MonitoringConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), TLSConfig)
 import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getMonitoringConfig, getTLSConfig)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
@@ -42,20 +42,22 @@ discoverTopology = do
   seedNodes <- liftIO $ mapM (\nc -> do
     hi <- resolveHostInfo (HostName (ncHost nc))
     pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
+  fc         <- asks envFailover
   nodeStates <- liftIO $ discoverAll mTls creds tMicros (Set.fromList seedNodes) Set.empty Map.empty logger
-  pure (buildClusterTopology (ccName cc) nodeStates)
+  pure (buildClusterTopology (fcMinReplicasForFailover fc) (ccName cc) nodeStates)
 
 -- | Build a ClusterTopology from discovered node states (pure)
 buildClusterTopology
-  :: ClusterName
+  :: Int           -- ^ min_replicas_for_failover (quorum threshold)
+  -> ClusterName
   -> Map NodeId NodeState
   -> ClusterTopology
-buildClusterTopology name nodeStates =
+buildClusterTopology minReplicas name nodeStates =
   let sourceId    = identifySource (Map.elems nodeStates)
       nodeStates' = case sourceId of
         Nothing  -> nodeStates
         Just sid -> Map.adjust (\ns -> ns { nsRole = Source }) sid nodeStates
-      health      = detectClusterHealth nodeStates'
+      health      = detectClusterHealth minReplicas nodeStates'
   in ClusterTopology
        { ctClusterName          = name
        , ctNodes                = nodeStates'

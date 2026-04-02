@@ -396,12 +396,9 @@ enrichErrantGtids ns = do
                   let replicaGtid = case nsProbeResult ns of
                         ProbeSuccess{prReplicaStatus = Just rs} -> rsExecutedGtidSet rs
                         _ -> emptyGtidSet
-                      sourceGtid = case nsProbeResult srcNs of
-                        ProbeSuccess{prGtidExecuted = g} -> g
-                        ProbeFailure{} -> emptyGtidSet
                       ci = makeConnectInfo srcId creds
                   mResult <- withAsync (withNodeConn mTls ci $ \conn ->
-                    gtidSubtract conn replicaGtid sourceGtid) $ \errantAsync ->
+                    gtidSubtract conn replicaGtid) $ \errantAsync ->
                       timeout tMicros (waitCatch errantAsync)
                   case mResult of
                     Nothing                       -> pure ns
@@ -419,7 +416,8 @@ recomputeClusterHealth = do
   case mTopo of
     Nothing -> pure ()
     Just topo -> do
-      let newHealth = detectClusterHealth (ctNodes topo)
+      let minReplicas = fcMinReplicasForFailover fc
+          newHealth = detectClusterHealth minReplicas (ctNodes topo)
           newSrcId  = identifySource (Map.elems (ctNodes topo))
       let transitioned     = ctHealth topo /= newHealth
           observedHealthy  = ctObservedHealthy topo || newHealth == Healthy
@@ -433,6 +431,20 @@ recomputeClusterHealth = do
                                    , hookNewSource    = Nothing
                                    , hookOldSource    = Nothing
                                    , hookFailureType  = Just "DeadSource"
+                                   , hookTimestamp    = ts
+                                   , hookLagSeconds   = Nothing
+                                   , hookNode         = Nothing
+                                   , hookDriftType    = Nothing
+                                   , hookDriftDetails = Nothing
+                                   }
+            runHookFireForget mHooks hcOnFailureDetection hookEnv
+          InsufficientQuorum -> do
+            mHooks <- readTVarIO (envHooks env)
+            ts <- getCurrentTimestamp
+            let hookEnv = HookEnv { hookClusterName  = ccName cc
+                                   , hookNewSource    = Nothing
+                                   , hookOldSource    = Nothing
+                                   , hookFailureType  = Just "InsufficientQuorum"
                                    , hookTimestamp    = ts
                                    , hookLagSeconds   = Nothing
                                    , hookNode         = Nothing

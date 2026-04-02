@@ -11,27 +11,27 @@ spec :: Spec
 spec = do
   describe "detectClusterHealth" $ do
     it "returns Healthy for a healthy cluster" $
-      detectClusterHealth clusterHealthy `shouldBe` Healthy
+      detectClusterHealth 1 clusterHealthy `shouldBe` Healthy
 
     it "returns DeadSource when source is down and replicas show IO=No" $
-      detectClusterHealth clusterWithDeadSource `shouldBe` DeadSource
+      detectClusterHealth 1 clusterWithDeadSource `shouldBe` DeadSource
 
     it "returns DeadSourceAndAllReplicas when all nodes are unreachable" $ do
       let allDead = Map.fromList
             [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
             , (NodeId "db2" 3306, unreachableNode (NodeId "db2" 3306))
             ]
-      detectClusterHealth allDead `shouldBe` DeadSourceAndAllReplicas
+      detectClusterHealth 1 allDead `shouldBe` DeadSourceAndAllReplicas
 
     it "returns SplitBrainSuspected with multiple sources" $ do
       let twoSources = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db2" 3306, healthySource { nsNodeId = NodeId "db2" 3306 })
             ]
-      detectClusterHealth twoSources `shouldBe` SplitBrainSuspected
+      detectClusterHealth 1 twoSources `shouldBe` SplitBrainSuspected
 
     it "returns NeedsAttention for empty cluster" $
-      detectClusterHealth Map.empty `shouldSatisfy` isNeedsAttention
+      detectClusterHealth 1 Map.empty `shouldSatisfy` isNeedsAttention
 
     it "returns DeadSource when source is unreachable and replica IO is Connecting" $ do
       let cluster = Map.fromList
@@ -47,7 +47,7 @@ spec = do
                 , nsFenced              = False
                 })
             ]
-      detectClusterHealth cluster `shouldBe` DeadSource
+      detectClusterHealth 1 cluster `shouldBe` DeadSource
 
     it "returns UnreachableSource when source is unreachable but replica IO is still Yes" $ do
       let cluster = Map.fromList
@@ -63,13 +63,40 @@ spec = do
                 , nsFenced              = False
                 })
             ]
-      detectClusterHealth cluster `shouldBe` UnreachableSource
+      detectClusterHealth 1 cluster `shouldBe` UnreachableSource
 
     it "returns NoSourceDetected when no node is marked as source" $ do
       let cluster = Map.fromList
             [ (NodeId "db1" 3306, healthySource { nsRole = Replica })
             ]
-      detectClusterHealth cluster `shouldBe` NoSourceDetected
+      detectClusterHealth 1 cluster `shouldBe` NoSourceDetected
+
+  describe "detectClusterHealth quorum" $ do
+    it "returns InsufficientQuorum when unanimous IO=No but only 1 witness and minReplicas=2" $ do
+      let cluster = Map.fromList
+            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
+            , (NodeId "db2" 3306, mkNodeState (NodeId "db2" 3306) Replica (Just (mkReplicaStatus "db1" 3306 IONo "")) Healthy)
+            ]
+      detectClusterHealth 2 cluster `shouldBe` InsufficientQuorum
+
+    it "returns DeadSource when 2 witnesses meet minReplicas=2 and all IO=No" $ do
+      let cluster = Map.fromList
+            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
+            , (NodeId "db2" 3306, mkNodeState (NodeId "db2" 3306) Replica (Just (mkReplicaStatus "db1" 3306 IONo "")) Healthy)
+            , (NodeId "db3" 3306, mkNodeState (NodeId "db3" 3306) Replica (Just (mkReplicaStatus "db1" 3306 IONo "")) Healthy)
+            ]
+      detectClusterHealth 2 cluster `shouldBe` DeadSource
+
+    it "returns UnreachableSource when not unanimous (1 of 3 replicas with IO=No, minReplicas=1)" $ do
+      let cluster = Map.fromList
+            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
+            , (NodeId "db2" 3306, mkNodeState (NodeId "db2" 3306) Replica (Just (mkReplicaStatus "db1" 3306 IONo "")) Healthy)
+            , (NodeId "db3" 3306, mkNodeState (NodeId "db3" 3306) Replica (Just (mkReplicaStatus "db1" 3306 IOYes "")) Healthy)
+            ]
+      detectClusterHealth 1 cluster `shouldBe` UnreachableSource
+
+    it "returns DeadSource with minReplicas=1 (default backward-compatible behavior)" $
+      detectClusterHealth 1 clusterWithDeadSource `shouldBe` DeadSource
 
   describe "detectNodeHealth" $ do
     it "returns NodeUnreachable when connect error is present" $ do
