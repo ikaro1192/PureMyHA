@@ -396,12 +396,9 @@ enrichErrantGtids ns = do
                   let replicaGtid = case nsProbeResult ns of
                         ProbeSuccess{prReplicaStatus = Just rs} -> rsExecutedGtidSet rs
                         _ -> emptyGtidSet
-                      sourceGtid = case nsProbeResult srcNs of
-                        ProbeSuccess{prGtidExecuted = g} -> g
-                        ProbeFailure{} -> emptyGtidSet
                       ci = makeConnectInfo srcId creds
                   mResult <- withAsync (withNodeConn mTls ci $ \conn ->
-                    gtidSubtract conn replicaGtid sourceGtid) $ \errantAsync ->
+                    gtidSubtract conn replicaGtid) $ \errantAsync ->
                       timeout tMicros (waitCatch errantAsync)
                   case mResult of
                     Nothing                       -> pure ns
