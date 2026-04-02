@@ -20,11 +20,11 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import PureMyHA.Types
 import PureMyHA.Config (CandidatePriority (..))
-import PureMyHA.MySQL.GTID (gtidTransactionCount)
+import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet, isEmptyGtidSet, gtidTransactionCount)
 
 data CandidateInfo = CandidateInfo
   { ciNodeId       :: NodeId
-  , ciExecutedGtid :: Text
+  , ciExecutedGtid :: GtidSet
   , ciPriorityRank :: Int  -- lower is better
   } deriving (Show, Eq)
 
@@ -95,7 +95,7 @@ exceedsMaxLag (Just maxLag) ns = case nsProbeResult ns of
   _ -> False
 
 hasErrantGtid :: NodeState -> Bool
-hasErrantGtid ns = not (T.null (nsErrantGtids ns))
+hasErrantGtid ns = not (isEmptyGtidSet (nsErrantGtids ns))
 
 hasConnectError :: NodeState -> Bool
 hasConnectError ns = case nsProbeResult ns of
@@ -110,7 +110,7 @@ toCandidateInfo priorities ns = CandidateInfo
   { ciNodeId       = nsNodeId ns
   , ciExecutedGtid = case nsProbeResult ns of
       ProbeSuccess{prReplicaStatus = Just rs} -> rsExecutedGtidSet rs
-      _ -> ""
+      _ -> emptyGtidSet
   , ciPriorityRank = priorityRank priorities (nodeHost (nsNodeId ns))
   }
 
@@ -146,6 +146,6 @@ toSourceCandidateInfo priorities ns = CandidateInfo
   { ciNodeId       = nsNodeId ns
   , ciExecutedGtid = case nsProbeResult ns of
       ProbeSuccess{prGtidExecuted = g} -> g
-      _                                -> ""
+      _                                -> emptyGtidSet
   , ciPriorityRank = priorityRank priorities (nodeHost (nsNodeId ns))
   }

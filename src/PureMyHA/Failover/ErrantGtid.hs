@@ -1,6 +1,5 @@
 module PureMyHA.Failover.ErrantGtid
   ( runFixErrantGtid
-  , expandGtidEntry
   , collectErrantGtids
   ) where
 
@@ -11,26 +10,17 @@ import Data.Bifunctor (first)
 import Data.List (nub)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
-import qualified Data.Text as T
 import PureMyHA.Config (ClusterConfig (..))
 import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getTLSConfig)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
-import PureMyHA.MySQL.GTID (GtidEntry (..), GtidInterval (..), GtidUUID (..), TransactionId (..), parseGtidIntervals)
+import PureMyHA.MySQL.GTID (GtidEntry (..), GtidSet (..), isEmptyGtidSet, expandGtidEntry)
 import PureMyHA.MySQL.Query (injectEmptyTransaction)
 import PureMyHA.Topology.State (getClusterTopology)
 import PureMyHA.Types
 
--- | Expand one GtidEntry to individual "uuid:N" strings
-expandGtidEntry :: GtidEntry -> [Text]
-expandGtidEntry GtidEntry{..} =
-  [ getGtidUUID geUuid <> ":" <> T.pack (show (getTransactionId n))
-  | GtidInterval{..} <- geIntervals
-  , n <- [giStart .. giEnd]
-  ]
-
--- | Collect and deduplicate individual GTID strings from multiple replicas' parsed entries
-collectErrantGtids :: [[GtidEntry]] -> [Text]
-collectErrantGtids = nub . concatMap (concatMap expandGtidEntry)
+-- | Collect and deduplicate individual GtidEntries from multiple GtidSets
+collectErrantGtids :: [GtidSet] -> [GtidEntry]
+collectErrantGtids = nub . concatMap (concatMap expandGtidEntry . getGtidEntries)
 
 -- | Fix errant GTIDs by injecting empty transactions on the source
 runFixErrantGtid :: App (Either Text ())
@@ -47,14 +37,11 @@ runFixErrantGtid = do
       maybe (Left "No source node found in cluster topology") Right
         (ctSourceNodeId topo)
     let allNodes    = Map.elems (ctNodes topo)
-        errantNodes = filter (\ns -> nsErrantGtids ns /= "") allNodes
+        errantNodes = filter (not . isEmptyGtidSet . nsErrantGtids) allNodes
     case errantNodes of
       [] -> pure ()
       _  -> do
-        entryLists <- ExceptT . pure $
-          first (\e -> "GTID parse error: " <> T.pack e) $
-            traverse (parseGtidIntervals . nsErrantGtids) errantNodes
-        let gtids = collectErrantGtids entryLists
+        let gtids = collectErrantGtids (map nsErrantGtids errantNodes)
             srcCi = makeConnectInfo srcId creds
         ExceptT $
           first ("Connection to source failed: " <>) <$>

@@ -4,6 +4,7 @@ import qualified Data.Map.Strict as Map
 import Test.Hspec
 import Fixtures
 import PureMyHA.Monitor.Detector
+import PureMyHA.MySQL.GTID (emptyGtidSet)
 import PureMyHA.Types
 
 spec :: Spec
@@ -39,8 +40,8 @@ spec = do
                 { nsNodeId              = NodeId "db2" 3306
                 , nsRole                = Replica
                 , nsHealth              = Healthy
-                , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOConnecting "")) ""
-                , nsErrantGtids         = ""
+                , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOConnecting "")) emptyGtidSet
+                , nsErrantGtids         = emptyGtidSet
                 , nsPaused              = False
                 , nsConsecutiveFailures = 0
                 , nsFenced              = False
@@ -55,8 +56,8 @@ spec = do
                 { nsNodeId              = NodeId "db2" 3306
                 , nsRole                = Replica
                 , nsHealth              = Healthy
-                , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "")) ""
-                , nsErrantGtids         = ""
+                , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "")) emptyGtidSet
+                , nsErrantGtids         = emptyGtidSet
                 , nsPaused              = False
                 , nsConsecutiveFailures = 0
                 , nsFenced              = False
@@ -76,8 +77,9 @@ spec = do
       detectNodeHealth Nothing ns `shouldBe` NodeUnreachable "refused"
 
     it "returns ErrantGtidDetected when errant GTIDs are present" $ do
-      let ns = healthySource { nsErrantGtids = "uuid3:1" }
-      detectNodeHealth Nothing ns `shouldBe` ErrantGtidDetected "uuid3:1"
+      let gs = unsafeParseGtidSet "uuid3:1"
+          ns = healthySource { nsErrantGtids = gs }
+      detectNodeHealth Nothing ns `shouldBe` ErrantGtidDetected gs
 
     it "returns Healthy for a source node with no errors" $
       detectNodeHealth Nothing healthySource `shouldBe` Healthy

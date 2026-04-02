@@ -10,6 +10,7 @@ import qualified Data.Map.Strict as Map
 import Data.List (nub)
 import Data.Maybe (mapMaybe)
 import qualified Data.Text as T
+import PureMyHA.MySQL.GTID (isEmptyGtidSet)
 import PureMyHA.Types
 
 -- | Detect the overall health of a cluster based on node states
@@ -70,7 +71,7 @@ detectNodeHealth :: Maybe Int -> NodeState -> NodeHealth
 detectNodeHealth mLagThreshold ns = case nsProbeResult ns of
   ProbeFailure{prConnectError = e} -> NodeUnreachable e
   ProbeSuccess{prReplicaStatus = mrs}
-    | not (T.null (nsErrantGtids ns)) ->
+    | not (isEmptyGtidSet (nsErrantGtids ns)) ->
         ErrantGtidDetected (nsErrantGtids ns)
     | Just rs <- mrs -> detectReplicaHealth mLagThreshold rs
     | otherwise      -> Healthy  -- source or standalone

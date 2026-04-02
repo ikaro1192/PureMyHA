@@ -10,6 +10,8 @@ import qualified Network.Socket.ByteString as NSB
 import Test.Hspec
 import PureMyHA.IPC.Protocol
 import PureMyHA.IPC.Socket (recvLine, maxLineLength)
+import Data.Text (Text)
+import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet, parseGtidSet)
 import PureMyHA.Types
 
 spec :: Spec
@@ -82,7 +84,7 @@ spec = do
         `shouldBe` Just (RespOperation (OperationFailure "error"))
 
     it "round-trips RespErrantGtids" $ do
-      let info = ErrantGtidInfo (NodeId "db3" 3306) "uuid3:1"
+      let info = ErrantGtidInfo (NodeId "db3" 3306) (unsafeParseGtidSet' "uuid3:1")
       roundTripResp (RespErrantGtids [info])
         `shouldBe` Just (RespErrantGtids [info])
 
@@ -121,8 +123,9 @@ spec = do
         `shouldBe` Just (ReplicaSQLStopped "duplicate key")
 
     it "round-trips ErrantGtidDetected" $
-      roundTripHealth (ErrantGtidDetected "uuid3:1")
-        `shouldBe` Just (ErrantGtidDetected "uuid3:1")
+      let gs = unsafeParseGtidSet' "uuid3:1"
+      in roundTripHealth (ErrantGtidDetected gs)
+        `shouldBe` Just (ErrantGtidDetected gs)
 
     it "round-trips NoSourceDetected" $
       roundTripHealth NoSourceDetected
@@ -176,19 +179,19 @@ spec = do
       (decode (BLC.pack "{\"type\":\"foobar\",\"data\":[]}") :: Maybe Response) `shouldBe` Nothing
 
     it "round-trips RespTopology" $ do
-      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False False]
+      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) emptyGtidSet Nothing False False]
       roundTripResp (RespTopology [view]) `shouldBe` Just (RespTopology [view])
 
   describe "NodeStateView fenced field" $ do
     it "round-trips NodeStateView with fenced=True" $ do
-      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False True]
+      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) emptyGtidSet Nothing False True]
       roundTripResp (RespTopology [view]) `shouldBe` Just (RespTopology [view])
 
     it "defaults fenced to False when field is absent" $ do
       let json = BLC.pack
             "{\"type\":\"topology\",\"data\":[{\"clusterName\":\"test\",\"nodes\":[{\"host\":\"db1\",\"port\":3306,\"isSource\":true,\"health\":\"Healthy\",\"lagSeconds\":0,\"errantGtids\":\"\",\"connectError\":null,\"paused\":false}]}]}"
       let expected = RespTopology [ClusterTopologyView "test"
-                       [NodeStateView "db1" 3306 True Healthy (Just 0) "" Nothing False False]]
+                       [NodeStateView "db1" 3306 True Healthy (Just 0) emptyGtidSet Nothing False False]]
       (decode json :: Maybe Response) `shouldBe` Just expected
 
   describe "NodeHealth FromJSON edge cases" $ do
@@ -252,3 +255,8 @@ roundTripResp = decode . encode
 
 roundTripHealth :: NodeHealth -> Maybe NodeHealth
 roundTripHealth = decode . encode
+
+unsafeParseGtidSet' :: Text -> GtidSet
+unsafeParseGtidSet' t = case parseGtidSet t of
+  Right gs -> gs
+  Left err -> error $ "unsafeParseGtidSet': " <> err

@@ -2,10 +2,10 @@ module PureMyHA.CloneSpec (spec) where
 
 import qualified Data.Map.Strict as Map
 import Data.Either (isLeft)
-import Data.Text (Text)
 import Test.Hspec
 import Fixtures
 import PureMyHA.Clone
+import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.Types
 
 spec :: Spec
@@ -27,12 +27,12 @@ spec = do
     let replica2 = healthyReplica
           { nsProbeResult = ProbeSuccess fixedTime
               (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-50"))
-              "uuid1:1-50"
+              (unsafeParseGtidSet "uuid1:1-50")
           }
         replica3 = mkNodeState (NodeId "db3" 3306) Replica
             (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100"))
             Healthy
-          `withGtid` "uuid1:1-100"
+          `withGtid` unsafeParseGtidSet "uuid1:1-100"
 
     it "auto-selects the replica with the highest GTID transaction count" $ do
       let nodes = Map.fromList
@@ -78,7 +78,7 @@ spec = do
       selectDonorAuto nodes (NodeId "db2" 3306) `shouldSatisfy` isLeft
 
 -- | Helper to set prGtidExecuted on a NodeState
-withGtid :: NodeState -> Text -> NodeState
+withGtid :: NodeState -> GtidSet -> NodeState
 withGtid ns g = ns { nsProbeResult = setGtid (nsProbeResult ns) }
   where
     setGtid (ProbeSuccess t rs _) = ProbeSuccess t rs g

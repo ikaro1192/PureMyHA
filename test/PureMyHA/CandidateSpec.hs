@@ -5,6 +5,7 @@ import Test.Hspec
 import Fixtures
 import PureMyHA.Config (CandidatePriority (..))
 import PureMyHA.Failover.Candidate
+import PureMyHA.MySQL.GTID (emptyGtidSet)
 import PureMyHA.Types
 
 spec :: Spec
@@ -86,7 +87,7 @@ spec = do
     it "selects replica with higher GTID score when no priority set" $ do
       let replicaLongGtid = healthyReplica
             { nsNodeId = NodeId "db3" 3306
-            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) ""
+            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) emptyGtidSet
             }
           nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
@@ -111,7 +112,7 @@ spec = do
       let slowReplica = healthyReplica
             { nsNodeId     = NodeId "db3" 3306
             , nsProbeResult = ProbeSuccess fixedTime
-                (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 60 }) ""
+                (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 60 }) emptyGtidSet
             }
           nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
@@ -123,7 +124,7 @@ spec = do
     it "returns Left when all replicas exceed maxLag" $ do
       let slowReplica = healthyReplica
             { nsProbeResult = ProbeSuccess fixedTime
-                (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 60 }) ""
+                (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 60 }) emptyGtidSet
             }
           nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
@@ -149,7 +150,7 @@ spec = do
     it "orders by GTID score descending when no priority" $ do
       let replicaLongGtid = healthyReplica
             { nsNodeId = NodeId "db3" 3306
-            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) ""
+            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) emptyGtidSet
             }
       let result = rankCandidates [] Nothing [healthyReplica, replicaLongGtid] []
       ciNodeId (head result) `shouldBe` NodeId "db3" 3306
@@ -157,7 +158,7 @@ spec = do
     it "priority order takes precedence over GTID score" $ do
       let replicaLongGtid = healthyReplica
             { nsNodeId = NodeId "db3" 3306
-            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) ""
+            , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) emptyGtidSet
             }
           -- db2 has lower GTID but appears first in priority
           priorities = [CandidatePriority "db2"]
@@ -192,14 +193,14 @@ spec = do
     it "returns False when lag exceeds maxLag" $ do
       let slowReplica = healthyReplica
             { nsProbeResult = ProbeSuccess fixedTime
-                (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 60 }) ""
+                (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 60 }) emptyGtidSet
             }
       isEligibleCandidate [] (Just 30) slowReplica `shouldBe` False
 
     it "returns True when lag is exactly at maxLag" $ do
       let replicaAtLimit = healthyReplica
             { nsProbeResult = ProbeSuccess fixedTime
-                (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 30 }) ""
+                (Just (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 30 }) emptyGtidSet
             }
       isEligibleCandidate [] (Just 30) replicaAtLimit `shouldBe` True
 
@@ -278,19 +279,16 @@ spec = do
 
   describe "gtidScore" $ do
     it "returns 0 for empty GTID" $
-      gtidScore (CandidateInfo (NodeId "db2" 3306) "" 0) `shouldBe` 0
+      gtidScore (CandidateInfo (NodeId "db2" 3306) emptyGtidSet 0) `shouldBe` 0
 
     it "returns transaction count for a range" $
-      gtidScore (CandidateInfo (NodeId "db2" 3306) "uuid1:1-100" 0) `shouldBe` 100
+      gtidScore (CandidateInfo (NodeId "db2" 3306) (unsafeParseGtidSet "uuid1:1-100") 0) `shouldBe` 100
 
     it "returns 1 for a single transaction" $
-      gtidScore (CandidateInfo (NodeId "db2" 3306) "uuid1:5" 0) `shouldBe` 1
-
-    it "returns 0 for invalid GTID" $
-      gtidScore (CandidateInfo (NodeId "db2" 3306) ":invalid" 0) `shouldBe` 0
+      gtidScore (CandidateInfo (NodeId "db2" 3306) (unsafeParseGtidSet "uuid1:5") 0) `shouldBe` 1
 
     it "sums transactions across multiple UUIDs" $
-      gtidScore (CandidateInfo (NodeId "db2" 3306) "uuid1:1-100,uuid2:1-3" 0) `shouldBe` 103
+      gtidScore (CandidateInfo (NodeId "db2" 3306) (unsafeParseGtidSet "uuid1:1-100,uuid2:1-3") 0) `shouldBe` 103
 
 isLeft :: Either a b -> Bool
 isLeft (Left _) = True

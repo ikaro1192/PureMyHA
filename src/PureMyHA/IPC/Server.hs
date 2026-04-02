@@ -30,6 +30,7 @@ import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
 import System.Posix.Files (removeLink)
 import PureMyHA.IPC.Protocol
+import PureMyHA.MySQL.GTID (isEmptyGtidSet)
 import qualified PureMyHA.IPC.Socket as IPCSocket
 import PureMyHA.Topology.State
 import PureMyHA.Types
@@ -247,5 +248,5 @@ clusterErrantGtids :: ClusterTopology -> [ErrantGtidInfo]
 clusterErrantGtids ct =
   [ ErrantGtidInfo (nsNodeId ns) (nsErrantGtids ns)
   | ns <- Map.elems (ctNodes ct)
-  , nsErrantGtids ns /= ""
+  , not (isEmptyGtidSet (nsErrantGtids ns))
   ]

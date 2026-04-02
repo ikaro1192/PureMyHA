@@ -93,11 +93,11 @@ isLeft _        = False
 splitBrainSource1 :: NodeState
 splitBrainSource1 = healthySource
   { nsNodeId    = NodeId "db1" 3306
-  , nsProbeResult = ProbeSuccess fixedTime Nothing "uuid1:1-50"
+  , nsProbeResult = ProbeSuccess fixedTime Nothing (unsafeParseGtidSet "uuid1:1-50")
   }
 
 splitBrainSource2 :: NodeState
 splitBrainSource2 = healthySource
   { nsNodeId    = NodeId "db2" 3306
-  , nsProbeResult = ProbeSuccess fixedTime Nothing "uuid1:1-100"
+  , nsProbeResult = ProbeSuccess fixedTime Nothing (unsafeParseGtidSet "uuid1:1-100")
   }

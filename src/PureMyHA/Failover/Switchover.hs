@@ -22,6 +22,7 @@ import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
+import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
 import PureMyHA.Types
@@ -122,7 +123,7 @@ freezeOldSource (Just srcId) mDrainTimeout mTls creds clName = do
 -- | Get GTID executed set from old source (returns Nothing on failure)
 getSourceGtid
   :: Maybe NodeId -> Maybe TLSConfig -> DbCredentials
-  -> App (Maybe Text)
+  -> App (Maybe GtidSet)
 getSourceGtid Nothing _ _ = pure Nothing
 getSourceGtid (Just srcId) mTls creds = do
   let srcCi = makeConnectInfo srcId creds
@@ -133,7 +134,7 @@ getSourceGtid (Just srcId) mTls creds = do
 
 -- | Wait for candidate to catch up, then promote it
 promoteCandidate
-  :: NodeId -> Maybe Text -> Maybe TLSConfig -> DbCredentials
+  :: NodeId -> Maybe GtidSet -> Maybe TLSConfig -> DbCredentials
   -> ClusterName -> App (Either Text ())
 promoteCandidate candidateId mOldGtid mTls creds clName = do
   let candidateCi = makeConnectInfo candidateId creds
@@ -195,7 +196,7 @@ finalizeSwitchover candidateId oldSourceId oldSourceHost topo = do
 
   appLogInfo $ "[" <> unClusterName clName <> "] Switchover completed: new source is " <> unHostName (nodeHost candidateId)
 
-waitForCatchup :: Maybe TLSConfig -> ConnectInfo -> Maybe Text -> Int -> IO Bool
+waitForCatchup :: Maybe TLSConfig -> ConnectInfo -> Maybe GtidSet -> Int -> IO Bool
 waitForCatchup _ _ Nothing _ = pure True
 waitForCatchup mTls ci (Just targetGtid) secondsLeft
   | secondsLeft <= 0 = pure False

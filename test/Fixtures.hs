@@ -3,6 +3,7 @@ module Fixtures
   , mkReplicaStatus
   , mkTestEnv
   , fixedTime
+  , unsafeParseGtidSet
   , healthySource
   , healthyReplica
   , replicaWithErrantGtid
@@ -21,8 +22,16 @@ import Data.Time (UTCTime, fromGregorian, UTCTime (..))
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..))
 import PureMyHA.Logger (nullLogger)
+import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet, parseGtidSet)
 import PureMyHA.Topology.State (TVarDaemonState, newFailoverLock)
 import PureMyHA.Types
+
+-- | Parse a GTID set from text, throwing an error on invalid input.
+-- Only for use in tests.
+unsafeParseGtidSet :: Text -> GtidSet
+unsafeParseGtidSet t = case parseGtidSet t of
+  Right gs -> gs
+  Left err -> error $ "unsafeParseGtidSet: " <> err
 
 fixedTime :: UTCTime
 fixedTime = UTCTime (fromGregorian 2024 1 1) 0
@@ -37,8 +46,8 @@ mkReplicaStatus srcHost srcPort ioRunning execGtid = ReplicaStatus
   , rsReplicaIORunning    = ioRunning
   , rsReplicaSQLRunning   = SQLRunning
   , rsSecondsBehindSource = Just 0
-  , rsExecutedGtidSet     = execGtid
-  , rsRetrievedGtidSet    = execGtid
+  , rsExecutedGtidSet     = unsafeParseGtidSet execGtid
+  , rsRetrievedGtidSet    = unsafeParseGtidSet execGtid
   , rsLastIOError         = ""
   , rsLastSQLError        = ""
   }
@@ -48,8 +57,8 @@ mkNodeState nid role mRs health = NodeState
   { nsNodeId              = nid
   , nsRole                = role
   , nsHealth              = health
-  , nsProbeResult         = ProbeSuccess fixedTime mRs ""
-  , nsErrantGtids         = ""
+  , nsProbeResult         = ProbeSuccess fixedTime mRs emptyGtidSet
+  , nsErrantGtids         = emptyGtidSet
   , nsPaused              = False
   , nsConsecutiveFailures = 0
   , nsFenced              = False
@@ -88,8 +97,8 @@ healthyReplica = mkNodeState (mkNodeId "db2" 3306) Replica
 replicaWithErrantGtid :: NodeState
 replicaWithErrantGtid = (mkNodeState (mkNodeId "db3" 3306) Replica
   (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100"))
-  (ErrantGtidDetected "uuid3:1"))
-  { nsErrantGtids = "uuid3:1" }
+  (ErrantGtidDetected (unsafeParseGtidSet "uuid3:1")))
+  { nsErrantGtids = unsafeParseGtidSet "uuid3:1" }
 
 replicaWithIOError :: NodeState
 replicaWithIOError = mkNodeState (mkNodeId "db4" 3306) Replica
@@ -103,7 +112,7 @@ unreachableNode nid = NodeState
   , nsRole                = Replica
   , nsHealth              = NodeUnreachable "Connection refused"
   , nsProbeResult         = ProbeFailure "Connection refused"
-  , nsErrantGtids         = ""
+  , nsErrantGtids         = emptyGtidSet
   , nsPaused              = False
   , nsConsecutiveFailures = 0
   , nsFenced              = False
@@ -120,8 +129,8 @@ clusterWithDeadSource = Map.fromList
       { nsNodeId              = mkNodeId "db2" 3306
       , nsRole                = Replica
       , nsHealth              = Healthy
-      , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")) ""
-      , nsErrantGtids         = ""
+      , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")) emptyGtidSet
+      , nsErrantGtids         = emptyGtidSet
       , nsPaused              = False
       , nsConsecutiveFailures = 0
       , nsFenced              = False
