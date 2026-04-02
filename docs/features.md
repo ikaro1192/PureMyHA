@@ -23,7 +23,7 @@ PureMyHA targets MySQL 8.4+ exclusively and uses only modern syntax:
 ## Failover & Safety
 
 ### Automatic Failover
-When a `DeadSource` scenario is detected (source unreachable **and** replicas confirm `Replica_IO_Running=No`), PureMyHA automatically:
+When a `DeadSource` scenario is detected (source unreachable **and** replicas confirm `Replica_IO_Running=No` **and** witness count meets `min_replicas_for_failover` quorum), PureMyHA automatically:
 
 1. Runs the `pre_failover` hook
 2. Selects the best replica (highest `Executed_Gtid_Set`, no errant GTIDs, respects `candidate_priority`)

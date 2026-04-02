@@ -59,7 +59,7 @@ spec = do
 
     it "returns ns unchanged when monitored node is unreachable (skips TCP connect)" $ do
       tvar <- newDaemonState
-      let topo = (buildClusterTopology "main" clusterWithDeadSource)
+      let topo = (buildClusterTopology 1 "main" clusterWithDeadSource)
                    { ctSourceNodeId = Just (NodeId "db1" 3306) }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
@@ -68,7 +68,7 @@ spec = do
 
     it "returns ns unchanged when source is unreachable (skips TCP connect)" $ do
       tvar <- newDaemonState
-      let topo = (buildClusterTopology "main" clusterWithDeadSource)
+      let topo = (buildClusterTopology 1 "main" clusterWithDeadSource)
                    { ctSourceNodeId = Just (NodeId "db1" 3306) }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
@@ -83,7 +83,7 @@ spec = do
 
     it "returns ns unchanged when topology has no source node" $ do
       tvar <- newDaemonState
-      let topo = (buildClusterTopology "main" clusterWithDeadSource)
+      let topo = (buildClusterTopology 1 "main" clusterWithDeadSource)
                    { ctSourceNodeId = Nothing }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC

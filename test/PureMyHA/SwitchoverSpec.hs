@@ -48,7 +48,7 @@ spec = do
 
     it "result contains 'Dry run: would promote'" $ do
       tvar <- newDaemonState
-      let topo = buildClusterTopology "main" clusterHealthy
+      let topo = buildClusterTopology 1 "main" clusterHealthy
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env $ dryRunSwitchover Nothing
@@ -64,7 +64,7 @@ spec = do
 
     it "returns Left when specified host does not exist" $ do
       tvar <- newDaemonState
-      let topo = buildClusterTopology "main" clusterHealthy
+      let topo = buildClusterTopology 1 "main" clusterHealthy
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env $ dryRunSwitchover (Just "nonexistent.host")

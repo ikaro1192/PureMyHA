@@ -120,6 +120,7 @@ printErrantGtidInfo eg =
 showHealth :: NodeHealth -> String
 showHealth Healthy                  = "Healthy"
 showHealth DeadSource               = "DeadSource"
+showHealth InsufficientQuorum       = "InsufficientQuorum"
 showHealth UnreachableSource        = "UnreachableSource"
 showHealth DeadSourceAndAllReplicas = "DeadSourceAndAllReplicas"
 showHealth SplitBrainSuspected      = "SplitBrainSuspected"

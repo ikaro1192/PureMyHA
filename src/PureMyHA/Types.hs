@@ -134,6 +134,7 @@ data ReplicaStatus = ReplicaStatus
 data NodeHealth
   = Healthy
   | DeadSource
+  | InsufficientQuorum          -- ^ All reachable replicas report IO=No, but witness count < min_replicas_for_failover
   | UnreachableSource
   | DeadSourceAndAllReplicas
   | SplitBrainSuspected
@@ -160,6 +161,7 @@ healthErrorMessage NoSourceDetected        = Just "No source detected"
 healthErrorMessage (NeedsAttention msg)    = Just msg
 healthErrorMessage (Lagging n)             = Just ("Lagging " <> T.pack (show n) <> "s")
 healthErrorMessage DeadSource              = Just "Dead source"
+healthErrorMessage InsufficientQuorum      = Just "Insufficient quorum for dead source confirmation"
 healthErrorMessage UnreachableSource       = Just "Unreachable source"
 healthErrorMessage DeadSourceAndAllReplicas = Just "Dead source and all replicas"
 healthErrorMessage SplitBrainSuspected     = Just "Split brain suspected"

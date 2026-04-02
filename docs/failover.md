@@ -17,8 +17,9 @@ When `DeadSource` is detected, the daemon automatically:
 | Scenario | Definition |
 |---------|------------|
 | `Healthy` | Normal operation |
-| `DeadSource` | Source unreachable and replicas confirm `Replica_IO_Running=No` |
-| `UnreachableSource` | Source unreachable from PureMyHA, but replicas can still reach it (possible network partition) |
+| `DeadSource` | Source unreachable and replicas confirm `Replica_IO_Running=No` with quorum met (`min_replicas_for_failover`) |
+| `InsufficientQuorum` | All reachable replicas confirm `Replica_IO_Running=No`, but witness count is below `min_replicas_for_failover` — failover is intentionally withheld |
+| `UnreachableSource` | Source unreachable from PureMyHA, but at least one replica still reports `Replica_IO_Running=Yes` (possible network partition) |
 | `DeadSourceAndAllReplicas` | Source and all replicas are unresponsive |
 | `SplitBrainSuspected` | Multiple nodes appear to be acting as source |
 | `NodeUnreachable` | Probe connect failure (node is not responding) |
