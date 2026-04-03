@@ -162,8 +162,9 @@ data Request
       }
   | ReqAckRecovery { reqCluster :: Maybe ClusterName }
   | ReqErrantGtid { reqCluster :: Maybe ClusterName }
-  | ReqFixErrantGtid { reqCluster :: Maybe ClusterName }
-  | ReqDemote { reqCluster :: Maybe ClusterName, reqDemoteHost :: HostName, reqDemoteSourceHost :: HostName }
+  | ReqFixErrantGtid { reqCluster :: Maybe ClusterName, reqDryRun :: Bool }
+  | ReqDemote { reqCluster :: Maybe ClusterName, reqDemoteHost :: HostName, reqDemoteSourceHost :: HostName, reqDryRun :: Bool }
+  | ReqSimulateFailover { reqCluster :: Maybe ClusterName }
   | ReqDiscovery { reqCluster :: Maybe ClusterName }
   | ReqPauseReplica  { reqCluster :: Maybe ClusterName, reqPauseHost  :: HostName }
   | ReqResumeReplica { reqCluster :: Maybe ClusterName, reqResumeHost :: HostName }
@@ -184,8 +185,9 @@ instance ToJSON Request where
   toJSON (ReqSwitchover mc mh dr mDt) = object ["type" .= ("switchover" :: Text), "cluster" .= mc, "toHost" .= mh, "dryRun" .= dr, "drainTimeout" .= mDt]
   toJSON (ReqAckRecovery mc)     = object ["type" .= ("ack-recovery" :: Text),    "cluster" .= mc]
   toJSON (ReqErrantGtid mc)      = object ["type" .= ("errant-gtid" :: Text),     "cluster" .= mc]
-  toJSON (ReqFixErrantGtid mc)   = object ["type" .= ("fix-errant-gtid" :: Text), "cluster" .= mc]
-  toJSON (ReqDemote mc h s)      = object ["type" .= ("demote" :: Text), "cluster" .= mc, "host" .= h, "sourceHost" .= s]
+  toJSON (ReqFixErrantGtid mc dr) = object ["type" .= ("fix-errant-gtid" :: Text), "cluster" .= mc, "dryRun" .= dr]
+  toJSON (ReqDemote mc h s dr)   = object ["type" .= ("demote" :: Text), "cluster" .= mc, "host" .= h, "sourceHost" .= s, "dryRun" .= dr]
+  toJSON (ReqSimulateFailover mc) = object ["type" .= ("simulate-failover" :: Text), "cluster" .= mc]
   toJSON (ReqDiscovery mc)       = object ["type" .= ("discovery" :: Text),       "cluster" .= mc]
   toJSON (ReqPauseReplica  mc h) = object ["type" .= ("pause-replica"  :: Text), "cluster" .= mc, "host" .= h]
   toJSON (ReqResumeReplica mc h) = object ["type" .= ("resume-replica" :: Text), "cluster" .= mc, "host" .= h]
@@ -204,8 +206,9 @@ instance FromJSON Request where
       "switchover"      -> ReqSwitchover    <$> o .:? "cluster" <*> o .:? "toHost" <*> o .: "dryRun" <*> o .:? "drainTimeout"
       "ack-recovery"    -> ReqAckRecovery   <$> o .:? "cluster"
       "errant-gtid"     -> ReqErrantGtid    <$> o .:? "cluster"
-      "fix-errant-gtid" -> ReqFixErrantGtid <$> o .:? "cluster"
-      "demote"          -> ReqDemote        <$> o .:? "cluster" <*> o .: "host" <*> o .: "sourceHost"
+      "fix-errant-gtid"   -> ReqFixErrantGtid    <$> o .:? "cluster" <*> o .:? "dryRun" .!= False
+      "demote"            -> ReqDemote           <$> o .:? "cluster" <*> o .: "host" <*> o .: "sourceHost" <*> o .:? "dryRun" .!= False
+      "simulate-failover" -> ReqSimulateFailover <$> o .:? "cluster"
       "discovery"       -> ReqDiscovery    <$> o .:? "cluster"
       "pause-replica"   -> ReqPauseReplica  <$> o .:? "cluster" <*> o .: "host"
       "resume-replica"  -> ReqResumeReplica <$> o .:? "cluster" <*> o .: "host"

@@ -115,9 +115,24 @@ assert_contains "mysql-replica1 shows ErrantGtidDetected" "ErrantGtidDetected" "
 
 # Fix errant GTIDs so cleanup succeeds
 echo "  Fixing errant GTIDs..."
-cli_fix_errant_gtid >/dev/null 2>&1 || true
+fix_result=$(cli_fix_errant_gtid)
+echo "  Fix response: $fix_result"
+fix_success=$(echo "$fix_result" | jq -r '.success // empty')
+assert_contains "fix-errant-gtid returns success" "fixed" "$fix_success"
 
 echo "  Waiting for errant GTIDs to clear..."
+for i in $(seq 1 20); do
+  errant_after=$(cli_errant_gtid | jq '. | length')
+  if [ "$errant_after" -eq 0 ]; then
+    echo "  Errant GTIDs cleared (${i}s)"
+    break
+  fi
+  sleep 1
+done
+assert_eq "Errant GTIDs cleared after fix" "0" "$(cli_errant_gtid | jq '. | length')"
+
+echo "  Waiting for mysql-replica1 to recover to Healthy..."
+replica1_health=""
 for i in $(seq 1 30); do
   topo_json=$(cli_topology 2>/dev/null || echo "[]")
   replica1_health=$(echo "$topo_json" | jq -r '.[0].nodes[] | select(.host=="mysql-replica1") | .health' 2>/dev/null || echo "")

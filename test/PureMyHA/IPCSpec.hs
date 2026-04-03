@@ -45,7 +45,7 @@ spec = do
       roundTrip (ReqErrantGtid (Just "main")) `shouldBe` Just (ReqErrantGtid (Just "main"))
 
     it "round-trips ReqFixErrantGtid" $
-      roundTrip (ReqFixErrantGtid Nothing) `shouldBe` Just (ReqFixErrantGtid Nothing)
+      roundTrip (ReqFixErrantGtid Nothing False) `shouldBe` Just (ReqFixErrantGtid Nothing False)
 
     it "round-trips ReqPauseReplica" $
       roundTrip (ReqPauseReplica (Just "main") "db2") `shouldBe` Just (ReqPauseReplica (Just "main") "db2")
@@ -145,8 +145,28 @@ spec = do
       (decode (BLC.pack "{\"cluster\":\"x\"}") :: Maybe Request) `shouldBe` Nothing
 
     it "round-trips ReqDemote" $
-      roundTrip (ReqDemote (Just "main") "db2" "db1")
-        `shouldBe` Just (ReqDemote (Just "main") "db2" "db1")
+      roundTrip (ReqDemote (Just "main") "db2" "db1" False)
+        `shouldBe` Just (ReqDemote (Just "main") "db2" "db1" False)
+
+    it "round-trips ReqFixErrantGtid with dryRun=false" $
+      roundTrip (ReqFixErrantGtid Nothing False)
+        `shouldBe` Just (ReqFixErrantGtid Nothing False)
+
+    it "round-trips ReqFixErrantGtid with dryRun=true" $
+      roundTrip (ReqFixErrantGtid (Just "main") True)
+        `shouldBe` Just (ReqFixErrantGtid (Just "main") True)
+
+    it "round-trips ReqDemote with dryRun=true" $
+      roundTrip (ReqDemote (Just "main") "db2" "db1" True)
+        `shouldBe` Just (ReqDemote (Just "main") "db2" "db1" True)
+
+    it "round-trips ReqSimulateFailover" $
+      roundTrip (ReqSimulateFailover (Just "main"))
+        `shouldBe` Just (ReqSimulateFailover (Just "main"))
+
+    it "round-trips ReqSimulateFailover without cluster" $
+      roundTrip (ReqSimulateFailover Nothing)
+        `shouldBe` Just (ReqSimulateFailover Nothing)
 
     it "round-trips ReqDiscovery" $
       roundTrip (ReqDiscovery (Just "main")) `shouldBe` Just (ReqDiscovery (Just "main"))

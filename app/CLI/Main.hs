@@ -27,8 +27,9 @@ data Command
   | CmdSwitchover (Maybe HostName) Bool (Maybe Int)
   | CmdAckRecovery
   | CmdErrantGtid
-  | CmdFixErrantGtid
-  | CmdDemote HostName HostName   -- host, source
+  | CmdFixErrantGtid Bool          -- dry-run
+  | CmdDemote HostName HostName Bool   -- host, source, dry-run
+  | CmdSimulateFailover
   | CmdDiscovery
   | CmdPauseReplica  HostName
   | CmdResumeReplica HostName
@@ -67,9 +68,11 @@ cliOptions = CLIOptions
         <> command "errant-gtid"
             (info (pure CmdErrantGtid) (progDesc "Show errant GTIDs"))
         <> command "fix-errant-gtid"
-            (info (pure CmdFixErrantGtid) (progDesc "Fix errant GTIDs with empty transactions"))
+            (info fixErrantGtidCmd (progDesc "Fix errant GTIDs with empty transactions"))
         <> command "demote"
             (info demoteCmd (progDesc "Demote a node to replica under specified source"))
+        <> command "simulate-failover"
+            (info (pure CmdSimulateFailover) (progDesc "Simulate what would happen if the source died right now"))
         <> command "discovery"
             (info (pure CmdDiscovery) (progDesc "Trigger manual topology discovery"))
         <> command "pause-replica"
@@ -90,10 +93,15 @@ cliOptions = CLIOptions
             (info cloneCmd (progDesc "Re-seed a replica using MySQL CLONE plugin"))
         )
 
+fixErrantGtidCmd :: Parser Command
+fixErrantGtidCmd = CmdFixErrantGtid
+  <$> switch (long "dry-run" <> help "Show what would happen without executing")
+
 demoteCmd :: Parser Command
 demoteCmd = CmdDemote
   <$> (HostName <$> strOption (long "host"   <> metavar "HOST" <> help "Node to demote"))
   <*> (HostName <$> strOption (long "source" <> metavar "HOST" <> help "New replication source host"))
+  <*> switch (long "dry-run" <> help "Show SQL that would be executed without running it")
 
 pauseReplicaCmd :: Parser Command
 pauseReplicaCmd = CmdPauseReplica <$> (HostName <$> strOption (long "host" <> metavar "HOST" <> help "Node to pause"))
@@ -157,8 +165,9 @@ main = do
             CmdSwitchover mTo dr mDt -> ReqSwitchover mCluster mTo dr mDt
             CmdAckRecovery        -> ReqAckRecovery mCluster
             CmdErrantGtid         -> ReqErrantGtid mCluster
-            CmdFixErrantGtid      -> ReqFixErrantGtid mCluster
-            CmdDemote host src    -> ReqDemote mCluster host src
+            CmdFixErrantGtid dr   -> ReqFixErrantGtid mCluster dr
+            CmdDemote host src dr -> ReqDemote mCluster host src dr
+            CmdSimulateFailover   -> ReqSimulateFailover mCluster
             CmdDiscovery          -> ReqDiscovery mCluster
             CmdPauseReplica  host -> ReqPauseReplica  mCluster host
             CmdResumeReplica host -> ReqResumeReplica mCluster host
