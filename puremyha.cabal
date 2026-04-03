@@ -125,6 +125,7 @@ test-suite puremyha-test
     PureMyHA.StateSpec
     PureMyHA.QuerySpec
     PureMyHA.CloneSpec
+    PureMyHA.DemoteSpec
   build-depends:
     puremyha,
     async            >= 2.2,

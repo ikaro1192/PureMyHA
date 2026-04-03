@@ -23,10 +23,10 @@ import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Logger (Logger, setLogLevel)
 import PureMyHA.Clone (runClone)
-import PureMyHA.Failover.Auto (doUnfence)
-import PureMyHA.Failover.Demote (runDemote)
+import PureMyHA.Failover.Auto (doUnfence, simulateFailover)
+import PureMyHA.Failover.Demote (runDemote, dryRunDemote)
 import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica)
-import PureMyHA.Failover.ErrantGtid (runFixErrantGtid)
+import PureMyHA.Failover.ErrantGtid (runFixErrantGtid, dryRunFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
 import System.Posix.Files (removeLink)
 import PureMyHA.IPC.Protocol
@@ -132,13 +132,32 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
     let errants = concatMap clusterErrantGtids topos
     pure (RespErrantGtids errants)
 
-  ReqFixErrantGtid mCluster ->
-    runClusterOp mCluster clusterMap
-      (\env -> runApp env runFixErrantGtid) "Errant GTIDs fixed on source"
+  ReqFixErrantGtid mCluster dryRun ->
+    if dryRun
+      then withClusterEnv mCluster clusterMap $ \env -> do
+             result <- runApp env dryRunFixErrantGtid
+             pure $ RespOperation $ case result of
+               Left err  -> OperationFailure err
+               Right msg -> OperationSuccess msg
+      else runClusterOp mCluster clusterMap
+             (\env -> runApp env runFixErrantGtid) "Errant GTIDs fixed on source"
 
-  ReqDemote mCluster host srcHost ->
-    runClusterOp mCluster clusterMap
-      (\env -> runApp env $ runDemote host srcHost) ("Demote completed: " <> unHostName host <> " is now a replica")
+  ReqDemote mCluster host srcHost dryRun ->
+    if dryRun
+      then withClusterEnv mCluster clusterMap $ \env -> do
+             result <- runApp env (dryRunDemote host srcHost)
+             pure $ RespOperation $ case result of
+               Left err  -> OperationFailure err
+               Right msg -> OperationSuccess msg
+      else runClusterOp mCluster clusterMap
+             (\env -> runApp env $ runDemote host srcHost) ("Demote completed: " <> unHostName host <> " is now a replica")
+
+  ReqSimulateFailover mCluster ->
+    withClusterEnv mCluster clusterMap $ \env -> do
+      result <- runApp env simulateFailover
+      pure $ RespOperation $ case result of
+        Left err  -> OperationFailure err
+        Right msg -> OperationSuccess msg
 
   ReqDiscovery mCluster ->
     case lookupByCluster mCluster discoveryMap of

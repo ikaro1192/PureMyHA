@@ -123,6 +123,19 @@ cli_fix_errant_gtid() {
   cli_exec fix-errant-gtid
 }
 
+cli_fix_errant_gtid_dry() {
+  cli_exec fix-errant-gtid --dry-run
+}
+
+cli_demote_dry() {
+  local host="$1" source_host="$2"
+  cli_exec demote --host "$host" --source "$source_host" --dry-run
+}
+
+cli_simulate_failover() {
+  cli_exec simulate-failover
+}
+
 cli_unfence() {
   local host="$1"
   cli_exec unfence --host "$host"

@@ -1,8 +1,22 @@
 module PureMyHA.ErrantGtidSpec (spec) where
 
+import Control.Concurrent.STM (atomically)
+import qualified Data.Map.Strict as Map
+import qualified Data.Text as T
 import Test.Hspec
-import PureMyHA.Failover.ErrantGtid (collectErrantGtids)
+import Fixtures
+import PureMyHA.Config
+  ( ClusterConfig (..), Credentials (..), FailoverConfig (..)
+  , MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..)
+  , Port (..), PositiveDuration (..), AtLeastOne (..)
+  )
+import PureMyHA.Env (runApp)
+import PureMyHA.Failover.ErrantGtid (collectErrantGtids, dryRunFixErrantGtid)
 import PureMyHA.MySQL.GTID
+import PureMyHA.Topology.Discovery (buildClusterTopology)
+import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
+import PureMyHA.Types
+import Data.List.NonEmpty (NonEmpty ((:|)))
 
 spec :: Spec
 spec = do
@@ -81,3 +95,61 @@ spec = do
         `shouldBe` [ mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 1)
                     , mkSingleGtid (GtidUUID "uuid2") Nothing (TransactionId 1)
                     ]
+
+  describe "dryRunFixErrantGtid" $ do
+
+    it "returns Left when cluster not found" $ do
+      tvar <- newDaemonState
+      env  <- mkTestEnv tvar testCC testFC
+      result <- runApp env dryRunFixErrantGtid
+      result `shouldBe` Left "Cluster not found"
+
+    it "returns 'no errant GTIDs' message when none found" $ do
+      tvar <- newDaemonState
+      let topo = buildClusterTopology 1 "main" clusterHealthy
+      atomically $ updateClusterTopology tvar topo
+      env <- mkTestEnv tvar testCC testFC
+      result <- runApp env dryRunFixErrantGtid
+      case result of
+        Right msg -> msg `shouldSatisfy` T.isPrefixOf "Dry run: no errant GTIDs"
+        Left err  -> expectationFailure (show err)
+
+    it "returns count and source host when errant GTIDs exist" $ do
+      tvar <- newDaemonState
+      let nodes = Map.fromList
+            [ (NodeId "db1" 3306, healthySource)
+            , (NodeId "db3" 3306, replicaWithErrantGtid)
+            ]
+          topo = buildClusterTopology 1 "main" nodes
+      atomically $ updateClusterTopology tvar topo
+      env <- mkTestEnv tvar testCC testFC
+      result <- runApp env dryRunFixErrantGtid
+      case result of
+        Right msg -> do
+          msg `shouldSatisfy` T.isPrefixOf "Dry run: would inject"
+          msg `shouldSatisfy` T.isInfixOf "db1"
+        Left err -> expectationFailure (show err)
+
+testCC :: ClusterConfig
+testCC = ClusterConfig
+  { ccName                   = "main"
+  , ccNodes                  = NodeConfig "db1" (Port 3306) :| []
+  , ccCredentials            = Credentials "user" "/dev/null"
+  , ccReplicationCredentials = Nothing
+  , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
+  , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
+  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing []
+  , ccHooks                  = Nothing
+  , ccTLS                    = Nothing
+  }
+
+testFC :: FailoverConfig
+testFC = FailoverConfig
+  { fcAutoFailover                = True
+  , fcMinReplicasForFailover      = 1
+  , fcCandidatePriority           = []
+  , fcWaitRelayLogTimeout         = 60
+  , fcAutoFence                   = False
+  , fcMaxReplicaLagForCandidate   = Nothing
+  , fcNeverPromote                = []
+  }

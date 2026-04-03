@@ -3,6 +3,7 @@ module PureMyHA.Failover.Auto
   , runAutoFence
   , doUnfence
   , checkAutoFailoverPreconditions
+  , simulateFailover
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -18,7 +19,7 @@ import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import PureMyHA.Config
 import PureMyHA.Env
-import PureMyHA.Failover.Candidate (selectCandidate, selectSurvivor)
+import PureMyHA.Failover.Candidate (selectCandidate, selectSurvivor, rankCandidates, CandidateInfo (..))
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
 import PureMyHA.Logger (logInfo, logError)
@@ -26,6 +27,46 @@ import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRet
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
 import PureMyHA.Types
+
+-- | Simulate failover: report what would happen if the source died right now.
+-- The pause flag is an operational constraint shown as a note; structural
+-- preconditions (health state, recovery block, replica count) are always checked.
+simulateFailover :: App (Either Text Text)
+simulateFailover = do
+  tvar <- asks envDaemonState
+  cc   <- asks envCluster
+  fc   <- asks envFailover
+  mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
+  case mTopo of
+    Nothing -> pure (Left "Cluster not found")
+    Just topo -> do
+      now <- liftIO getCurrentTime
+      let healthDesc    = "Current health: " <> T.pack (show (ctHealth topo))
+          pauseNote     = [ "Note: auto-failover is currently paused by operator"
+                          | ctPaused topo ]
+          -- Check structural preconditions, bypassing the pause flag since that
+          -- is an operational constraint unrelated to topology readiness.
+          precondResult = checkAutoFailoverPreconditions now
+                            (topo { ctPaused = False })
+                            (fcMinReplicasForFailover fc)
+          candidates    = rankCandidates (fcNeverPromote fc)
+                            (fmap unPositiveInt (fcMaxReplicaLagForCandidate fc))
+                            (Map.elems (ctNodes topo))
+                            (fcCandidatePriority fc)
+          candLines     = map (\ci -> "  - " <> unHostName (nodeHost (ciNodeId ci))) candidates
+      case precondResult of
+        Left err -> pure . Right . T.unlines $
+          [healthDesc] ++ pauseNote ++ ["Preconditions: FAIL \x2014 " <> err]
+        Right () ->
+          case candidates of
+            []    -> pure . Right . T.unlines $
+              [healthDesc] ++ pauseNote ++ ["Preconditions: OK", "No suitable failover candidate found"]
+            (c:_) -> pure . Right . T.unlines $
+              [ healthDesc] ++ pauseNote ++
+              [ "Preconditions: OK"
+              , "Would promote: " <> unHostName (nodeHost (ciNodeId c))
+              , "All eligible candidates (ranked):"
+              ] ++ candLines
 
 -- | Execute automatic failover for a cluster
 runAutoFailover :: App (Either Text ())
