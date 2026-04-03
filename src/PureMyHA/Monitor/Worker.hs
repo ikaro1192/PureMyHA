@@ -413,7 +413,7 @@ enrichErrantGtids ns = do
 decideClusterActions :: FailoverConfig -> ClusterTopology -> NodeHealth -> [ClusterAction]
 decideClusterActions fc topo newHealth =
   let transitioned    = ctHealth topo /= newHealth
-      observedHealthy = ctObservedHealthy topo || newHealth == Healthy
+      observedHealthy = fcFailoverWithoutObservedHealthy fc || ctObservedHealthy topo || newHealth == Healthy
       hookActions
         | transitioned = case newHealth of
             DeadSource               -> [FireHook (OnFailureDetection "DeadSource")]

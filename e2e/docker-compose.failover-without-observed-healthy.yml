@@ -1,0 +1,3 @@
+services:
+  puremyhad:
+    command: ["puremyhad", "--config", "/etc/puremyha/puremyha-failover-without-observed-healthy.yaml", "--socket", "/run/puremyhad.sock"]
