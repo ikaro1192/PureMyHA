@@ -30,6 +30,30 @@ When `DeadSource` is detected, the daemon automatically:
 | `NoSourceDetected` | No node has the source role in the cluster |
 | `NeedsAttention` | Other unclassified anomaly (escape hatch) |
 
+## Startup Failover Guard
+
+By default, PureMyHA will not trigger auto-failover unless the cluster has been observed as `Healthy` at least once since the daemon started. This guard prevents spurious failovers when the daemon restarts into an already-degraded cluster.
+
+### Problem: Same-AZ Co-location
+
+If `puremyhad` and the primary MySQL source are hosted in the **same Availability Zone**, an AZ failure can bring both down simultaneously. When Pacemaker restarts `puremyhad` in another AZ, it discovers the topology but the source is already unreachable — the `Healthy` observation never happens and auto-failover never fires.
+
+### Option: `failover_without_observed_healthy`
+
+```yaml
+failover:
+  failover_without_observed_healthy: true  # default: false
+```
+
+| Value | Behavior |
+|-------|----------|
+| `false` (default) | Failover requires prior observation of a healthy cluster since daemon start |
+| `true` | Failover may trigger on startup even if the cluster was never seen as healthy |
+
+**Tradeoff:** Enabling `failover_without_observed_healthy: true` enables faster recovery in same-AZ failure scenarios, but increases the risk of unnecessary failovers if `puremyhad` is restarted while the cluster is intentionally down (e.g., maintenance).
+
+**Deployment recommendation (default conservative mode):** When using `failover_without_observed_healthy: false`, it is strongly recommended to host `puremyhad` on a **different AZ or host than the initial primary MySQL**. Co-locating them means an AZ failure can simultaneously kill both, leaving no daemon alive that has ever observed the cluster as healthy — preventing auto-failover from firing.
+
 ## Anti-Flap Protection
 
 After a failover completes, automatic failover is blocked for `recovery_block_period` (default: 3600s). To re-enable it manually:

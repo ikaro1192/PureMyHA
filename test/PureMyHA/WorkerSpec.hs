@@ -25,20 +25,21 @@ testCC = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
   , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
-  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing []
+  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing [] False
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }
 
 testFC :: FailoverConfig
 testFC = FailoverConfig
-  { fcAutoFailover              = True
-  , fcMinReplicasForFailover    = 1
-  , fcCandidatePriority         = []
-  , fcWaitRelayLogTimeout       = 60
-  , fcAutoFence                 = False
-  , fcMaxReplicaLagForCandidate = Nothing
-  , fcNeverPromote              = []
+  { fcAutoFailover                   = True
+  , fcMinReplicasForFailover         = 1
+  , fcCandidatePriority              = []
+  , fcWaitRelayLogTimeout            = 60
+  , fcAutoFence                      = False
+  , fcMaxReplicaLagForCandidate      = Nothing
+  , fcNeverPromote                   = []
+  , fcFailoverWithoutObservedHealthy = False
   }
 
 spec :: Spec
@@ -363,6 +364,11 @@ spec = do
     it "does not trigger auto-failover when not observed healthy" $
       decideClusterActions testFC (mkTopo (NodeUnreachable "err") False) DeadSource
         `shouldNotContain` [TriggerAutoFailover]
+
+    it "triggers auto-failover without observed healthy when failover_without_observed_healthy is true" $
+      decideClusterActions (testFC { fcFailoverWithoutObservedHealthy = True })
+        (mkTopo (NodeUnreachable "err") False) DeadSource
+        `shouldContain` [TriggerAutoFailover]
 
     -- TriggerAutoFence tests
     it "triggers auto-fence on transition to SplitBrainSuspected when enabled and observed healthy" $

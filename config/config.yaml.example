@@ -56,6 +56,11 @@ global:
                                        # failover candidate selection. Default: no limit.
                                        # Note: replicas reaching monitoring.replication_lag_critical also become
                                        # Lagging and are automatically excluded regardless of this setting.
+    # failover_without_observed_healthy: false  # optional; if true, allows auto-failover even if the cluster
+                                               # was never observed as Healthy since daemon start.
+                                               # Useful when puremyhad and the source are co-located in the
+                                               # same AZ and can fail simultaneously (e.g. AZ outage).
+                                               # Default: false. See docs/failover.md for tradeoffs.
   hooks:
     pre_failover: /etc/puremyha/hooks/pre_failover.sh
     post_failover: /etc/puremyha/hooks/post_failover.sh

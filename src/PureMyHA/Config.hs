@@ -170,13 +170,14 @@ data FailureDetectionConfig = FailureDetectionConfig
   } deriving (Show, Generic)
 
 data FailoverConfig = FailoverConfig
-  { fcAutoFailover                :: Bool
-  , fcMinReplicasForFailover      :: Int
-  , fcCandidatePriority           :: [CandidatePriority]
-  , fcWaitRelayLogTimeout         :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
-  , fcAutoFence                   :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
-  , fcMaxReplicaLagForCandidate   :: Maybe PositiveInt -- ^ Max lag in seconds for failover candidates; lagging nodes are excluded (default Nothing)
-  , fcNeverPromote                :: [HostInfo]        -- ^ Hosts permanently excluded from promotion; they continue to replicate but are never selected as candidates (default [])
+  { fcAutoFailover                    :: Bool
+  , fcMinReplicasForFailover          :: Int
+  , fcCandidatePriority               :: [CandidatePriority]
+  , fcWaitRelayLogTimeout             :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
+  , fcAutoFence                       :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
+  , fcMaxReplicaLagForCandidate       :: Maybe PositiveInt -- ^ Max lag in seconds for failover candidates; lagging nodes are excluded (default Nothing)
+  , fcNeverPromote                    :: [HostInfo]        -- ^ Hosts permanently excluded from promotion; they continue to replicate but are never selected as candidates (default [])
+  , fcFailoverWithoutObservedHealthy  :: Bool             -- ^ Allow failover on startup even if cluster was never observed healthy (default false)
   } deriving (Show, Generic)
 
 data CandidatePriority = CandidatePriority
@@ -187,13 +188,14 @@ data CandidatePriority = CandidatePriority
 -- to support field-level merging between per-cluster and global sections.
 -- 'candidate_priority' and 'never_promote' are cluster-only and never inherited from global.
 data RawFailoverConfig = RawFailoverConfig
-  { rfcAutoFailover              :: Maybe Bool
-  , rfcMinReplicasForFailover    :: Maybe Int
-  , rfcCandidatePriority         :: [CandidatePriority]
-  , rfcWaitRelayLogTimeout       :: Maybe NominalDiffTime
-  , rfcAutoFence                 :: Maybe Bool
-  , rfcMaxReplicaLagForCandidate :: Maybe PositiveInt
-  , rfcNeverPromote              :: [Text]
+  { rfcAutoFailover                    :: Maybe Bool
+  , rfcMinReplicasForFailover          :: Maybe Int
+  , rfcCandidatePriority               :: [CandidatePriority]
+  , rfcWaitRelayLogTimeout             :: Maybe NominalDiffTime
+  , rfcAutoFence                       :: Maybe Bool
+  , rfcMaxReplicaLagForCandidate       :: Maybe PositiveInt
+  , rfcNeverPromote                    :: [Text]
+  , rfcFailoverWithoutObservedHealthy  :: Maybe Bool
   } deriving (Show, Generic)
 
 data HooksConfig = HooksConfig
@@ -275,13 +277,14 @@ instance FromJSON DurationField where
 -- 'candidate_priority' and 'never_promote' are cluster-only and never inherited from global.
 resolveFailover :: Maybe RawFailoverConfig -> Maybe RawFailoverConfig -> FailoverConfig
 resolveFailover clusterRaw globalRaw = FailoverConfig
-  { fcAutoFailover              = fromMaybe True  (pick rfcAutoFailover)
-  , fcMinReplicasForFailover    = fromMaybe 1     (pick rfcMinReplicasForFailover)
-  , fcCandidatePriority         = maybe [] rfcCandidatePriority clusterRaw
-  , fcWaitRelayLogTimeout       = fromMaybe 60    (pick rfcWaitRelayLogTimeout)
-  , fcAutoFence                 = fromMaybe False (pick rfcAutoFence)
-  , fcMaxReplicaLagForCandidate = pick rfcMaxReplicaLagForCandidate
-  , fcNeverPromote              = map (mkHostInfoFromName . HostName) (maybe [] rfcNeverPromote clusterRaw)
+  { fcAutoFailover                   = fromMaybe True  (pick rfcAutoFailover)
+  , fcMinReplicasForFailover         = fromMaybe 1     (pick rfcMinReplicasForFailover)
+  , fcCandidatePriority              = maybe [] rfcCandidatePriority clusterRaw
+  , fcWaitRelayLogTimeout            = fromMaybe 60    (pick rfcWaitRelayLogTimeout)
+  , fcAutoFence                      = fromMaybe False (pick rfcAutoFence)
+  , fcMaxReplicaLagForCandidate      = pick rfcMaxReplicaLagForCandidate
+  , fcNeverPromote                   = map (mkHostInfoFromName . HostName) (maybe [] rfcNeverPromote clusterRaw)
+  , fcFailoverWithoutObservedHealthy = fromMaybe False (pick rfcFailoverWithoutObservedHealthy)
   }
   where
     pick :: (RawFailoverConfig -> Maybe a) -> Maybe a
@@ -429,6 +432,7 @@ instance FromJSON RawFailoverConfig where
       <*> o .:? "auto_fence"
       <*> o .:? "max_replica_lag_for_candidate"
       <*> o .:? "never_promote" .!= []
+      <*> o .:? "failover_without_observed_healthy"
 
 instance FromJSON CandidatePriority where
   parseJSON = withObject "CandidatePriority" $ \o ->
