@@ -35,8 +35,17 @@ puremyha errant-gtid [--cluster=<name>]
 # Fix errant GTIDs by injecting empty transactions
 puremyha fix-errant-gtid [--cluster=<name>]
 
+# Dry-run: show what would be injected without executing
+puremyha fix-errant-gtid --dry-run [--cluster=<name>]
+
 # Demote a node to replica under a specified source (resolve split-brain)
 puremyha demote --host db1 --source db2 [--cluster=<name>]
+
+# Dry-run: preview the SQL that demote would execute without running it
+puremyha demote --host db1 --source db2 --dry-run [--cluster=<name>]
+
+# Simulate failover: show what would happen if the source died right now
+puremyha simulate-failover [--cluster=<name>]
 
 # Clear super_read_only on a fenced node (verify data consistency first)
 puremyha unfence --host <host> [--cluster=<name>]
