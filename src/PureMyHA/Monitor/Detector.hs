@@ -7,7 +7,7 @@ module PureMyHA.Monitor.Detector
 
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
-import Data.List (nub)
+import Data.List (find, nub)
 import Data.Maybe (mapMaybe)
 import qualified Data.Text as T
 import PureMyHA.MySQL.GTID (isEmptyGtidSet)
@@ -22,7 +22,10 @@ detectClusterHealth minReplicas nodes
           sourceCandidates = filter isSource nodeList
           reachableNodes = filter nsIsReachable nodeList
       in case sourceCandidates of
-           [] -> detectNoSource nodeList reachableNodes
+           [] -> case identifySource nodeList of
+                   Just srcId | Just src <- find (\n -> nsNodeId n == srcId) nodeList ->
+                     detectSingleSource minReplicas nodeList reachableNodes src
+                   _ -> detectNoSource nodeList reachableNodes
            [_src] -> detectSingleSource minReplicas nodeList reachableNodes _src
            _  -> SplitBrainSuspected
 
@@ -106,10 +109,10 @@ identifySource nodes =
   in case explicitSources of
        [s] -> Just (nsNodeId s)
        _   ->
-         -- Fall back: node that appears as a source of others
-         let isNotReferenced n =
-               (nodeHost (nsNodeId n), nodePort (nsNodeId n)) `notElem` replicaSourcePairs
-             allSources = filter isNotReferenced nodes
+         -- Fall back: find the node whose host:port is referenced by replicas as their source
+         let isReferencedAsSource n =
+               (nodeHost (nsNodeId n), nodePort (nsNodeId n)) `elem` replicaSourcePairs
+             allSources = filter isReferencedAsSource nodes
          in case allSources of
               [s] -> Just (nsNodeId s)
               _   -> Nothing

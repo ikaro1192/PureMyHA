@@ -65,11 +65,19 @@ spec = do
             ]
       detectClusterHealth 1 cluster `shouldBe` UnreachableSource
 
-    it "returns NoSourceDetected when no node is marked as source" $ do
+    it "returns NoSourceDetected when no node is marked as source and replicas have no source info" $ do
       let cluster = Map.fromList
             [ (NodeId "db1" 3306, healthySource { nsRole = Replica })
             ]
       detectClusterHealth 1 cluster `shouldBe` NoSourceDetected
+
+    it "returns DeadSource when source has nsRole=Replica (startup race) but replicas point to it with IO=No" $ do
+      let cluster = Map.fromList
+            [ (NodeId "db1" 3306, unreachableNode (NodeId "db1" 3306))  -- nsRole=Replica by default
+            , (NodeId "db2" 3306, mkNodeState (NodeId "db2" 3306) Replica (Just (mkReplicaStatus "db1" 3306 IONo "")) Healthy)
+            , (NodeId "db3" 3306, mkNodeState (NodeId "db3" 3306) Replica (Just (mkReplicaStatus "db1" 3306 IONo "")) Healthy)
+            ]
+      detectClusterHealth 1 cluster `shouldBe` DeadSource
 
   describe "detectClusterHealth quorum" $ do
     it "returns InsufficientQuorum when unanimous IO=No but only 1 witness and minReplicas=2" $ do
@@ -201,8 +209,8 @@ spec = do
     it "identifies source from replica's rsSourceHost when no explicit Source role" $ do
       let src = healthySource { nsRole = Replica }
           rep = healthyReplica
-      -- db2's replica status points to db1, so db1 should still be identified
-      identifySource [src, rep] `shouldNotBe` Nothing
+      -- db2's replica status points to db1, so db1 should be identified as source
+      identifySource [src, rep] `shouldBe` Just (NodeId "db1" 3306)
 
 isNeedsAttention :: NodeHealth -> Bool
 isNeedsAttention (NeedsAttention _) = True
