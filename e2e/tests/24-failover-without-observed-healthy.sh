@@ -45,8 +45,12 @@ echo "  New source after failover: $new_source"
 assert_neq "Source changed from original" "$orig_source" "$new_source"
 assert_eq "New source is mysql-replica1 (candidate_priority)" "mysql-replica1" "$new_source"
 
-# 5. Restore original config
+# 5. Restore original config — start mysql-source before puremyhad so the
+#    daemon doesn't see a source-less topology (and potentially re-trigger
+#    failover or crash) on its first probe cycle.
 echo "  Restoring original puremyhad config..."
+$COMPOSE start mysql-source
+wait_for_mysql mysql-source 60
 $COMPOSE up -d --no-deps --force-recreate puremyhad
 reset_cluster
 

@@ -219,11 +219,13 @@ detectTopologyDrift configured discovered minReplicas healthyReplicas =
 
 -- | When merging topology discovery results with existing state, preserve
 -- daemon-managed node fields. The monitoring workers are the authoritative
--- source for nsHealth, nsPaused, nsFenced, and nsConsecutiveFailures;
--- topology-refresh probes must not overwrite these for existing nodes.
+-- source for nsHealth, nsErrantGtids, nsPaused, nsFenced, and
+-- nsConsecutiveFailures; topology-refresh probes must not overwrite these
+-- for existing nodes.
 mergeNodeState :: NodeState -> NodeState -> NodeState
 mergeNodeState new old = new
   { nsHealth              = nsHealth old
+  , nsErrantGtids         = nsErrantGtids old
   , nsPaused              = nsPaused old
   , nsFenced              = nsFenced old
   , nsConsecutiveFailures = nsConsecutiveFailures old

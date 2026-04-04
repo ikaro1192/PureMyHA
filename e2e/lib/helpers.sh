@@ -349,9 +349,11 @@ reset_cluster() {
   wait_for_mysql mysql-replica1 60
   wait_for_mysql mysql-replica2 60
 
-  # Ensure source has correct read_only setting and clean GTID/replica state
+  # Ensure source has correct read_only setting and clean GTID/replica state.
+  # Clear super_read_only first — auto-fence may have set it during split-brain
+  # and SET GLOBAL read_only = OFF silently fails while super_read_only is ON.
   mysql_exec mysql-source "STOP REPLICA; RESET REPLICA ALL;" || true
-  mysql_exec mysql-source "SET GLOBAL read_only = OFF;" || true
+  mysql_exec mysql-source "SET GLOBAL super_read_only = OFF; SET GLOBAL read_only = OFF;" || true
   mysql_exec mysql-source "RESET BINARY LOGS AND GTIDS;" || true
 
   # Ensure replicas are read_only (clear any fence state first so CHANGE REPLICATION SOURCE TO succeeds)
