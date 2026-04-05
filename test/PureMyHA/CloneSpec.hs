@@ -4,7 +4,7 @@ import qualified Data.Map.Strict as Map
 import Data.Either (isLeft)
 import Test.Hspec
 import Fixtures
-import PureMyHA.Clone
+import PureMyHA.MySQL.Clone
 import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.Types
 

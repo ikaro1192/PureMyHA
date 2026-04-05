@@ -1,4 +1,4 @@
-module PureMyHA.Clone
+module PureMyHA.MySQL.Clone
   ( runClone
   , selectDonorAuto
   , parseHostPort
