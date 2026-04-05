@@ -137,6 +137,11 @@ spec = do
     it "returns Healthy for a normal replica" $
       detectNodeHealth Nothing healthyReplica `shouldBe` Healthy
 
+    it "returns Healthy for Source node with residual replica status" $ do
+      let rs = mkReplicaStatus "db1" 3306 IOConnecting ""
+          ns = mkNodeState (NodeId "db2" 3306) Source (Just rs) Healthy
+      detectNodeHealth Nothing ns `shouldBe` Healthy
+
     it "returns Lagging when lag meets threshold" $ do
       let rs = (mkReplicaStatus "db1" 3306 IOYes "") { rsSecondsBehindSource = Just 30 }
           ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
