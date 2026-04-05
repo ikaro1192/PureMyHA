@@ -56,6 +56,7 @@ selectCandidate neverPromote mMaxLag nodes priorities mToHost =
            []  -> Left $ "Host not found as replica: " <> unHostName toHost
            (ns:_)
              | nodeHostInfo (nsNodeId ns) `elem` neverPromote -> Left $ "Cannot promote: host is in never_promote list: " <> unHostName toHost
+             | nsPaused ns -> Left $ "Cannot promote: node is paused: " <> unHostName toHost
              | hasErrantGtid ns -> Left $ "Cannot promote: node has errant GTIDs: " <> unHostName toHost
              | hasConnectError ns -> Left $ "Cannot promote: node unreachable: " <> unHostName toHost
              | otherwise -> Right (nsNodeId ns)
@@ -76,6 +77,7 @@ rankCandidates neverPromote mMaxLag nodes priorities =
 isEligibleCandidate :: [HostInfo] -> Maybe Int -> NodeState -> Bool
 isEligibleCandidate neverPromote mMaxLag ns =
   not (isSource ns)
+  && not (nsPaused ns)
   && not (hasErrantGtid ns)
   && not (hasConnectError ns)
   && not (isLagging ns)

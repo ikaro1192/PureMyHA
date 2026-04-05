@@ -50,11 +50,17 @@ puremyha simulate-failover [--cluster=<name>]
 # Clear super_read_only on a fenced node (verify data consistency first)
 puremyha unfence --host <host> [--cluster=<name>]
 
-# Pause replication on a replica (STOP REPLICA + stop monitoring)
+# Exclude a replica from failover candidates (does not stop MySQL replication)
 puremyha pause-replica --host db2 [--cluster=<name>]
 
-# Resume replication on a paused replica (START REPLICA + resume monitoring)
+# Re-include a paused replica in failover candidates (does not start MySQL replication)
 puremyha resume-replica --host db2 [--cluster=<name>]
+
+# Stop MySQL replication on a replica and exclude from failover
+puremyha stop-replication --host db2 [--cluster=<name>]
+
+# Start MySQL replication on a replica and re-include in failover
+puremyha start-replication --host db2 [--cluster=<name>]
 
 # Trigger manual topology discovery
 puremyha discovery [--cluster=<name>]

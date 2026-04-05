@@ -26,7 +26,7 @@ import PureMyHA.Monitor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Clone (runClone)
 import PureMyHA.Failover.Auto (doUnfence, simulateFailover)
 import PureMyHA.Failover.Demote (runDemote, dryRunDemote)
-import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica)
+import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica, runStopReplication, runStartReplication)
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid, dryRunFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
 import System.Posix.Files (removeLink)
@@ -171,11 +171,19 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
 
   ReqPauseReplica mCluster host ->
     runClusterOp mCluster clusterMap
-      (\env -> runApp env $ runPauseReplica host) ("Replication paused on " <> unHostName host)
+      (\env -> runApp env $ runPauseReplica host) ("Replica paused (excluded from failover) on " <> unHostName host)
 
   ReqResumeReplica mCluster host ->
     runClusterOp mCluster clusterMap
-      (\env -> runApp env $ runResumeReplica host) ("Replication resumed on " <> unHostName host)
+      (\env -> runApp env $ runResumeReplica host) ("Replica resumed (included in failover) on " <> unHostName host)
+
+  ReqStopReplication mCluster host ->
+    runClusterOp mCluster clusterMap
+      (\env -> runApp env $ runStopReplication host) ("Replication stopped on " <> unHostName host)
+
+  ReqStartReplication mCluster host ->
+    runClusterOp mCluster clusterMap
+      (\env -> runApp env $ runStartReplication host) ("Replication started on " <> unHostName host)
 
   ReqPauseFailover mCluster ->
     withClusterEnv mCluster clusterMap $ \env -> do

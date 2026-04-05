@@ -121,6 +121,24 @@ spec = do
             ]
       selectCandidate [] (Just 30) nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
 
+    it "excludes paused replica from auto-select" $ do
+      let pausedReplica = healthyReplica { nsPaused = True }
+          replica3 = healthyReplica { nsNodeId = NodeId "db3" 3306 }
+          nodes = Map.fromList
+            [ (NodeId "db1" 3306, healthySource)
+            , (NodeId "db2" 3306, pausedReplica)
+            , (NodeId "db3" 3306, replica3)
+            ]
+      selectCandidate [] Nothing nodes [] Nothing `shouldBe` Right (NodeId "db3" 3306)
+
+    it "rejects --to for paused replica" $ do
+      let pausedReplica = healthyReplica { nsPaused = True }
+          nodes = Map.fromList
+            [ (NodeId "db1" 3306, healthySource)
+            , (NodeId "db2" 3306, pausedReplica)
+            ]
+      selectCandidate [] Nothing nodes [] (Just "db2") `shouldBe` Left "Cannot promote: node is paused: db2"
+
     it "returns Left when all replicas exceed maxLag" $ do
       let slowReplica = healthyReplica
             { nsProbeResult = ProbeSuccess fixedTime
@@ -189,6 +207,10 @@ spec = do
     it "returns False for a Lagging replica" $ do
       let lagging = healthyReplica { nsHealth = Lagging 45 }
       isEligibleCandidate [] Nothing lagging `shouldBe` False
+
+    it "returns False for a paused replica" $ do
+      let paused = healthyReplica { nsPaused = True }
+      isEligibleCandidate [] Nothing paused `shouldBe` False
 
     it "returns False when lag exceeds maxLag" $ do
       let slowReplica = healthyReplica

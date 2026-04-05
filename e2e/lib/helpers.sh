@@ -107,6 +107,14 @@ cli_resume_replica() {
   cli_exec resume-replica --host "$1"
 }
 
+cli_stop_replication() {
+  cli_exec stop-replication --host "$1"
+}
+
+cli_start_replication() {
+  cli_exec start-replication --host "$1"
+}
+
 cli_pause_failover() {
   cli_exec pause-failover
 }
