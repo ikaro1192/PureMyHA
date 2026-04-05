@@ -39,6 +39,7 @@ spec = do
                 , ctLastFailoverAt       = Nothing
                 , ctPaused               = False
                 , ctTopologyDrift        = False
+                , ctLastEmergencyCheckAt = Nothing
                 }
         ds     = DaemonState (Map.singleton "test" ct)
         output = BSL8.unpack (renderMetrics ds)
@@ -115,7 +116,8 @@ spec = do
                 , ctSourceNodeId = Nothing, ctHealth = DeadSource
                 , ctObservedHealthy = False, ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False }
+                , ctTopologyDrift = False
+                , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["health"] }
       resp <- runApp (httpApp tvar) req
@@ -128,7 +130,8 @@ spec = do
                 , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
                 , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False }
+                , ctTopologyDrift = False
+                , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "status"] }
       resp <- runApp (httpApp tvar) req
@@ -147,7 +150,8 @@ spec = do
                 , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
                 , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False }
+                , ctTopologyDrift = False
+                , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "topology"] }
       resp <- runApp (httpApp tvar) req
@@ -178,7 +182,8 @@ spec = do
                 , ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing
                 , ctPaused = False
-                , ctTopologyDrift = False }
+                , ctTopologyDrift = False
+                , ctLastEmergencyCheckAt = Nothing }
           ds = DaemonState (Map.singleton "test" ct)
           out = BSL8.unpack (renderMetrics ds)
       out `shouldContain` "puremyha_node_replication_lag_seconds{cluster=\"test\",host=\"db2\",port=\"3306\"} -1"

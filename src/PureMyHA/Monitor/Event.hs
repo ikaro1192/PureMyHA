@@ -5,13 +5,14 @@ module PureMyHA.Monitor.Event
   , applyEvent
   , decideClusterActions
   , decideLagActions
+  , emergencyCheckDue
   ) where
 
 import Data.Maybe (isJust)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
-import Data.Time (UTCTime)
-import PureMyHA.Config (FailureDetectionConfig (..), FailoverConfig (..), MonitoringConfig (..), AtLeastOne (..))
+import Data.Time (UTCTime, NominalDiffTime, diffUTCTime)
+import PureMyHA.Config (FailureDetectionConfig (..), FailoverConfig (..), MonitoringConfig (..), AtLeastOne (..), PositiveDuration (..))
 import PureMyHA.Monitor.Detector (detectClusterHealth, detectNodeHealth, identifySource)
 import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.Types
@@ -24,6 +25,7 @@ data MonitorEvent
       { neNodeId      :: NodeId
       , neProbeResult :: ProbeResult     -- ^ Raw probe outcome
       , neErrantGtids :: GtidSet         -- ^ Errant GTIDs from enrichment
+      , neProbeTime   :: UTCTime         -- ^ Wall-clock time of the probe
       }
   | TopologyRefreshed
       { neMergedTopology :: ClusterTopology
@@ -90,7 +92,7 @@ applyEvent
 -- NodeProbed: the most complex case. Integrates failure counting,
 -- health detection, role/pause/fence preservation, cluster health
 -- recomputation, and hook/action decisions.
-applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids) =
+applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
   let -- 1. Read current node state
       mOldNs = Map.lookup nid (ctNodes ct)
 
@@ -188,7 +190,8 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids) =
         | otherwise = []
 
       -- 14. Cluster-level action decisions
-      clusterActions = decideClusterActions fc ct newClusterHealth
+      checkInterval = unPositiveDuration (mcInterval mc)
+      clusterActions = decideClusterActions fc ct newClusterHealth (Just probeTime) checkInterval
       clusterEffects =
         [FireHookEffect e Nothing | FireHook e <- clusterActions]
         ++ [TriggerActionEffect a | a <- clusterActions, isNotHook a]
@@ -199,6 +202,10 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids) =
         , ctHealth          = newClusterHealth
         , ctSourceNodeId    = newSrcId
         , ctObservedHealthy = observedHealthy
+        , ctLastEmergencyCheckAt =
+            if TriggerEmergencyReplicaCheck `elem` clusterActions
+              then Just probeTime
+              else ctLastEmergencyCheckAt ct
         }
 
       allEffects = belowThresholdLog ++ nodeHealthLog ++ lagEffects
@@ -216,6 +223,7 @@ applyEvent _ _ _ ct (TopologyRefreshed newTopo) =
         , ctHealth               = ctHealth ct
         , ctSourceNodeId         = ctSourceNodeId ct
         , ctLastFailoverAt       = ctLastFailoverAt ct
+        , ctLastEmergencyCheckAt = ctLastEmergencyCheckAt ct
         }
   in (merged, [])
 
@@ -243,6 +251,7 @@ applyEvent _ _ _ ct (FailoverCommitted newSrcId oldSrcIds failoverAt recoveryBlo
         { ctNodes                = promotedNodes
         , ctLastFailoverAt       = Just failoverAt
         , ctRecoveryBlockedUntil = Just recoveryBlockUntil
+        , ctLastEmergencyCheckAt = Nothing
         }
   in (newCt, [])
 
@@ -302,8 +311,8 @@ decideLagActions oldHealth newHealth = case (oldHealth, newHealth) of
   (Just (Lagging _), _)        -> [FireHook OnLagThresholdRecovered]
   _                             -> []
 
-decideClusterActions :: FailoverConfig -> ClusterTopology -> NodeHealth -> [ClusterAction]
-decideClusterActions fc topo newHealth =
+decideClusterActions :: FailoverConfig -> ClusterTopology -> NodeHealth -> Maybe UTCTime -> NominalDiffTime -> [ClusterAction]
+decideClusterActions fc topo newHealth mNow checkInterval =
   let transitioned    = ctHealth topo /= newHealth
       observedHealthy = fcFailoverWithoutObservedHealthy fc || ctObservedHealthy topo || newHealth == Healthy
       hookActions
@@ -321,8 +330,17 @@ decideClusterActions fc topo newHealth =
         | transitioned, newHealth == SplitBrainSuspected, fcAutoFence fc, observedHealthy ]
       replicaCheckActions =
         [ TriggerEmergencyReplicaCheck
-        | transitioned, newHealth == UnreachableSource ]
+        | newHealth == UnreachableSource
+        , emergencyCheckDue mNow (ctLastEmergencyCheckAt topo) checkInterval ]
   in hookActions ++ failoverActions ++ fenceActions ++ replicaCheckActions
+
+-- | Determine whether an emergency replica check is due.
+-- Fires immediately on first detection (no prior check), then rate-limited
+-- to at most once per monitoring interval.
+emergencyCheckDue :: Maybe UTCTime -> Maybe UTCTime -> NominalDiffTime -> Bool
+emergencyCheckDue Nothing    _           _        = False  -- no probe timestamp available
+emergencyCheckDue _          Nothing     _        = True   -- first check: fire immediately
+emergencyCheckDue (Just now) (Just last') interval = diffUTCTime now last' >= interval
 
 isNotHook :: ClusterAction -> Bool
 isNotHook (FireHook _) = False

@@ -292,7 +292,7 @@ monitorNode nid = do
   enriched <- enrichErrantGtids dummyNs
   -- Emit the raw fact — all derived state computation happens in applyEvent
   liftIO $ atomically $ writeTBQueue (envEventQueue env) $
-    NodeProbed nid probeResult (nsErrantGtids enriched)
+    NodeProbed nid probeResult (nsErrantGtids enriched) now
 
 
 enrichErrantGtids :: NodeState -> App NodeState

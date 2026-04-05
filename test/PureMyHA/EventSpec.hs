@@ -33,6 +33,7 @@ mkTopo nodes = ClusterTopology
   , ctLastFailoverAt        = Nothing
   , ctPaused                = False
   , ctTopologyDrift         = False
+  , ctLastEmergencyCheckAt  = Nothing
   }
 
 sourceId :: NodeId
@@ -51,7 +52,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
     it "resets nsConsecutiveFailures to 0 on ProbeSuccess" $ do
       let withFailures = Map.adjust (\ns -> ns { nsConsecutiveFailures = 5 }) replicaId baseNodes
           topo = baseTopo { ctNodes = withFailures }
-          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet
+          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
       fmap nsConsecutiveFailures mNs `shouldBe` Just 0
@@ -59,7 +60,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
     it "increments nsConsecutiveFailures on ProbeFailure" $ do
       let withFailures = Map.adjust (\ns -> ns { nsConsecutiveFailures = 2 }) replicaId baseNodes
           topo = baseTopo { ctNodes = withFailures }
-          event = NodeProbed replicaId (ProbeFailure "Connection refused") emptyGtidSet
+          event = NodeProbed replicaId (ProbeFailure "Connection refused") emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
       fmap nsConsecutiveFailures mNs `shouldBe` Just 3
@@ -68,7 +69,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
       let -- Node has 1 consecutive failure, threshold is 3
           withFailures = Map.adjust (\ns -> ns { nsConsecutiveFailures = 1, nsHealth = Healthy }) replicaId baseNodes
           topo = baseTopo { ctNodes = withFailures }
-          event = NodeProbed replicaId (ProbeFailure "timeout") emptyGtidSet
+          event = NodeProbed replicaId (ProbeFailure "timeout") emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
       -- 2nd failure, still below threshold of 3 -> health preserved as Healthy
@@ -78,7 +79,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
     it "applies unhealthy state when at threshold" $ do
       let withFailures = Map.adjust (\ns -> ns { nsConsecutiveFailures = 2, nsHealth = Healthy }) replicaId baseNodes
           topo = baseTopo { ctNodes = withFailures }
-          event = NodeProbed replicaId (ProbeFailure "timeout") emptyGtidSet
+          event = NodeProbed replicaId (ProbeFailure "timeout") emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
       -- 3rd failure = threshold -> health NOT suppressed
@@ -88,7 +89,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
     it "preserves nsPaused from current state" $ do
       let paused = Map.adjust (\ns -> ns { nsPaused = True }) replicaId baseNodes
           topo = baseTopo { ctNodes = paused }
-          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet
+          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
       fmap nsPaused mNs `shouldBe` Just True
@@ -96,7 +97,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
     it "preserves nsFenced from current state" $ do
       let fenced = Map.adjust (\ns -> ns { nsFenced = True }) replicaId baseNodes
           topo = baseTopo { ctNodes = fenced }
-          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet
+          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
       fmap nsFenced mNs `shouldBe` Just True
@@ -106,7 +107,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
           promoted = Map.adjust (\ns -> ns { nsRole = Source }) replicaId baseNodes
           topo = baseTopo { ctNodes = promoted, ctRecoveryBlockedUntil = Just fixedTime2 }
           -- Probe sees the node as a Replica (prReplicaStatus = Just ...)
-          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet
+          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
       -- Role should be preserved as Source (from current state) during recovery block
@@ -115,14 +116,14 @@ spec = describe "PureMyHA.Monitor.Event" $ do
     it "uses probe-inferred role when no recovery block" $ do
       let topo = baseTopo
           -- Probe sees the node as a Source (prReplicaStatus = Nothing)
-          event = NodeProbed replicaId (ProbeSuccess fixedTime Nothing emptyGtidSet) emptyGtidSet
+          event = NodeProbed replicaId (ProbeSuccess fixedTime Nothing emptyGtidSet) emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
       fmap nsRole mNs `shouldBe` Just Source
 
     it "infers Source role from prReplicaStatus = Nothing" $ do
       let topo = baseTopo
-          event = NodeProbed sourceId (ProbeSuccess fixedTime Nothing emptyGtidSet) emptyGtidSet
+          event = NodeProbed sourceId (ProbeSuccess fixedTime Nothing emptyGtidSet) emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup sourceId (ctNodes newTopo)
       fmap nsRole mNs `shouldBe` Just Source
@@ -130,7 +131,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
     it "emits lag hook on Lagging transition" $ do
       let rs = (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100") { rsSecondsBehindSource = Just 120 }
           topo = baseTopo
-          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just rs) emptyGtidSet) emptyGtidSet
+          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just rs) emptyGtidSet) emptyGtidSet fixedTime
           (_, effects) = applyEvent testFdc testFc testMc topo event
           lagEffects = [e | FireHookEffect e _ <- effects, isLagExceeded e]
       lagEffects `shouldSatisfy` (not . null)
@@ -139,7 +140,7 @@ spec = describe "PureMyHA.Monitor.Event" $ do
       let deadNodes = clusterWithDeadSource
           topo = (mkTopo deadNodes) { ctHealth = Healthy }
           -- Probe the replica: it sees IO=No
-          event = NodeProbed (nsNodeId healthySource) (ProbeFailure "Connection refused") emptyGtidSet
+          event = NodeProbed (nsNodeId healthySource) (ProbeFailure "Connection refused") emptyGtidSet fixedTime
           fdc3 = testFdc { fdcConsecutiveFailuresForDead = AtLeastOne 1 }
           (newTopo, _) = applyEvent fdc3 testFc testMc topo event
       ctHealth newTopo `shouldNotBe` Healthy
