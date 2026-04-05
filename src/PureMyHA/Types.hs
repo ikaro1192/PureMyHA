@@ -266,7 +266,10 @@ data OperationResult
   deriving (Show, Eq, Generic)
 
 data HookEvent
-  = OnFailureDetection Text   -- ^ hookFailureType string ("DeadSource" etc.)
+  = OnFailureDetection Text        -- ^ hookFailureType string ("DeadSource" etc.)
+  | OnTopologyDrift Text Text      -- ^ (driftType, driftDetails)
+  | OnLagThresholdExceeded Int     -- ^ lag seconds
+  | OnLagThresholdRecovered        -- ^ replica recovered from Lagging health
   deriving (Eq, Show)
 
 data ClusterAction

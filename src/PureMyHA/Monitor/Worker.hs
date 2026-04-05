@@ -15,6 +15,12 @@ module PureMyHA.Monitor.Worker
   , DriftCondition (..)
   , detectTopologyDrift
   , decideClusterActions
+  , decideDriftActions
+  , decideLagActions
+  , executeHookAction
+  , mergeTopology
+  , computeNewNodes
+  , computeDriftConditions
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -100,59 +106,43 @@ runTopologyRefresh reg = do
   env <- ask
   let cc   = envCluster env
       tvar = envDaemonState env
-  newTopo <- discoverTopology
+  -- 1. Discover + merge topology (pure merge)
+  newTopo  <- discoverTopology
   mOldTopo <- liftIO $ getClusterTopology tvar (ccName cc)
-  let mergedTopo = case mOldTopo of
-        Nothing      -> newTopo
-        Just oldTopo ->
-          newTopo { ctNodes = deduplicateByHostname
-                      (Map.unionWith mergeNodeState (ctNodes newTopo) (ctNodes oldTopo)) }
+  let mergedTopo = mergeTopology newTopo mOldTopo
   liftIO $ atomically $ updateClusterTopology tvar mergedTopo
+  -- 2. Worker management: start new, prune stale (pure decisions)
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes mergedTopo)
-      newNodes   = Set.toList (Set.difference discovered knownNodes)
+      newNodes   = computeNewNodes discovered knownNodes
   unless (null newNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: "
       <> T.pack (show (length newNodes)) <> " new node(s) found"
-  -- Start workers for newly discovered nodes
   liftIO $ forM_ newNodes $ \nid -> do
     a <- async (runApp env (runWorker nid))
     atomically $ modifyTVar' reg (Map.insert nid a)
-  -- Prune workers for truly decommissioned nodes
   staleNodes <- liftIO $ detectAndPruneStaleWorkers reg cc discovered
   unless (null staleNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: pruning "
       <> T.pack (show (length staleNodes)) <> " stale worker(s)"
-  -- Topology drift detection: use reachability so that stopped nodes register
-  -- as missing even though they remain in the topology with a failed probe result.
-  let configuredHosts = Set.fromList $ map (HostName . ncHost) (NE.toList (ccNodes cc))
-      reachableNodes  = filter nsIsReachable (Map.elems (ctNodes mergedTopo))
-      discoveredHosts = Set.fromList $ map (nodeHost . nsNodeId) reachableNodes
-      healthyReplicas = length $ filter (\ns -> nsRole ns == Replica) reachableNodes
-      minReplicas     = fcMinReplicasForFailover (ccFailover cc)
-      driftConditions = detectTopologyDrift configuredHosts discoveredHosts minReplicas healthyReplicas
+  -- 3. Drift detection (pure computation + IO state update + pure decision)
+  let driftConditions = computeDriftConditions cc mergedTopo
       hasDrift        = not (null driftConditions)
   wasInDrift <- liftIO $ atomically $ do
     mTopo <- getClusterTopologySTM tvar (ccName cc)
     updateClusterTopologyDrift tvar (ccName cc) hasDrift
     pure (maybe False ctTopologyDrift mTopo)
-  -- Fire hook only on False→True transition to avoid repeated firings
-  liftIO $ when (hasDrift && not wasInDrift) $ do
+  let driftActions = decideDriftActions hasDrift wasInDrift driftConditions
+  liftIO $ do
     mHooks <- readTVarIO (envHooks env)
-    ts     <- getCurrentTimestamp
-    forM_ driftConditions $ \dc -> do
-      let (dt, dd) = renderDriftCondition dc
-      runHookFireForget mHooks hcOnTopologyDrift
-        HookEnv { hookClusterName  = ccName cc
-                , hookNewSource    = Nothing
-                , hookOldSource    = Nothing
-                , hookFailureType  = Nothing
-                , hookTimestamp    = ts
-                , hookLagSeconds   = Nothing
-                , hookNode         = Nothing
-                , hookDriftType    = Just dt
-                , hookDriftDetails = Just dd
-                }
+    forM_ [e | FireHook e <- driftActions] $
+      executeHookAction mHooks (ccName cc) Nothing
+
+-- | Compute newly discovered nodes: those in the discovered set but not yet
+-- in the known (registered) set.
+computeNewNodes :: Set.Set NodeId -> Set.Set NodeId -> [NodeId]
+computeNewNodes discoveredNodes knownNodes =
+  Set.toList (Set.difference discoveredNodes knownNodes)
 
 -- | Compute nodes to prune: those in the registry but absent from both
 -- the merged topology and the configured seed list.
@@ -203,6 +193,18 @@ data DriftCondition
   | ReplicaCountBelowThreshold Int Int    -- ^ (actual healthy replicas, min_replicas_for_failover)
   deriving (Eq, Show)
 
+-- | Pure: compute drift conditions from cluster config and merged topology.
+-- Extracts configured hosts, filters reachable nodes, counts healthy replicas,
+-- and delegates to 'detectTopologyDrift'.
+computeDriftConditions :: ClusterConfig -> ClusterTopology -> [DriftCondition]
+computeDriftConditions cc topo =
+  let configuredHosts = Set.fromList $ map (HostName . ncHost) (NE.toList (ccNodes cc))
+      reachableNodes  = filter nsIsReachable (Map.elems (ctNodes topo))
+      discoveredHosts = Set.fromList $ map (nodeHost . nsNodeId) reachableNodes
+      healthyReplicas = length $ filter (\ns -> nsRole ns == Replica) reachableNodes
+      minReplicas     = fcMinReplicasForFailover (ccFailover cc)
+  in detectTopologyDrift configuredHosts discoveredHosts minReplicas healthyReplicas
+
 -- | Pure: detect topology drift by comparing configured and discovered host sets
 -- and checking healthy replica count against the failover threshold.
 detectTopologyDrift
@@ -216,6 +218,15 @@ detectTopologyDrift configured discovered minReplicas healthyReplicas =
   ++ [ UnexpectedNode h | h <- Set.toList (Set.difference discovered configured) ]
   ++ [ ReplicaCountBelowThreshold healthyReplicas minReplicas
      | healthyReplicas < minReplicas ]
+
+-- | Merge a newly discovered topology with an optional previous topology.
+-- Preserves daemon-managed fields from old nodes via 'mergeNodeState' and
+-- deduplicates entries that represent the same hostname with different IPs.
+mergeTopology :: ClusterTopology -> Maybe ClusterTopology -> ClusterTopology
+mergeTopology newTopo Nothing = newTopo
+mergeTopology newTopo (Just oldTopo) =
+  newTopo { ctNodes = deduplicateByHostname
+              (Map.unionWith mergeNodeState (ctNodes newTopo) (ctNodes oldTopo)) }
 
 -- | When merging topology discovery results with existing state, preserve
 -- daemon-managed node fields. The monitoring workers are the authoritative
@@ -335,20 +346,11 @@ monitorNode nid = do
       Right _  -> pure ()
   logHealthChange nid mOldNs ns'''
   -- Fire lag threshold hooks on Lagging health transitions
+  let lagActions = decideLagActions (fmap nsHealth mOldNs) (nsHealth ns''')
   liftIO $ do
     mHooks <- readTVarIO (envHooks env)
-    ts     <- getCurrentTimestamp
-    let oldHealth = fmap nsHealth mOldNs
-        newHealth = nsHealth ns'''
-        baseEnv   = buildLagHookEnv (ccName cc) nid ts
-    case (oldHealth, newHealth) of
-      (Just (Lagging _), Lagging _) -> pure ()  -- already lagging, no transition
-      (_, Lagging lag) ->
-        runHookFireForget mHooks hcOnLagThresholdExceeded
-          baseEnv { hookLagSeconds = Just lag }
-      (Just (Lagging _), _) ->
-        runHookFireForget mHooks hcOnLagThresholdRecovered baseEnv
-      _ -> pure ()
+    forM_ [e | FireHook e <- lagActions] $
+      executeHookAction mHooks (ccName cc) (Just nid)
   -- Use atomic read-modify-write to preserve nsRole/nsPaused from the current
   -- topology. This prevents race conditions where failover or pause/resume
   -- commands change these fields between the worker's read and write.
@@ -434,6 +436,53 @@ decideClusterActions fc topo newHealth =
         | transitioned, newHealth == UnreachableSource ]
   in hookActions ++ failoverActions ++ fenceActions ++ replicaCheckActions
 
+-- | Pure: decide which hook actions to fire on a topology drift transition.
+-- Only fires on False→True transition to avoid repeated firings.
+decideDriftActions :: Bool -> Bool -> [DriftCondition] -> [ClusterAction]
+decideDriftActions hasDrift wasInDrift driftConditions
+  | hasDrift && not wasInDrift =
+      [ FireHook (OnTopologyDrift dt dd)
+      | dc <- driftConditions
+      , let (dt, dd) = renderDriftCondition dc
+      ]
+  | otherwise = []
+
+-- | Pure: decide which hook actions to fire on lag health transitions.
+decideLagActions :: Maybe NodeHealth -> NodeHealth -> [ClusterAction]
+decideLagActions oldHealth newHealth = case (oldHealth, newHealth) of
+  (Just (Lagging _), Lagging _) -> []   -- already lagging, no transition
+  (_, Lagging lag)              -> [FireHook (OnLagThresholdExceeded lag)]
+  (Just (Lagging _), _)        -> [FireHook OnLagThresholdRecovered]
+  _                             -> []
+
+-- | Execute a single hook action by dispatching to the appropriate hook script.
+-- The optional NodeId is used to set hookNode for lag threshold hooks.
+executeHookAction :: Maybe HooksConfig -> ClusterName -> Maybe NodeId -> HookEvent -> IO ()
+executeHookAction mHooks clusterName mNid event = do
+  ts <- getCurrentTimestamp
+  let base = HookEnv { hookClusterName  = clusterName
+                      , hookNewSource    = Nothing
+                      , hookOldSource    = Nothing
+                      , hookFailureType  = Nothing
+                      , hookTimestamp    = ts
+                      , hookLagSeconds   = Nothing
+                      , hookNode         = fmap (unHostName . nodeHost) mNid
+                      , hookDriftType    = Nothing
+                      , hookDriftDetails = Nothing
+                      }
+  case event of
+    OnFailureDetection ft ->
+      runHookFireForget mHooks hcOnFailureDetection
+        base { hookFailureType = Just ft }
+    OnTopologyDrift dt dd ->
+      runHookFireForget mHooks hcOnTopologyDrift
+        base { hookDriftType = Just dt, hookDriftDetails = Just dd }
+    OnLagThresholdExceeded lag ->
+      runHookFireForget mHooks hcOnLagThresholdExceeded
+        base { hookLagSeconds = Just lag }
+    OnLagThresholdRecovered ->
+      runHookFireForget mHooks hcOnLagThresholdRecovered base
+
 recomputeClusterHealth :: App ()
 recomputeClusterHealth = do
   tvar <- asks envDaemonState
@@ -450,21 +499,11 @@ recomputeClusterHealth = do
           actions     = decideClusterActions fc topo newHealth
       let transitioned    = ctHealth topo /= newHealth
           observedHealthy = ctObservedHealthy topo || newHealth == Healthy
-      -- Fire on_failure_detection hooks (decided by decideClusterActions)
-      liftIO $ forM_ [ft | FireHook (OnFailureDetection ft) <- actions] $ \ft -> do
+      -- Fire hook actions (decided by decideClusterActions)
+      liftIO $ do
         mHooks <- readTVarIO (envHooks env)
-        ts <- getCurrentTimestamp
-        let hookEnv = HookEnv { hookClusterName  = ccName cc
-                               , hookNewSource    = Nothing
-                               , hookOldSource    = Nothing
-                               , hookFailureType  = Just ft
-                               , hookTimestamp    = ts
-                               , hookLagSeconds   = Nothing
-                               , hookNode         = Nothing
-                               , hookDriftType    = Nothing
-                               , hookDriftDetails = Nothing
-                               }
-        runHookFireForget mHooks hcOnFailureDetection hookEnv
+        forM_ [e | FireHook e <- actions] $
+          executeHookAction mHooks (ccName cc) Nothing
       -- Log all health transitions for observability
       when transitioned $ liftIO $ do
         logger <- readTVarIO (envLogger env)
