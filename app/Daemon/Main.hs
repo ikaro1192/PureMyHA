@@ -22,7 +22,8 @@ import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.HTTP.Server (startHTTPServer)
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction)
 import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, setLogLevel, logInfo, logWarn)
-import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker)
+import PureMyHA.Monitor.StateManager (newEventQueue, stateManager)
+import PureMyHA.Monitor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker, emergencyReplicaCheck)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
 import PureMyHA.Types (ClusterTopology(..), unClusterName)
@@ -131,6 +132,16 @@ startAllWorkers clusterEnvs socketPath tvar loggerVar = do
         | env <- clusterEnvs
         ]
 
+  -- Spawn stateManager threads (one per cluster, before monitor workers)
+  stateManagerAsyncs <- mapM (\env -> do
+    let clName = ccName (envCluster env)
+    clusterTVars <- readTVarIO tvar
+    case Map.lookup clName clusterTVars of
+      Nothing    -> error $ "BUG: cluster TVar not found for " <> show (unClusterName clName)
+      Just ctVar -> async $ stateManager (envEventQueue env) ctVar env
+                              (runApp env emergencyReplicaCheck)
+    ) clusterEnvs
+
   (registries, workerLists) <- fmap unzip $ mapM
     (\env -> runApp env startMonitorWorkers)
     clusterEnvs
@@ -147,7 +158,7 @@ startAllWorkers clusterEnvs socketPath tvar loggerVar = do
 
   ipcAsync <- async $ startIPCServer tvar clusterMap discoveryMap socketPath loggerVar
 
-  pure $ ipcAsync : monitorWorkers <> refreshWorkers
+  pure $ ipcAsync : stateManagerAsyncs <> monitorWorkers <> refreshWorkers
 
 awaitShutdownAndCleanup :: TVar Logger -> TMVar () -> [Async ()] -> TVar (Maybe (Async ())) -> IO ()
 awaitShutdownAndCleanup loggerVar shutdownVar allWorkers httpAsyncVar = do
@@ -172,6 +183,8 @@ initCluster tvar loggerVar (cc, pws) = do
   lock     <- newFailoverLock
   mcVar    <- newTVarIO (ccMonitoring cc)
   hooksVar <- newTVarIO (ccHooks cc)
+  let nodeCount = length (NE.toList (ccNodes cc))
+  queue    <- newEventQueue nodeCount
   let env = ClusterEnv
         { envDaemonState = tvar
         , envCluster     = cc
@@ -183,6 +196,7 @@ initCluster tvar loggerVar (cc, pws) = do
         , envLock        = lock
         , envLogger      = loggerVar
         , envTLS         = ccTLS cc
+        , envEventQueue  = queue
         }
   topo <- runApp env discoverTopology
   logger <- readTVarIO loggerVar

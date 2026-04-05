@@ -1,16 +1,17 @@
 module PureMyHA.Failover.Demote (runDemote, dryRunDemote) where
 
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM (atomically, writeTBQueue)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Data.Text (Text)
 import qualified Data.Text as T
 import PureMyHA.Config (ClusterConfig (..))
 import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getReplCredentials, getTLSConfig, appLogInfo, appLogError)
+import PureMyHA.Monitor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
   ( stopReplica, setReadOnly, changeReplicationSourceTo, startReplica )
-import PureMyHA.Topology.State (getClusterTopology, updateNodeState)
+import PureMyHA.Topology.State (getClusterTopology)
 import PureMyHA.Types
 
 -- | Dry-run demote: show SQL statements that would be executed without running them
@@ -74,8 +75,8 @@ runDemote demoteHost srcHost = do
               appLogError $ "[" <> unClusterName (ccName cc) <> "] Demote failed: " <> err
               pure (Left err)
             Right () -> do
-              liftIO $ atomically $ updateNodeState tvar (ccName cc)
-                (demoteNs { nsRole = Replica })
+              queue <- asks envEventQueue
+              liftIO $ atomically $ writeTBQueue queue (NodeDemoted (nsNodeId demoteNs))
               appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Demote completed: "
                         <> unHostName demoteHost <> " is now a replica"
               pure (Right ())

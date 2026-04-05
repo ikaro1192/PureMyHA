@@ -50,6 +50,8 @@ library
     PureMyHA.Topology.State
     PureMyHA.Monitor.Worker
     PureMyHA.Monitor.Detector
+    PureMyHA.Monitor.Event
+    PureMyHA.Monitor.StateManager
     PureMyHA.Failover.Candidate
     PureMyHA.Failover.Auto
     PureMyHA.Failover.Demote
@@ -110,6 +112,7 @@ test-suite puremyha-test
   main-is:         Spec.hs
   other-modules:
     Fixtures
+    PureMyHA.EventSpec
     PureMyHA.ConfigSpec
     PureMyHA.GTIDSpec
     PureMyHA.DetectorSpec

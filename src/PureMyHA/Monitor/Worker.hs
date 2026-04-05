@@ -4,6 +4,7 @@ module PureMyHA.Monitor.Worker
   , WorkerRegistry
   , monitorNode
   , runWorker
+  , emergencyReplicaCheck
   , suppressBelowThreshold
   , buildLagHookEnv
   , enrichErrantGtids
@@ -12,12 +13,7 @@ module PureMyHA.Monitor.Worker
   , detectAndPruneStaleWorkers
   , probeTimeoutMicros
   , mergeNodeState
-  , DriftCondition (..)
   , detectTopologyDrift
-  , decideClusterActions
-  , decideDriftActions
-  , decideLagActions
-  , executeHookAction
   , mergeTopology
   , computeNewNodes
   , computeDriftConditions
@@ -25,10 +21,10 @@ module PureMyHA.Monitor.Worker
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.Async (async, wait, cancel, waitCatch, withAsync, Async)
-import Control.Concurrent.STM (atomically, TVar, newTVarIO, modifyTVar', readTVarIO)
+import Control.Concurrent.STM (atomically, TVar, newTVarIO, modifyTVar', readTVarIO, writeTBQueue)
 import Control.Exception (SomeException, catch)
 import System.Timeout (timeout)
-import Control.Monad (when, forM, forM_, unless)
+import Control.Monad (forM, forM_, unless)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (ask, asks)
 import qualified Data.List.NonEmpty as NE
@@ -38,16 +34,15 @@ import qualified Data.Text as T
 import Data.Time (getCurrentTime, NominalDiffTime)
 import PureMyHA.Config
 import PureMyHA.Env
-import PureMyHA.Failover.Auto (runAutoFailover, runAutoFence)
-import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
-import PureMyHA.Logger (logDebug, logInfo, logWarn)
+import PureMyHA.Hook (HookEnv (..))
+import PureMyHA.Logger (logDebug)
+import PureMyHA.Monitor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
 import PureMyHA.MySQL.GTID (emptyGtidSet)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.Discovery (discoverTopology, deduplicateByHostname)
 import PureMyHA.Topology.State
 import PureMyHA.Types
-import PureMyHA.Monitor.Detector (detectClusterHealth, detectNodeHealth, identifySource)
 
 type WorkerRegistry = TVar (Map.Map NodeId (Async ()))
 
@@ -106,11 +101,12 @@ runTopologyRefresh reg = do
   env <- ask
   let cc   = envCluster env
       tvar = envDaemonState env
+      queue = envEventQueue env
   -- 1. Discover + merge topology (pure merge)
   newTopo  <- discoverTopology
   mOldTopo <- liftIO $ getClusterTopology tvar (ccName cc)
   let mergedTopo = mergeTopology newTopo mOldTopo
-  liftIO $ atomically $ updateClusterTopology tvar mergedTopo
+  liftIO $ atomically $ writeTBQueue queue (TopologyRefreshed mergedTopo)
   -- 2. Worker management: start new, prune stale (pure decisions)
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes mergedTopo)
@@ -125,18 +121,10 @@ runTopologyRefresh reg = do
   unless (null staleNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: pruning "
       <> T.pack (show (length staleNodes)) <> " stale worker(s)"
-  -- 3. Drift detection (pure computation + IO state update + pure decision)
+  -- 3. Drift detection — emit event; reducer compares old vs new and fires hooks
   let driftConditions = computeDriftConditions cc mergedTopo
       hasDrift        = not (null driftConditions)
-  wasInDrift <- liftIO $ atomically $ do
-    mTopo <- getClusterTopologySTM tvar (ccName cc)
-    updateClusterTopologyDrift tvar (ccName cc) hasDrift
-    pure (maybe False ctTopologyDrift mTopo)
-  let driftActions = decideDriftActions hasDrift wasInDrift driftConditions
-  liftIO $ do
-    mHooks <- readTVarIO (envHooks env)
-    forM_ [e | FireHook e <- driftActions] $
-      executeHookAction mHooks (ccName cc) Nothing
+  liftIO $ atomically $ writeTBQueue queue (TopologyDriftUpdated hasDrift driftConditions)
 
 -- | Compute newly discovered nodes: those in the discovered set but not yet
 -- in the known (registered) set.
@@ -185,13 +173,6 @@ suppressBelowThreshold threshold failCount mOldNs ns
   | failCount > 0 && failCount < threshold =
       ns { nsHealth = maybe Healthy nsHealth mOldNs }
   | otherwise = ns
-
--- | Conditions representing a topology drift from the expected state.
-data DriftCondition
-  = MissingNode HostName                  -- ^ A configured node not found in discovered topology
-  | UnexpectedNode HostName               -- ^ A discovered node not present in config
-  | ReplicaCountBelowThreshold Int Int    -- ^ (actual healthy replicas, min_replicas_for_failover)
-  deriving (Eq, Show)
 
 -- | Pure: compute drift conditions from cluster config and merged topology.
 -- Extracts configured hosts, filters reachable nodes, counts healthy replicas,
@@ -243,13 +224,6 @@ mergeNodeState new old = new
   , nsRole                = nsRole old
   }
 
--- | Render a DriftCondition as (PUREMYHA_DRIFT_TYPE, PUREMYHA_DRIFT_DETAILS).
-renderDriftCondition :: DriftCondition -> (T.Text, T.Text)
-renderDriftCondition (MissingNode h)                      = ("missing_node", unHostName h)
-renderDriftCondition (UnexpectedNode h)                   = ("unexpected_node", unHostName h)
-renderDriftCondition (ReplicaCountBelowThreshold act thr) =
-  ("replica_count_below_threshold", T.pack (show act) <> " < " <> T.pack (show thr))
-
 -- | Build the base HookEnv for lag threshold hooks.
 -- Sets hookNode to the replica's hostname so hook scripts can identify
 -- which replica is lagging in multi-replica topologies.
@@ -266,35 +240,29 @@ buildLagHookEnv clusterName nid ts =
            , hookDriftDetails = Nothing
            }
 
--- | Perform a single monitoring cycle for a node
+-- | Perform a single monitoring cycle for a node.
+-- The worker only does IO (probe MySQL, enrich errant GTIDs) and emits
+-- a raw NodeProbed event. All state-dependent computation (failure counting,
+-- health detection, threshold suppression, role preservation) happens in the
+-- reducer (applyEvent).
 monitorNode :: NodeId -> App ()
 monitorNode nid = do
   env  <- ask
-  tvar <- asks envDaemonState
   cc   <- asks envCluster
-  fdc  <- asks envDetection
   now  <- liftIO getCurrentTime
   mc   <- liftIO $ readTVarIO (envMonitoring env)
   creds <- getMonCredentials
   mTls  <- getTLSConfig
   let ci        = makeConnectInfo nid creds
-      threshold = unAtLeastOne (fdcConsecutiveFailuresForDead fdc)
       retries   = unAtLeastOne (mcConnectRetries mc)
       backoff   = mcConnectRetryBackoff mc
       cap       = unPositiveDuration (mcConnectTimeout mc)
       logRetry msg = readTVarIO (envLogger env) >>= \l ->
         logDebug l ("[" <> unClusterName (ccName cc) <> "] Node " <> unHostName (nodeHost nid) <> ": " <> msg)
-  -- Read old state before connecting for prevFailures count
-  mOldNs <- liftIO $ do
-    mTopo <- getClusterTopology tvar (ccName cc)
-    pure $ mTopo >>= \t -> Map.lookup nid (ctNodes t)
-  let prevFailures = maybe 0 nsConsecutiveFailures mOldNs
   -- Run the probe in a separate thread so that timeout can interrupt it via
   -- waitCatch (STM — always interruptible) rather than wrapping the I/O directly.
   -- mysql-haskell's readPacket blocks in a C recv() that async exceptions cannot
   -- reliably interrupt; by moving the I/O to a sibling thread we avoid that.
-  -- The probe thread runs to completion once MySQL responds; it holds no shared
-  -- locks so no deadlock is possible.
   let tMicros = probeTimeoutMicros cap retries
   result <- liftIO $ do
     probeAsync <- async $ withNodeConnRetry retries backoff cap logRetry mTls ci $ \conn -> do
@@ -306,74 +274,26 @@ monitorNode nid = do
       Nothing          -> return (Left "probe timeout")
       Just (Left  e)   -> return (Left (T.pack (show e)))
       Just (Right r)   -> return r
-  let newFailures = case result of { Left _ -> prevFailures + 1; Right _ -> 0 }
-  let ns = case result of
-        Left err ->
-          NodeState
-            { nsNodeId              = nid
-            , nsRole                = maybe Replica nsRole mOldNs  -- preserve existing role on error
-            , nsHealth              = NodeUnreachable err
-            , nsProbeResult         = ProbeFailure err
-            , nsErrantGtids         = emptyGtidSet
-            , nsPaused              = False    -- actual value read atomically at write time
-            , nsConsecutiveFailures = newFailures
-            , nsFenced              = False    -- actual value read atomically at write time
-            }
-        Right (mRs, gtidExec) ->
-          NodeState
-            { nsNodeId              = nid
-            , nsRole                = if mRs == Nothing then Source else Replica
-            , nsHealth              = Healthy
-            , nsProbeResult         = ProbeSuccess now mRs gtidExec
-            , nsErrantGtids         = emptyGtidSet
-            , nsPaused              = False    -- actual value read atomically at write time
-            , nsConsecutiveFailures = 0
-            , nsFenced              = False    -- actual value read atomically at write time
-            }
-  -- Update errant GTIDs by querying MySQL
-  ns' <- enrichErrantGtids ns
-  let lagThreshold = Just (round (realToFrac (mcReplicationLagCritical mc) :: Double) :: Int)
-      ns''  = ns' { nsHealth = detectNodeHealth lagThreshold ns' }
-  -- Apply consecutive failure threshold: suppress unhealthy state until N consecutive failures
-  let ns''' = suppressBelowThreshold threshold newFailures mOldNs ns''
-  -- Log below-threshold failures for observability
-  liftIO $ when (newFailures > 0 && newFailures < threshold) $ do
-    logger <- readTVarIO (envLogger env)
-    case result of
-      Left err -> logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Node " <> unHostName (nodeHost nid)
-                    <> " probe failed (" <> T.pack (show newFailures) <> "/"
-                    <> T.pack (show threshold) <> "): " <> err
-      Right _  -> pure ()
-  logHealthChange nid mOldNs ns'''
-  -- Fire lag threshold hooks on Lagging health transitions
-  let lagActions = decideLagActions (fmap nsHealth mOldNs) (nsHealth ns''')
-  liftIO $ do
-    mHooks <- readTVarIO (envHooks env)
-    forM_ [e | FireHook e <- lagActions] $
-      executeHookAction mHooks (ccName cc) (Just nid)
-  -- Use atomic read-modify-write to preserve nsRole/nsPaused from the current
-  -- topology. This prevents race conditions where failover or pause/resume
-  -- commands change these fields between the worker's read and write.
-  liftIO $ atomically $ updateNodeStatePreserveRole tvar (ccName cc) ns'''
-  -- Recompute cluster-level health
-  recomputeClusterHealth
+  -- Build the raw ProbeResult
+  let probeResult = case result of
+        Left err            -> ProbeFailure err
+        Right (mRs, gtidExec) -> ProbeSuccess now mRs gtidExec
+  -- Enrich errant GTIDs (requires IO to query source node)
+  let dummyNs = NodeState
+        { nsNodeId              = nid
+        , nsRole                = Replica
+        , nsHealth              = Healthy
+        , nsProbeResult         = probeResult
+        , nsErrantGtids         = emptyGtidSet
+        , nsPaused              = False
+        , nsConsecutiveFailures = 0
+        , nsFenced              = False
+        }
+  enriched <- enrichErrantGtids dummyNs
+  -- Emit the raw fact — all derived state computation happens in applyEvent
+  liftIO $ atomically $ writeTBQueue (envEventQueue env) $
+    NodeProbed nid probeResult (nsErrantGtids enriched)
 
-logHealthChange :: NodeId -> Maybe NodeState -> NodeState -> App ()
-logHealthChange nid mOld new = do
-  clusterName <- getClusterName
-  logger <- asks envLogger >>= liftIO . readTVarIO
-  if nsPaused new
-    then pure ()
-    else case (fmap nsHealth mOld, nsHealth new) of
-      (Just Healthy, newH) | Just err <- healthErrorMessage newH ->
-        liftIO $ logWarn logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " unreachable: " <> err
-      (Just oldH, Healthy) | isUnhealthy oldH ->
-        liftIO $ logInfo logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " recovered"
-      (Nothing, newH) | Just err <- healthErrorMessage newH ->
-        liftIO $ logWarn logger $ "[" <> unClusterName clusterName <> "] Node " <> host <> " initial connect failed: " <> err
-      _ -> pure ()
-  where
-    host = unHostName (nodeHost nid)
 
 enrichErrantGtids :: NodeState -> App NodeState
 enrichErrantGtids ns = do
@@ -410,112 +330,6 @@ enrichErrantGtids ns = do
                     Just (Left _)                 -> pure ns
                     Just (Right (Left _))         -> pure ns
                     Just (Right (Right errant))   -> pure ns { nsErrantGtids = errant }
-
--- | Pure decision function: given the current config, previous topology snapshot,
--- and the newly computed cluster health, return the list of actions to execute.
--- This separates "what to do" (pure) from "how to do it" (IO).
-decideClusterActions :: FailoverConfig -> ClusterTopology -> NodeHealth -> [ClusterAction]
-decideClusterActions fc topo newHealth =
-  let transitioned    = ctHealth topo /= newHealth
-      observedHealthy = fcFailoverWithoutObservedHealthy fc || ctObservedHealthy topo || newHealth == Healthy
-      hookActions
-        | transitioned = case newHealth of
-            DeadSource               -> [FireHook (OnFailureDetection "DeadSource")]
-            InsufficientQuorum       -> [FireHook (OnFailureDetection "InsufficientQuorum")]
-            DeadSourceAndAllReplicas -> [FireHook (OnFailureDetection "DeadSourceAndAllReplicas")]
-            _                        -> []
-        | otherwise = []
-      failoverActions =
-        [ TriggerAutoFailover
-        | newHealth == DeadSource, fcAutoFailover fc, observedHealthy ]
-      fenceActions =
-        [ TriggerAutoFence
-        | transitioned, newHealth == SplitBrainSuspected, fcAutoFence fc, observedHealthy ]
-      replicaCheckActions =
-        [ TriggerEmergencyReplicaCheck
-        | transitioned, newHealth == UnreachableSource ]
-  in hookActions ++ failoverActions ++ fenceActions ++ replicaCheckActions
-
--- | Pure: decide which hook actions to fire on a topology drift transition.
--- Only fires on False→True transition to avoid repeated firings.
-decideDriftActions :: Bool -> Bool -> [DriftCondition] -> [ClusterAction]
-decideDriftActions hasDrift wasInDrift driftConditions
-  | hasDrift && not wasInDrift =
-      [ FireHook (OnTopologyDrift dt dd)
-      | dc <- driftConditions
-      , let (dt, dd) = renderDriftCondition dc
-      ]
-  | otherwise = []
-
--- | Pure: decide which hook actions to fire on lag health transitions.
-decideLagActions :: Maybe NodeHealth -> NodeHealth -> [ClusterAction]
-decideLagActions oldHealth newHealth = case (oldHealth, newHealth) of
-  (Just (Lagging _), Lagging _) -> []   -- already lagging, no transition
-  (_, Lagging lag)              -> [FireHook (OnLagThresholdExceeded lag)]
-  (Just (Lagging _), _)        -> [FireHook OnLagThresholdRecovered]
-  _                             -> []
-
--- | Execute a single hook action by dispatching to the appropriate hook script.
--- The optional NodeId is used to set hookNode for lag threshold hooks.
-executeHookAction :: Maybe HooksConfig -> ClusterName -> Maybe NodeId -> HookEvent -> IO ()
-executeHookAction mHooks clusterName mNid event = do
-  ts <- getCurrentTimestamp
-  let base = HookEnv { hookClusterName  = clusterName
-                      , hookNewSource    = Nothing
-                      , hookOldSource    = Nothing
-                      , hookFailureType  = Nothing
-                      , hookTimestamp    = ts
-                      , hookLagSeconds   = Nothing
-                      , hookNode         = fmap (unHostName . nodeHost) mNid
-                      , hookDriftType    = Nothing
-                      , hookDriftDetails = Nothing
-                      }
-  case event of
-    OnFailureDetection ft ->
-      runHookFireForget mHooks hcOnFailureDetection
-        base { hookFailureType = Just ft }
-    OnTopologyDrift dt dd ->
-      runHookFireForget mHooks hcOnTopologyDrift
-        base { hookDriftType = Just dt, hookDriftDetails = Just dd }
-    OnLagThresholdExceeded lag ->
-      runHookFireForget mHooks hcOnLagThresholdExceeded
-        base { hookLagSeconds = Just lag }
-    OnLagThresholdRecovered ->
-      runHookFireForget mHooks hcOnLagThresholdRecovered base
-
-recomputeClusterHealth :: App ()
-recomputeClusterHealth = do
-  tvar <- asks envDaemonState
-  cc   <- asks envCluster
-  fc   <- asks envFailover
-  env  <- ask
-  mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
-  case mTopo of
-    Nothing -> pure ()
-    Just topo -> do
-      let minReplicas = fcMinReplicasForFailover fc
-          newHealth   = detectClusterHealth minReplicas (ctNodes topo)
-          newSrcId    = identifySource (Map.elems (ctNodes topo))
-          actions     = decideClusterActions fc topo newHealth
-      let transitioned    = ctHealth topo /= newHealth
-          observedHealthy = ctObservedHealthy topo || newHealth == Healthy
-      -- Fire hook actions (decided by decideClusterActions)
-      liftIO $ do
-        mHooks <- readTVarIO (envHooks env)
-        forM_ [e | FireHook e <- actions] $
-          executeHookAction mHooks (ccName cc) Nothing
-      -- Log all health transitions for observability
-      when transitioned $ liftIO $ do
-        logger <- readTVarIO (envLogger env)
-        logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Cluster health: "
-          <> T.pack (show (ctHealth topo)) <> " \x2192 " <> T.pack (show newHealth)
-      liftIO $ atomically $ updateClusterHealthFields tvar (ccName cc) newHealth newSrcId observedHealthy
-      -- Execute triggered actions (decided by decideClusterActions)
-      liftIO $ forM_ actions $ \action -> case action of
-        TriggerAutoFailover          -> do { _ <- async (runApp env runAutoFailover); pure () }
-        TriggerAutoFence             -> do { _ <- async (runApp env runAutoFence); pure () }
-        TriggerEmergencyReplicaCheck -> do { _ <- async (runApp env emergencyReplicaCheck); pure () }
-        FireHook _                   -> pure ()  -- already handled above
 
 -- | When UnreachableSource is first detected, immediately re-probe IOYes replicas
 -- to confirm whether they can actually reach the source (Orchestrator-style).
