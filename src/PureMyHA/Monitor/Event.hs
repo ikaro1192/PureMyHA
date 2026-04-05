@@ -29,7 +29,8 @@ data MonitorEvent
       { neMergedTopology :: ClusterTopology
       }
   | TopologyDriftUpdated
-      { neDrift :: Bool
+      { neDrift          :: Bool
+      , neDriftConditions :: [DriftCondition]
       }
   | FailoverCommitted
       { neNewSourceId        :: NodeId
@@ -218,16 +219,16 @@ applyEvent _ _ _ ct (TopologyRefreshed newTopo) =
         }
   in (merged, [])
 
--- TopologyDriftUpdated: set drift flag, fire hooks on False→True transition
-applyEvent _ _ _ ct (TopologyDriftUpdated hasDrift) =
+-- TopologyDriftUpdated: set drift flag, fire per-condition hooks on False→True transition
+applyEvent _ _ _ ct (TopologyDriftUpdated hasDrift driftConditions) =
   let wasInDrift = ctTopologyDrift ct
       newCt = ct { ctTopologyDrift = hasDrift }
       effects
         | hasDrift && not wasInDrift =
-            -- Drift hook effects are emitted; the stateManager will need
-            -- the drift conditions to build hook env. We emit a generic
-            -- OnTopologyDrift hook here; the caller passes conditions separately.
-            [FireHookEffect (OnTopologyDrift "drift_detected" "topology drift detected") Nothing]
+            [ FireHookEffect (OnTopologyDrift dt dd) Nothing
+            | dc <- driftConditions
+            , let (dt, dd) = renderDriftCondition dc
+            ]
         | otherwise = []
   in (newCt, effects)
 

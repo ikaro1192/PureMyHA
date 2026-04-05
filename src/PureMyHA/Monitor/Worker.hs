@@ -13,9 +13,7 @@ module PureMyHA.Monitor.Worker
   , detectAndPruneStaleWorkers
   , probeTimeoutMicros
   , mergeNodeState
-  , DriftCondition (..)
   , detectTopologyDrift
-  , decideDriftActions
   , mergeTopology
   , computeNewNodes
   , computeDriftConditions
@@ -126,7 +124,7 @@ runTopologyRefresh reg = do
   -- 3. Drift detection — emit event; reducer compares old vs new and fires hooks
   let driftConditions = computeDriftConditions cc mergedTopo
       hasDrift        = not (null driftConditions)
-  liftIO $ atomically $ writeTBQueue queue (TopologyDriftUpdated hasDrift)
+  liftIO $ atomically $ writeTBQueue queue (TopologyDriftUpdated hasDrift driftConditions)
 
 -- | Compute newly discovered nodes: those in the discovered set but not yet
 -- in the known (registered) set.
@@ -175,13 +173,6 @@ suppressBelowThreshold threshold failCount mOldNs ns
   | failCount > 0 && failCount < threshold =
       ns { nsHealth = maybe Healthy nsHealth mOldNs }
   | otherwise = ns
-
--- | Conditions representing a topology drift from the expected state.
-data DriftCondition
-  = MissingNode HostName                  -- ^ A configured node not found in discovered topology
-  | UnexpectedNode HostName               -- ^ A discovered node not present in config
-  | ReplicaCountBelowThreshold Int Int    -- ^ (actual healthy replicas, min_replicas_for_failover)
-  deriving (Eq, Show)
 
 -- | Pure: compute drift conditions from cluster config and merged topology.
 -- Extracts configured hosts, filters reachable nodes, counts healthy replicas,
@@ -232,13 +223,6 @@ mergeNodeState new old = new
   , nsConsecutiveFailures = nsConsecutiveFailures old
   , nsRole                = nsRole old
   }
-
--- | Render a DriftCondition as (PUREMYHA_DRIFT_TYPE, PUREMYHA_DRIFT_DETAILS).
-renderDriftCondition :: DriftCondition -> (T.Text, T.Text)
-renderDriftCondition (MissingNode h)                      = ("missing_node", unHostName h)
-renderDriftCondition (UnexpectedNode h)                   = ("unexpected_node", unHostName h)
-renderDriftCondition (ReplicaCountBelowThreshold act thr) =
-  ("replica_count_below_threshold", T.pack (show act) <> " < " <> T.pack (show thr))
 
 -- | Build the base HookEnv for lag threshold hooks.
 -- Sets hookNode to the replica's hostname so hook scripts can identify
@@ -346,18 +330,6 @@ enrichErrantGtids ns = do
                     Just (Left _)                 -> pure ns
                     Just (Right (Left _))         -> pure ns
                     Just (Right (Right errant))   -> pure ns { nsErrantGtids = errant }
-
--- | Pure: decide which hook actions to fire on a topology drift transition.
--- Only fires on False→True transition to avoid repeated firings.
-decideDriftActions :: Bool -> Bool -> [DriftCondition] -> [ClusterAction]
-decideDriftActions hasDrift wasInDrift driftConditions
-  | hasDrift && not wasInDrift =
-      [ FireHook (OnTopologyDrift dt dd)
-      | dc <- driftConditions
-      , let (dt, dd) = renderDriftCondition dc
-      ]
-  | otherwise = []
-
 
 -- | When UnreachableSource is first detected, immediately re-probe IOYes replicas
 -- to confirm whether they can actually reach the source (Orchestrator-style).

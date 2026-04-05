@@ -184,13 +184,15 @@ spec = describe "PureMyHA.Monitor.Event" $ do
   describe "applyEvent TopologyDriftUpdated" $ do
     it "emits drift hook on False -> True transition" $ do
       let topo = mkTopo clusterHealthy
-          event = TopologyDriftUpdated True
+          event = TopologyDriftUpdated True [MissingNode (HostName "missing-host")]
           (_, effects) = applyEvent testFdc testFc testMc topo event
-      [e | FireHookEffect e _ <- effects] `shouldSatisfy` (not . null)
+          hooks = [e | FireHookEffect e _ <- effects]
+      hooks `shouldSatisfy` (not . null)
+      hooks `shouldBe` [OnTopologyDrift "missing_node" "missing-host"]
 
     it "does not emit hook on True -> True (no transition)" $ do
       let topo = (mkTopo clusterHealthy) { ctTopologyDrift = True }
-          event = TopologyDriftUpdated True
+          event = TopologyDriftUpdated True [MissingNode (HostName "missing-host")]
           (_, effects) = applyEvent testFdc testFc testMc topo event
       [e | FireHookEffect e _ <- effects] `shouldBe` []
 

@@ -29,6 +29,8 @@ module PureMyHA.Types
   , ErrantGtidInfo (..)
   , HookEvent (..)
   , ClusterAction (..)
+  , DriftCondition (..)
+  , renderDriftCondition
   ) where
 
 import Data.Aeson (FromJSON (..), ToJSON (..))
@@ -278,6 +280,20 @@ data ClusterAction
   | TriggerEmergencyReplicaCheck
   | FireHook HookEvent
   deriving (Eq, Show)
+
+-- | Conditions representing a topology drift from the expected state.
+data DriftCondition
+  = MissingNode HostName                  -- ^ A configured node not found in discovered topology
+  | UnexpectedNode HostName               -- ^ A discovered node not present in config
+  | ReplicaCountBelowThreshold Int Int    -- ^ (actual healthy replicas, min_replicas_for_failover)
+  deriving (Eq, Show)
+
+-- | Render a DriftCondition as (PUREMYHA_DRIFT_TYPE, PUREMYHA_DRIFT_DETAILS).
+renderDriftCondition :: DriftCondition -> (Text, Text)
+renderDriftCondition (MissingNode h)                      = ("missing_node", unHostName h)
+renderDriftCondition (UnexpectedNode h)                   = ("unexpected_node", unHostName h)
+renderDriftCondition (ReplicaCountBelowThreshold act thr) =
+  ("replica_count_below_threshold", T.pack (show act) <> " < " <> T.pack (show thr))
 
 data ErrantGtidInfo = ErrantGtidInfo
   { egiNodeId     :: NodeId
