@@ -222,7 +222,7 @@ reconnectToNew newSourceId ns = do
     pure ()
 
 -- | Wait up to timeoutSecs for user connections to close, then KILL remaining ones.
--- Polls SHOW PROCESSLIST every second. If connection to old source is lost, proceeds silently.
+-- Polls performance_schema.processlist every second. If connection to old source is lost, proceeds silently.
 waitThenKill
   :: Maybe TLSConfig
   -> ConnectInfo
