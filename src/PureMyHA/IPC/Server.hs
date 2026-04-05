@@ -22,7 +22,7 @@ import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Logger (Logger, setLogLevel)
-import PureMyHA.Clone (runClone)
+import PureMyHA.MySQL.Clone (runClone)
 import PureMyHA.Failover.Auto (doUnfence, simulateFailover)
 import PureMyHA.Failover.Demote (runDemote, dryRunDemote)
 import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica)

@@ -40,7 +40,7 @@ library
     PureMyHA.Logger
     PureMyHA.Env
     PureMyHA.Hook
-    PureMyHA.Clone
+    PureMyHA.MySQL.Clone
     PureMyHA.MySQL.Auth
     PureMyHA.MySQL.Connection
     PureMyHA.MySQL.Query
