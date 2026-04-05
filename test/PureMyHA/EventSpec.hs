@@ -112,6 +112,18 @@ spec = describe "PureMyHA.Monitor.Event" $ do
           mNs = Map.lookup replicaId (ctNodes newTopo)
       -- Role should be preserved as Source (from current state) during recovery block
       fmap nsRole mNs `shouldBe` Just Source
+      -- Health should be Healthy (Source ignores residual replica status)
+      fmap nsHealth mNs `shouldBe` Just Healthy
+
+    it "Source with residual IOConnecting replica status gets Healthy during recovery block" $ do
+      let promoted = Map.adjust (\ns -> ns { nsRole = Source, nsHealth = ReplicaIOConnecting }) replicaId baseNodes
+          topo = baseTopo { ctNodes = promoted, ctRecoveryBlockedUntil = Just fixedTime2 }
+          -- Probe returns residual replica status with IOConnecting (race with RESET REPLICA ALL)
+          event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOConnecting "uuid1:1-100")) emptyGtidSet) emptyGtidSet fixedTime
+          (newTopo, _) = applyEvent testFdc testFc testMc topo event
+          mNs = Map.lookup replicaId (ctNodes newTopo)
+      fmap nsRole mNs `shouldBe` Just Source
+      fmap nsHealth mNs `shouldBe` Just Healthy
 
     it "uses probe-inferred role when no recovery block" $ do
       let topo = baseTopo
@@ -152,6 +164,16 @@ spec = describe "PureMyHA.Monitor.Event" $ do
           event = FailoverCommitted replicaId [sourceId] fixedTime recoveryUntil
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
       fmap nsRole (Map.lookup sourceId (ctNodes newTopo)) `shouldBe` Just Replica
+      fmap nsRole (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just Source
+
+    it "resets promoted node health to Healthy" $ do
+      let -- Replica had ReplicaIOConnecting before failover (source was dead)
+          withIOConnecting = Map.adjust (\ns -> ns { nsHealth = ReplicaIOConnecting }) replicaId (clusterHealthy)
+          topo = mkTopo withIOConnecting
+          recoveryUntil = addUTCTime 300 fixedTime
+          event = FailoverCommitted replicaId [sourceId] fixedTime recoveryUntil
+          (newTopo, _) = applyEvent testFdc testFc testMc topo event
+      fmap nsHealth (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just Healthy
       fmap nsRole (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just Source
 
     it "sets ctLastFailoverAt and ctRecoveryBlockedUntil" $ do
@@ -251,6 +273,70 @@ spec = describe "PureMyHA.Monitor.Event" $ do
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
       fmap nsRole (Map.lookup sourceId (ctNodes newTopo)) `shouldBe` Just Replica
       fmap nsRole (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just Source
+
+  -- E2E scenario: chain events to simulate full failover lifecycle
+  describe "Failover E2E scenario" $ do
+    it "promoted SOURCE shows Healthy immediately after failover and through recovery" $ do
+      let db1 = NodeId "db1" 3306
+          db2 = NodeId "db2" 3306
+          db3 = NodeId "db3" 3306
+          -- Use threshold=1 so probe failures trigger immediately
+          fdc1 = testFdc { fdcConsecutiveFailuresForDead = AtLeastOne 1 }
+
+          -- Initial state: db1=Source(dead), db2=Replica(IOConnecting), db3=Replica(Healthy)
+          initialNodes = Map.fromList
+            [ (db1, (unreachableNode db1) { nsRole = Source })
+            , (db2, NodeState
+                { nsNodeId              = db2
+                , nsRole                = Replica
+                , nsHealth              = ReplicaIOConnecting
+                , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOConnecting "uuid1:1-100")) emptyGtidSet
+                , nsErrantGtids         = emptyGtidSet
+                , nsPaused              = False
+                , nsConsecutiveFailures = 0
+                , nsFenced              = False
+                })
+            , (db3, mkNodeState db3 Replica (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) Healthy)
+            ]
+          topo0 = (mkTopo initialNodes) { ctHealth = DeadSource }
+
+          -- Step 1: FailoverCommitted (promote db2, demote db1)
+          recoveryUntil = addUTCTime 300 fixedTime
+          foEvent = FailoverCommitted db2 [db1] fixedTime recoveryUntil
+          (topo1, _) = applyEvent fdc1 testFc testMc topo0 foEvent
+
+      -- Immediately after FO: db2 is Source with Healthy (stale health cleared)
+      fmap nsRole (Map.lookup db2 (ctNodes topo1)) `shouldBe` Just Source
+      fmap nsHealth (Map.lookup db2 (ctNodes topo1)) `shouldBe` Just Healthy
+      ctRecoveryBlockedUntil topo1 `shouldBe` Just recoveryUntil
+
+      let -- Step 2: NodeProbed db2 with residual IOConnecting (race with RESET REPLICA ALL)
+          probe2 = NodeProbed db2
+            (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOConnecting "uuid1:1-100")) emptyGtidSet)
+            emptyGtidSet fixedTime
+          (topo2, _) = applyEvent fdc1 testFc testMc topo1 probe2
+
+      -- Role preserved as Source, health is Healthy (Source ignores replica status)
+      fmap nsRole (Map.lookup db2 (ctNodes topo2)) `shouldBe` Just Source
+      fmap nsHealth (Map.lookup db2 (ctNodes topo2)) `shouldBe` Just Healthy
+      -- Cluster health should NOT be NeedsAttention due to Source's residual IO status
+      ctHealth topo2 `shouldNotBe` NeedsAttention "Replica IO thread not connected"
+
+      let -- Step 3: NodeProbed db2 with no replica status (RESET REPLICA ALL completed)
+          probe3 = NodeProbed db2 (ProbeSuccess fixedTime Nothing emptyGtidSet) emptyGtidSet fixedTime
+          (topo3, _) = applyEvent fdc1 testFc testMc topo2 probe3
+
+      fmap nsRole (Map.lookup db2 (ctNodes topo3)) `shouldBe` Just Source
+      fmap nsHealth (Map.lookup db2 (ctNodes topo3)) `shouldBe` Just Healthy
+
+      let -- Step 4: NodeProbed db3 reconnected to db2 (IOYes, source=db2)
+          probe4 = NodeProbed db3
+            (ProbeSuccess fixedTime (Just (mkReplicaStatus "db2" 3306 IOYes "uuid1:1-100")) emptyGtidSet)
+            emptyGtidSet fixedTime
+          (topo4, _) = applyEvent fdc1 testFc testMc topo3 probe4
+
+      fmap nsRole (Map.lookup db3 (ctNodes topo4)) `shouldBe` Just Replica
+      fmap nsHealth (Map.lookup db3 (ctNodes topo4)) `shouldBe` Just Healthy
 
 isLagExceeded :: HookEvent -> Bool
 isLagExceeded (OnLagThresholdExceeded _) = True

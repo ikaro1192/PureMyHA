@@ -108,10 +108,18 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
         ProbeSuccess{prReplicaStatus = Just _}  -> Replica
         ProbeFailure{} -> maybe Replica nsRole mOldNs
 
-      -- 4. Build raw node state
+      -- 3.5. Compute final role early (before health detection) so that
+      --      detectNodeHealth sees the correct role. During recovery block,
+      --      the promoted Source must not be treated as a Replica.
+      preserveRole = isJust (ctRecoveryBlockedUntil ct)
+      finalRole = if preserveRole
+                    then maybe inferredRole nsRole mOldNs
+                    else inferredRole
+
+      -- 4. Build raw node state with final role
       rawNs = NodeState
         { nsNodeId              = nid
-        , nsRole                = inferredRole
+        , nsRole                = finalRole
         , nsHealth              = Healthy   -- placeholder, computed below
         , nsProbeResult         = probeResult
         , nsErrantGtids         = errantGtids
@@ -131,14 +139,9 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
             healthNs { nsHealth = maybe Healthy nsHealth mOldNs }
         | otherwise = healthNs
 
-      -- 7. Preserve nsPaused, nsFenced, and conditionally nsRole
-      --    (replicates updateNodeStatePreserveRole logic)
-      preserveRole = isJust (ctRecoveryBlockedUntil ct)
+      -- 7. Preserve nsPaused and nsFenced from current state
       finalNs = suppressed
-        { nsRole   = if preserveRole
-                       then maybe (nsRole suppressed) nsRole mOldNs
-                       else nsRole suppressed
-        , nsPaused = maybe (nsPaused suppressed) nsPaused mOldNs
+        { nsPaused = maybe (nsPaused suppressed) nsPaused mOldNs
         , nsFenced = maybe (nsFenced suppressed) nsFenced mOldNs
         }
 
@@ -245,8 +248,8 @@ applyEvent _ _ _ ct (FailoverCommitted newSrcId oldSrcIds failoverAt recoveryBlo
   let -- Demote old sources to Replica
       demoteNode nodes srcId = Map.adjust (\ns -> ns { nsRole = Replica }) srcId nodes
       demotedNodes = foldl demoteNode (ctNodes ct) oldSrcIds
-      -- Promote new source
-      promotedNodes = Map.adjust (\ns -> ns { nsRole = Source }) newSrcId demotedNodes
+      -- Promote new source and reset stale health
+      promotedNodes = Map.adjust (\ns -> ns { nsRole = Source, nsHealth = Healthy }) newSrcId demotedNodes
       newCt = ct
         { ctNodes                = promotedNodes
         , ctLastFailoverAt       = Just failoverAt

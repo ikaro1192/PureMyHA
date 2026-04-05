@@ -64,12 +64,12 @@ replicaIOStopped ns = case nsProbeResult ns of
   _ -> False
 
 hasIoError :: [NodeState] -> Bool
-hasIoError = any $ \ns -> case nsProbeResult ns of
+hasIoError = any $ \ns -> not (isSource ns) && case nsProbeResult ns of
   ProbeSuccess{prReplicaStatus = Just rs} -> not (T.null (rsLastIOError rs))
   _ -> False
 
 hasIoConnecting :: [NodeState] -> Bool
-hasIoConnecting = any $ \ns -> case nsProbeResult ns of
+hasIoConnecting = any $ \ns -> not (isSource ns) && case nsProbeResult ns of
   ProbeSuccess{prReplicaStatus = Just rs} -> rsReplicaIORunning rs == IOConnecting
   _ -> False
 
@@ -80,8 +80,9 @@ detectNodeHealth mLagThreshold ns = case nsProbeResult ns of
   ProbeSuccess{prReplicaStatus = mrs}
     | not (isEmptyGtidSet (nsErrantGtids ns)) ->
         ErrantGtidDetected (nsErrantGtids ns)
+    | isSource ns -> Healthy  -- Source nodes ignore residual replica status
     | Just rs <- mrs -> detectReplicaHealth mLagThreshold rs
-    | otherwise      -> Healthy  -- source or standalone
+    | otherwise      -> Healthy  -- standalone
 
 detectReplicaHealth :: Maybe Int -> ReplicaStatus -> NodeHealth
 detectReplicaHealth mLagThreshold rs
