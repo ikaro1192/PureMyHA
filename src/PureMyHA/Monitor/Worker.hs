@@ -15,6 +15,9 @@ module PureMyHA.Monitor.Worker
   , DriftCondition (..)
   , detectTopologyDrift
   , decideClusterActions
+  , decideDriftActions
+  , decideLagActions
+  , executeHookAction
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -136,23 +139,11 @@ runTopologyRefresh reg = do
     mTopo <- getClusterTopologySTM tvar (ccName cc)
     updateClusterTopologyDrift tvar (ccName cc) hasDrift
     pure (maybe False ctTopologyDrift mTopo)
-  -- Fire hook only on False→True transition to avoid repeated firings
-  liftIO $ when (hasDrift && not wasInDrift) $ do
+  let driftActions = decideDriftActions hasDrift wasInDrift driftConditions
+  liftIO $ do
     mHooks <- readTVarIO (envHooks env)
-    ts     <- getCurrentTimestamp
-    forM_ driftConditions $ \dc -> do
-      let (dt, dd) = renderDriftCondition dc
-      runHookFireForget mHooks hcOnTopologyDrift
-        HookEnv { hookClusterName  = ccName cc
-                , hookNewSource    = Nothing
-                , hookOldSource    = Nothing
-                , hookFailureType  = Nothing
-                , hookTimestamp    = ts
-                , hookLagSeconds   = Nothing
-                , hookNode         = Nothing
-                , hookDriftType    = Just dt
-                , hookDriftDetails = Just dd
-                }
+    forM_ [e | FireHook e <- driftActions] $
+      executeHookAction mHooks (ccName cc) Nothing
 
 -- | Compute nodes to prune: those in the registry but absent from both
 -- the merged topology and the configured seed list.
@@ -335,20 +326,11 @@ monitorNode nid = do
       Right _  -> pure ()
   logHealthChange nid mOldNs ns'''
   -- Fire lag threshold hooks on Lagging health transitions
+  let lagActions = decideLagActions (fmap nsHealth mOldNs) (nsHealth ns''')
   liftIO $ do
     mHooks <- readTVarIO (envHooks env)
-    ts     <- getCurrentTimestamp
-    let oldHealth = fmap nsHealth mOldNs
-        newHealth = nsHealth ns'''
-        baseEnv   = buildLagHookEnv (ccName cc) nid ts
-    case (oldHealth, newHealth) of
-      (Just (Lagging _), Lagging _) -> pure ()  -- already lagging, no transition
-      (_, Lagging lag) ->
-        runHookFireForget mHooks hcOnLagThresholdExceeded
-          baseEnv { hookLagSeconds = Just lag }
-      (Just (Lagging _), _) ->
-        runHookFireForget mHooks hcOnLagThresholdRecovered baseEnv
-      _ -> pure ()
+    forM_ [e | FireHook e <- lagActions] $
+      executeHookAction mHooks (ccName cc) (Just nid)
   -- Use atomic read-modify-write to preserve nsRole/nsPaused from the current
   -- topology. This prevents race conditions where failover or pause/resume
   -- commands change these fields between the worker's read and write.
@@ -434,6 +416,53 @@ decideClusterActions fc topo newHealth =
         | transitioned, newHealth == UnreachableSource ]
   in hookActions ++ failoverActions ++ fenceActions ++ replicaCheckActions
 
+-- | Pure: decide which hook actions to fire on a topology drift transition.
+-- Only fires on False→True transition to avoid repeated firings.
+decideDriftActions :: Bool -> Bool -> [DriftCondition] -> [ClusterAction]
+decideDriftActions hasDrift wasInDrift driftConditions
+  | hasDrift && not wasInDrift =
+      [ FireHook (OnTopologyDrift dt dd)
+      | dc <- driftConditions
+      , let (dt, dd) = renderDriftCondition dc
+      ]
+  | otherwise = []
+
+-- | Pure: decide which hook actions to fire on lag health transitions.
+decideLagActions :: Maybe NodeHealth -> NodeHealth -> [ClusterAction]
+decideLagActions oldHealth newHealth = case (oldHealth, newHealth) of
+  (Just (Lagging _), Lagging _) -> []   -- already lagging, no transition
+  (_, Lagging lag)              -> [FireHook (OnLagThresholdExceeded lag)]
+  (Just (Lagging _), _)        -> [FireHook OnLagThresholdRecovered]
+  _                             -> []
+
+-- | Execute a single hook action by dispatching to the appropriate hook script.
+-- The optional NodeId is used to set hookNode for lag threshold hooks.
+executeHookAction :: Maybe HooksConfig -> ClusterName -> Maybe NodeId -> HookEvent -> IO ()
+executeHookAction mHooks clusterName mNid event = do
+  ts <- getCurrentTimestamp
+  let base = HookEnv { hookClusterName  = clusterName
+                      , hookNewSource    = Nothing
+                      , hookOldSource    = Nothing
+                      , hookFailureType  = Nothing
+                      , hookTimestamp    = ts
+                      , hookLagSeconds   = Nothing
+                      , hookNode         = fmap (unHostName . nodeHost) mNid
+                      , hookDriftType    = Nothing
+                      , hookDriftDetails = Nothing
+                      }
+  case event of
+    OnFailureDetection ft ->
+      runHookFireForget mHooks hcOnFailureDetection
+        base { hookFailureType = Just ft }
+    OnTopologyDrift dt dd ->
+      runHookFireForget mHooks hcOnTopologyDrift
+        base { hookDriftType = Just dt, hookDriftDetails = Just dd }
+    OnLagThresholdExceeded lag ->
+      runHookFireForget mHooks hcOnLagThresholdExceeded
+        base { hookLagSeconds = Just lag }
+    OnLagThresholdRecovered ->
+      runHookFireForget mHooks hcOnLagThresholdRecovered base
+
 recomputeClusterHealth :: App ()
 recomputeClusterHealth = do
   tvar <- asks envDaemonState
@@ -450,21 +479,11 @@ recomputeClusterHealth = do
           actions     = decideClusterActions fc topo newHealth
       let transitioned    = ctHealth topo /= newHealth
           observedHealthy = ctObservedHealthy topo || newHealth == Healthy
-      -- Fire on_failure_detection hooks (decided by decideClusterActions)
-      liftIO $ forM_ [ft | FireHook (OnFailureDetection ft) <- actions] $ \ft -> do
+      -- Fire hook actions (decided by decideClusterActions)
+      liftIO $ do
         mHooks <- readTVarIO (envHooks env)
-        ts <- getCurrentTimestamp
-        let hookEnv = HookEnv { hookClusterName  = ccName cc
-                               , hookNewSource    = Nothing
-                               , hookOldSource    = Nothing
-                               , hookFailureType  = Just ft
-                               , hookTimestamp    = ts
-                               , hookLagSeconds   = Nothing
-                               , hookNode         = Nothing
-                               , hookDriftType    = Nothing
-                               , hookDriftDetails = Nothing
-                               }
-        runHookFireForget mHooks hcOnFailureDetection hookEnv
+        forM_ [e | FireHook e <- actions] $
+          executeHookAction mHooks (ccName cc) Nothing
       -- Log all health transitions for observability
       when transitioned $ liftIO $ do
         logger <- readTVarIO (envLogger env)
