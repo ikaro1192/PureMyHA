@@ -16,13 +16,14 @@ import Control.Monad.Trans.Class (lift)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.Time (UTCTime, getCurrentTime)
+import Data.Time (UTCTime, addUTCTime, getCurrentTime)
 import PureMyHA.Config
 import PureMyHA.Env
 import PureMyHA.Failover.Candidate (selectCandidate, selectSurvivor, rankCandidates, CandidateInfo (..))
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
 import PureMyHA.Logger (logInfo, logError)
+import PureMyHA.Monitor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
@@ -208,18 +209,12 @@ reconnectOtherReplicas candidateId topo = do
 
 commitFailoverState :: NodeId -> ClusterTopology -> UTCTime -> App ()
 commitFailoverState candidateId topo now = do
-  tvar <- asks envDaemonState
-  cc   <- asks envCluster
   fdc  <- asks envDetection
+  queue <- asks envEventQueue
   let oldSources = filter isSource (Map.elems (ctNodes topo))
-      candidate  = Map.lookup candidateId (ctNodes topo)
-  liftIO $ atomically $ do
-    recordFailover tvar (ccName cc) now
-    setRecoveryBlock tvar (ccName cc) now (fdcRecoveryBlockPeriod fdc)
-    mapM_ (\ns -> updateNodeState tvar (ccName cc) (ns { nsRole = Replica })) oldSources
-    case candidate of
-      Just ns -> updateNodeState tvar (ccName cc) (ns { nsRole = Source })
-      Nothing -> pure ()
+      recoveryDeadline = addUTCTime (fdcRecoveryBlockPeriod fdc) now
+  liftIO $ atomically $ writeTBQueue queue $
+    FailoverCommitted candidateId (map nsNodeId oldSources) now recoveryDeadline
 
 promoteCandidate :: NodeId -> Int -> App (Either Text ())
 promoteCandidate nid waitTimeout = do
@@ -303,19 +298,19 @@ fenceNode :: ClusterName -> HostInfo -> NodeState -> App ()
 fenceNode clusterName survivorHost ns = do
   creds  <- getMonCredentials
   mTls   <- getTLSConfig
-  tvar   <- asks envDaemonState
   mHooks <- getHooksConfig
   mc     <- liftIO . readTVarIO =<< asks envMonitoring
   let nid    = nsNodeId ns
       ci     = makeConnectInfo nid creds
       prefix = "[" <> unClusterName clusterName <> "] "
       cap    = unPositiveDuration (mcConnectTimeout mc)
+  queue  <- asks envEventQueue
   result <- liftIO $ withNodeConnRetry 1 0 cap (const (pure ())) mTls ci setSuperReadOnly
   case result of
     Left err ->
       appLogError $ prefix <> "Auto-fence failed on " <> unHostName (nodeHost nid) <> ": " <> err
     Right () -> do
-      liftIO $ atomically $ updateNodeState tvar clusterName (ns { nsFenced = True })
+      liftIO $ atomically $ writeTBQueue queue (NodeFenced nid)
       appLogInfo $ prefix <> "Auto-fence: " <> unHostName (nodeHost nid) <> " fenced (super_read_only=ON)"
       ts <- liftIO getCurrentTimestamp
       let hookEnv = HookEnv { hookClusterName  = clusterName
@@ -335,6 +330,7 @@ doUnfence :: HostName -> App (Either Text ())
 doUnfence host = do
   clusterName <- getClusterName
   tvar        <- asks envDaemonState
+  queue       <- asks envEventQueue
   mTopo <- liftIO $ getClusterTopology tvar clusterName
   let prefix = "[" <> unClusterName clusterName <> "] "
   case mTopo of
@@ -352,7 +348,7 @@ doUnfence host = do
               appLogError $ prefix <> "Unfence failed on " <> unHostName host <> ": " <> err
               pure (Left $ "Unfence failed: " <> err)
             Right () -> do
-              liftIO $ atomically $ updateNodeState tvar clusterName (ns { nsFenced = False })
+              liftIO $ atomically $ writeTBQueue queue (NodeUnfenced (nsNodeId ns))
               appLogInfo $ prefix <> "Unfenced " <> unHostName host
                         <> " (super_read_only cleared). WARNING: verify data consistency before resuming writes."
               pure (Right ())

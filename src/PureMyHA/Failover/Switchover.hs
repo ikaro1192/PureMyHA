@@ -5,7 +5,7 @@ module PureMyHA.Failover.Switchover
   ) where
 
 import Control.Concurrent (threadDelay)
-import Control.Concurrent.STM (atomically)
+import Control.Concurrent.STM (atomically, writeTBQueue)
 import Control.Exception (try, SomeException)
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
@@ -21,6 +21,7 @@ import PureMyHA.Env
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
+import PureMyHA.Monitor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.MySQL.Query
@@ -159,21 +160,12 @@ finalizeSwitchover
   :: NodeId -> Maybe NodeId -> Maybe HostInfo -> ClusterTopology
   -> App ()
 finalizeSwitchover candidateId oldSourceId oldSourceHost topo = do
-  cc   <- asks envCluster
-  tvar <- asks envDaemonState
+  cc    <- asks envCluster
+  queue <- asks envEventQueue
   let clName = ccName cc
 
-  -- Update topology roles atomically
-  liftIO $ atomically $ do
-    case oldSourceId of
-      Just srcId ->
-        case Map.lookup srcId (ctNodes topo) of
-          Just srcNs -> updateNodeState tvar clName (srcNs { nsRole = Replica })
-          Nothing -> pure ()
-      Nothing -> pure ()
-    case Map.lookup candidateId (ctNodes topo) of
-      Just candNs -> updateNodeState tvar clName (candNs { nsRole = Source })
-      Nothing -> pure ()
+  -- Emit switchover event — reducer handles the role swap atomically
+  liftIO $ atomically $ writeTBQueue queue (SwitchoverCommitted candidateId oldSourceId)
 
   -- Reconnect remaining replicas (including old source)
   let others = switchoverReconnectTargets (ctNodes topo) candidateId

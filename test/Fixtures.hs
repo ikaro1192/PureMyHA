@@ -14,7 +14,7 @@ module Fixtures
   , clusterHealthy
   ) where
 
-import Control.Concurrent.STM (newTVarIO)
+import Control.Concurrent.STM (newTVarIO, newTBQueueIO)
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
@@ -74,6 +74,7 @@ mkTestEnv tvar cc fc = do
   lock     <- newFailoverLock
   logger    <- nullLogger
   loggerVar <- newTVarIO logger
+  queue     <- newTBQueueIO 16
   pure ClusterEnv
     { envDaemonState = tvar
     , envCluster     = cc
@@ -85,6 +86,7 @@ mkTestEnv tvar cc fc = do
     , envLock        = lock
     , envLogger      = loggerVar
     , envTLS         = Nothing
+    , envEventQueue  = queue
     }
 
 healthySource :: NodeState

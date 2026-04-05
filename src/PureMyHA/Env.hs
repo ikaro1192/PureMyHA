@@ -14,12 +14,13 @@ module PureMyHA.Env
   , appLogError
   ) where
 
-import Control.Concurrent.STM (TVar, readTVarIO)
+import Control.Concurrent.STM (TBQueue, TVar, readTVarIO)
 import Control.Monad.Reader (MonadReader, ReaderT, asks, runReaderT)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Text (Text)
 import PureMyHA.Config
 import PureMyHA.Logger (Logger, logInfo, logWarn, logError)
+import PureMyHA.Monitor.Event (MonitorEvent)
 import PureMyHA.Topology.State (TVarDaemonState, FailoverLock)
 import PureMyHA.Types (ClusterName)
 
@@ -34,6 +35,7 @@ data ClusterEnv = ClusterEnv
   , envLock        :: FailoverLock
   , envLogger      :: TVar Logger
   , envTLS         :: Maybe TLSConfig
+  , envEventQueue  :: TBQueue MonitorEvent
   }
 
 type App a = ReaderT ClusterEnv IO a

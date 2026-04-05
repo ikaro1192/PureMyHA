@@ -7,7 +7,7 @@ module PureMyHA.IPC.Server
   ) where
 
 import Control.Concurrent.Async (async)
-import Control.Concurrent.STM (TVar, atomically, readTVarIO)
+import Control.Concurrent.STM (TVar, atomically, readTVarIO, writeTBQueue)
 import Control.Exception (bracket, try, catch, SomeException, finally)
 import Data.Aeson (encode, eitherDecode)
 import qualified Data.ByteString.Char8 as BSC
@@ -22,6 +22,7 @@ import qualified Network.Socket.ByteString as NSB
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Logger (Logger, setLogLevel)
+import PureMyHA.Monitor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Clone (runClone)
 import PureMyHA.Failover.Auto (doUnfence, simulateFailover)
 import PureMyHA.Failover.Demote (runDemote, dryRunDemote)
@@ -123,7 +124,7 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
 
   ReqAckRecovery mCluster ->
     withClusterEnv mCluster clusterMap $ \env -> do
-      atomically $ clearRecoveryBlock (envDaemonState env) (ccName (envCluster env))
+      atomically $ writeTBQueue (envEventQueue env) RecoveryBlockCleared
       pure $ RespOperation (OperationSuccess "Recovery block cleared")
 
   ReqErrantGtid mCluster -> do
@@ -178,12 +179,12 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
 
   ReqPauseFailover mCluster ->
     withClusterEnv mCluster clusterMap $ \env -> do
-      atomically $ setClusterPause (envDaemonState env) (ccName (envCluster env))
+      atomically $ writeTBQueue (envEventQueue env) FailoverPaused
       pure $ RespOperation (OperationSuccess "Failover paused")
 
   ReqResumeFailover mCluster ->
     withClusterEnv mCluster clusterMap $ \env -> do
-      atomically $ clearClusterPause (envDaemonState env) (ccName (envCluster env))
+      atomically $ writeTBQueue (envEventQueue env) FailoverResumed
       pure $ RespOperation (OperationSuccess "Failover resumed")
 
   ReqSetLogLevel lvlText ->
