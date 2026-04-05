@@ -94,6 +94,7 @@ buildClusterTopology minReplicas name nodeStates =
        , ctLastFailoverAt       = Nothing
        , ctPaused               = False
        , ctTopologyDrift        = False
+       , ctLastEmergencyCheckAt = Nothing
        }
 
 -- | Recursively discover nodes
@@ -253,4 +254,5 @@ buildInitialTopology cc = ClusterTopology
   , ctLastFailoverAt       = Nothing
   , ctPaused               = False
   , ctTopologyDrift        = False
+  , ctLastEmergencyCheckAt = Nothing
   }

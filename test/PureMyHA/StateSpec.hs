@@ -21,6 +21,7 @@ emptyTopo = ClusterTopology
   , ctLastFailoverAt       = Nothing
   , ctPaused               = False
   , ctTopologyDrift        = False
+  , ctLastEmergencyCheckAt = Nothing
   }
 
 healthyTopo :: ClusterTopology

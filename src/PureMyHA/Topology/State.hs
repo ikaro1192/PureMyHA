@@ -45,6 +45,7 @@ updateClusterTopology tvar ct = do
          , ctHealth               = ctHealth prevCt
          , ctSourceNodeId         = ctSourceNodeId prevCt
          , ctLastFailoverAt       = ctLastFailoverAt prevCt
+         , ctLastEmergencyCheckAt = ctLastEmergencyCheckAt prevCt
          }
 
 getClusterTopology :: TVarDaemonState -> ClusterName -> IO (Maybe ClusterTopology)

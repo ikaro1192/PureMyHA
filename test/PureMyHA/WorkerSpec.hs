@@ -6,6 +6,7 @@ import Control.Concurrent.STM (atomically, newTVarIO, readTVarIO)
 import Control.Exception (SomeException, try, fromException)
 import qualified Data.Map.Strict as Map
 import Test.Hspec
+import Data.Time (addUTCTime)
 import Fixtures
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
@@ -329,69 +330,77 @@ spec = do
           , ctLastFailoverAt       = Nothing
           , ctPaused               = False
           , ctTopologyDrift        = False
+          , ctLastEmergencyCheckAt = Nothing
           }
         fcWithFence = testFC { fcAutoFence = True }
 
     -- FireHook tests (transition only)
     it "fires OnFailureDetection hook on transition to DeadSource" $
-      decideClusterActions testFC (mkTopo Healthy True) DeadSource
+      decideClusterActions testFC (mkTopo Healthy True) DeadSource (Just fixedTime) 3
         `shouldContain` [FireHook (OnFailureDetection "DeadSource")]
 
     it "fires OnFailureDetection hook on transition to InsufficientQuorum" $
-      decideClusterActions testFC (mkTopo Healthy True) InsufficientQuorum
+      decideClusterActions testFC (mkTopo Healthy True) InsufficientQuorum (Just fixedTime) 3
         `shouldContain` [FireHook (OnFailureDetection "InsufficientQuorum")]
 
     it "fires OnFailureDetection hook on transition to DeadSourceAndAllReplicas" $
-      decideClusterActions testFC (mkTopo Healthy True) DeadSourceAndAllReplicas
+      decideClusterActions testFC (mkTopo Healthy True) DeadSourceAndAllReplicas (Just fixedTime) 3
         `shouldContain` [FireHook (OnFailureDetection "DeadSourceAndAllReplicas")]
 
     it "does not fire hook when health has not transitioned" $
-      filter isFireHook (decideClusterActions testFC (mkTopo DeadSource True) DeadSource)
+      filter isFireHook (decideClusterActions testFC (mkTopo DeadSource True) DeadSource (Just fixedTime) 3)
         `shouldBe` []
 
     -- TriggerAutoFailover tests
     it "triggers auto-failover on transition to DeadSource when enabled and observed healthy" $
-      decideClusterActions testFC (mkTopo Healthy True) DeadSource
+      decideClusterActions testFC (mkTopo Healthy True) DeadSource (Just fixedTime) 3
         `shouldContain` [TriggerAutoFailover]
 
     it "triggers auto-failover even without transition (resume-failover)" $
-      decideClusterActions testFC (mkTopo DeadSource True) DeadSource
+      decideClusterActions testFC (mkTopo DeadSource True) DeadSource (Just fixedTime) 3
         `shouldContain` [TriggerAutoFailover]
 
     it "does not trigger auto-failover when disabled" $
-      decideClusterActions (testFC { fcAutoFailover = False }) (mkTopo Healthy True) DeadSource
+      decideClusterActions (testFC { fcAutoFailover = False }) (mkTopo Healthy True) DeadSource (Just fixedTime) 3
         `shouldNotContain` [TriggerAutoFailover]
 
     it "does not trigger auto-failover when not observed healthy" $
-      decideClusterActions testFC (mkTopo (NodeUnreachable "err") False) DeadSource
+      decideClusterActions testFC (mkTopo (NodeUnreachable "err") False) DeadSource (Just fixedTime) 3
         `shouldNotContain` [TriggerAutoFailover]
 
     it "triggers auto-failover without observed healthy when failover_without_observed_healthy is true" $
       decideClusterActions (testFC { fcFailoverWithoutObservedHealthy = True })
-        (mkTopo (NodeUnreachable "err") False) DeadSource
+        (mkTopo (NodeUnreachable "err") False) DeadSource (Just fixedTime) 3
         `shouldContain` [TriggerAutoFailover]
 
     -- TriggerAutoFence tests
     it "triggers auto-fence on transition to SplitBrainSuspected when enabled and observed healthy" $
-      decideClusterActions fcWithFence (mkTopo Healthy True) SplitBrainSuspected
+      decideClusterActions fcWithFence (mkTopo Healthy True) SplitBrainSuspected (Just fixedTime) 3
         `shouldContain` [TriggerAutoFence]
 
     it "does not trigger auto-fence without transition" $
-      decideClusterActions fcWithFence (mkTopo SplitBrainSuspected True) SplitBrainSuspected
+      decideClusterActions fcWithFence (mkTopo SplitBrainSuspected True) SplitBrainSuspected (Just fixedTime) 3
         `shouldNotContain` [TriggerAutoFence]
 
     -- TriggerEmergencyReplicaCheck tests
-    it "triggers emergency replica check on transition to UnreachableSource" $
-      decideClusterActions testFC (mkTopo Healthy True) UnreachableSource
+    it "triggers emergency replica check on first detection (no prior check)" $
+      decideClusterActions testFC (mkTopo Healthy True) UnreachableSource (Just fixedTime) 3
         `shouldContain` [TriggerEmergencyReplicaCheck]
 
-    it "does not trigger emergency replica check without transition" $
-      decideClusterActions testFC (mkTopo UnreachableSource True) UnreachableSource
+    it "does not trigger emergency replica check when cooldown has not elapsed" $ do
+      let topo = (mkTopo UnreachableSource True) { ctLastEmergencyCheckAt = Just fixedTime }
+      decideClusterActions testFC topo UnreachableSource (Just fixedTime) 3
         `shouldNotContain` [TriggerEmergencyReplicaCheck]
+
+    it "triggers emergency replica check when cooldown has elapsed" $ do
+      let topo = (mkTopo UnreachableSource True) { ctLastEmergencyCheckAt = Just fixedTime }
+          laterTime = addUTCTime 5 fixedTime  -- 5s > 3s interval
+      decideClusterActions testFC topo UnreachableSource (Just laterTime) 3
+        `shouldContain` [TriggerEmergencyReplicaCheck]
 
     -- Empty actions
     it "returns empty list when health stays Healthy" $
-      decideClusterActions testFC (mkTopo Healthy True) Healthy
+      decideClusterActions testFC (mkTopo Healthy True) Healthy (Just fixedTime) 3
         `shouldBe` []
 
   describe "mergeTopology" $ do
@@ -405,6 +414,7 @@ spec = do
           , ctLastFailoverAt       = Nothing
           , ctPaused               = False
           , ctTopologyDrift        = False
+          , ctLastEmergencyCheckAt = Nothing
           }
 
     it "returns newTopo unchanged when mOldTopo is Nothing" $ do
@@ -458,6 +468,7 @@ spec = do
           , ctLastFailoverAt       = Nothing
           , ctPaused               = False
           , ctTopologyDrift        = False
+          , ctLastEmergencyCheckAt = Nothing
           }
         ccWith nodes fc = testCC { ccNodes = nodes, ccFailover = fc }
 
