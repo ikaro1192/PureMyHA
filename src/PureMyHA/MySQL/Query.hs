@@ -84,14 +84,14 @@ parseIORunning "Connecting" = IOConnecting
 parseIORunning _            = IONo
 
 -- | Discover connected replicas by combining SHOW REPLICAS (Host column)
--- and SHOW PROCESSLIST (Binlog Dump threads).  Returns discovered NodeIds
--- (deduplicated), the expected replica count from SHOW REPLICAS,
+-- and performance_schema.processlist (Binlog Dump threads).  Returns discovered
+-- NodeIds (deduplicated), the expected replica count from SHOW REPLICAS,
 -- and raw hostnames before resolution (for diagnostics).
 showReplicas :: MySQLConn -> Int -> IO ([NodeId], Int, [Text])
 showReplicas conn defaultPort = do
   -- 1. SHOW REPLICAS — extract Host column where non-empty
   --    Wrapped in try: if the user lacks REPLICATION SLAVE privilege,
-  --    we still fall through to SHOW PROCESSLIST.
+  --    we still fall through to performance_schema.processlist.
   (expectedCount, srHosts) <- do
     result <- try @SomeException $ do
       (srCols, srStream) <- query_ conn "SHOW REPLICAS"
@@ -107,15 +107,15 @@ showReplicas conn defaultPort = do
     pure $ case result of
       Left _       -> (0, [])
       Right (n, h) -> (n, h)
-  -- 2. SHOW PROCESSLIST — Binlog Dump threads
-  (plCols, plStream) <- query_ conn "SHOW PROCESSLIST"
+  -- 2. performance_schema.processlist — Binlog Dump threads
+  (plCols, plStream) <- query_ conn "SELECT COMMAND, HOST FROM performance_schema.processlist WHERE COMMAND IN ('Binlog Dump', 'Binlog Dump GTID') AND HOST != ''"
   plRows <- consumeRows plStream
   let plColNames = map (TE.decodeUtf8 . columnName) plCols
       plHosts = [ T.takeWhile (/= ':') h
                 | row <- plRows
                 , let kvs = zip plColNames row
-                      cmd = textVal (maybe MySQLNull id (lookup "Command" kvs))
-                      h   = textVal (maybe MySQLNull id (lookup "Host"    kvs))
+                      cmd = textVal (maybe MySQLNull id (lookup "COMMAND" kvs))
+                      h   = textVal (maybe MySQLNull id (lookup "HOST"    kvs))
                 , (cmd == "Binlog Dump GTID" || cmd == "Binlog Dump") && h /= ""
                 ]
   -- 3. Merge and deduplicate
@@ -353,26 +353,26 @@ cloneInstanceFrom conn donorHost donorPort DbCredentials{..} = do
         Just _  -> throwIO e
         Nothing -> pure ()
 
--- | A row from SHOW PROCESSLIST
+-- | A row from performance_schema.processlist
 data ProcessInfo = ProcessInfo
   { piId      :: Int
   , piUser    :: Text
   , piCommand :: Text
   } deriving (Show, Eq)
 
--- | Parse SHOW PROCESSLIST and return all entries
+-- | Query performance_schema.processlist and return all entries
 showProcessList :: MySQLConn -> IO [ProcessInfo]
 showProcessList conn = do
-  (cols, stream) <- query_ conn "SHOW PROCESSLIST"
+  (cols, stream) <- query_ conn "SELECT ID, USER, COMMAND FROM performance_schema.processlist"
   rows <- consumeRows stream
   let colNames = map (TE.decodeUtf8 . columnName) cols
       mkRow row =
         let kvs  = zip colNames row
             get k = maybe MySQLNull id (lookup k kvs)
         in ProcessInfo
-             (intVal  (get "Id"))
-             (textVal (get "User"))
-             (textVal (get "Command"))
+             (intVal  (get "ID"))
+             (textVal (get "USER"))
+             (textVal (get "COMMAND"))
   pure (map mkRow rows)
 
 -- | True if this is a user (application) connection that should be drained.

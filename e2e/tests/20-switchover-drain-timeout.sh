@@ -44,7 +44,7 @@ $COMPOSE exec -T mysql-source mysql -uroot -prootpass -N \
   -e "SELECT SLEEP(30);" >/dev/null 2>&1 &
 SLEEP_CONN_PID=$!
 
-# Give the connection a moment to appear in SHOW PROCESSLIST
+# Give the connection a moment to appear in performance_schema.processlist
 sleep 1
 
 # Confirm it is visible before starting the switchover

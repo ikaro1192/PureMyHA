@@ -126,7 +126,7 @@ discoverAll queue visited acc
           discoverAll newQueue visited' acc'
 
 -- | Probe a single node and return its NodeState plus any replicas discovered
--- via SHOW PROCESSLIST (only populated when the node is a source).
+-- via performance_schema.processlist (only populated when the node is a source).
 -- Uses async + timeout to bound the probe duration; a stopped node that causes
 -- TCP to hang will be treated as a failed probe after tMicros microseconds.
 probeNode :: NodeId -> ReaderT DiscoveryEnv IO (NodeState, [NodeId])
@@ -156,9 +156,9 @@ runProbe nid = do
           logInfo deLogger $ "[discovery] " <> unHostName (nodeHost nid) <> " is a replica of " <> unHostName (rsSourceHost rs) <> ":" <> T.pack (show (rsSourcePort rs))
           pure []
         Nothing -> do
-          -- source node: discover downstream replicas via SHOW REPLICAS + SHOW PROCESSLIST
+          -- source node: discover downstream replicas via SHOW REPLICAS + performance_schema.processlist
           (discovered, expected, rawHosts) <- showReplicas conn (nodePort nid)
-          logInfo deLogger $ "[" <> unHostName (nodeHost nid) <> "] Raw hosts from SHOW REPLICAS/PROCESSLIST: "
+          logInfo deLogger $ "[" <> unHostName (nodeHost nid) <> "] Raw hosts from SHOW REPLICAS/processlist: "
             <> T.pack (show rawHosts)
           logInfo deLogger $ "[" <> unHostName (nodeHost nid) <> "] Resolved replica NodeIds: "
             <> T.pack (show (map (\n -> unHostName (nodeHost n) <> ":" <> T.pack (show (nodePort n))) discovered))
