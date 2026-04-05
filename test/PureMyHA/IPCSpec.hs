@@ -194,6 +194,14 @@ spec = do
       roundTrip (ReqClone Nothing "db3" (Just "db2"))
         `shouldBe` Just (ReqClone Nothing "db3" (Just "db2"))
 
+    it "round-trips ReqStopReplication" $
+      roundTrip (ReqStopReplication (Just "main") "db2")
+        `shouldBe` Just (ReqStopReplication (Just "main") "db2")
+
+    it "round-trips ReqStartReplication" $
+      roundTrip (ReqStartReplication Nothing "db3")
+        `shouldBe` Just (ReqStartReplication Nothing "db3")
+
   describe "Response FromJSON error paths" $ do
     it "rejects unknown response type" $
       (decode (BLC.pack "{\"type\":\"foobar\",\"data\":[]}") :: Maybe Response) `shouldBe` Nothing

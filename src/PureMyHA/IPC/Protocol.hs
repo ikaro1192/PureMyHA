@@ -172,6 +172,8 @@ data Request
   | ReqResumeFailover { reqCluster :: Maybe ClusterName }
   | ReqSetLogLevel    { reqLogLevel :: Text }
   | ReqUnfence { reqCluster :: Maybe ClusterName, reqUnfenceHost :: HostName }
+  | ReqStopReplication  { reqCluster :: Maybe ClusterName, reqStopReplHost  :: HostName }
+  | ReqStartReplication { reqCluster :: Maybe ClusterName, reqStartReplHost :: HostName }
   | ReqClone
       { reqCloneCluster   :: Maybe ClusterName
       , reqCloneRecipient :: HostName
@@ -195,6 +197,8 @@ instance ToJSON Request where
   toJSON (ReqResumeFailover mc)  = object ["type" .= ("resume-failover"  :: Text), "cluster" .= mc]
   toJSON (ReqSetLogLevel lvl)    = object ["type" .= ("set-log-level"   :: Text), "level" .= lvl]
   toJSON (ReqUnfence mc h)       = object ["type" .= ("unfence" :: Text), "cluster" .= mc, "host" .= h]
+  toJSON (ReqStopReplication  mc h) = object ["type" .= ("stop-replication"  :: Text), "cluster" .= mc, "host" .= h]
+  toJSON (ReqStartReplication mc h) = object ["type" .= ("start-replication" :: Text), "cluster" .= mc, "host" .= h]
   toJSON (ReqClone mc r md)      = object ["type" .= ("clone" :: Text), "cluster" .= mc, "recipient" .= r, "donor" .= md]
 
 instance FromJSON Request where
@@ -216,6 +220,8 @@ instance FromJSON Request where
       "resume-failover" -> ReqResumeFailover <$> o .:? "cluster"
       "set-log-level"   -> ReqSetLogLevel    <$> o .:  "level"
       "unfence"         -> ReqUnfence        <$> o .:? "cluster" <*> o .: "host"
+      "stop-replication"  -> ReqStopReplication  <$> o .:? "cluster" <*> o .: "host"
+      "start-replication" -> ReqStartReplication <$> o .:? "cluster" <*> o .: "host"
       "clone"           -> ReqClone          <$> o .:? "cluster" <*> o .: "recipient" <*> o .:? "donor"
       _                 -> fail $ "Unknown request type: " <> show t
 

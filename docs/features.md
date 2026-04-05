@@ -165,6 +165,22 @@ kill -HUP $(pidof puremyhad)
 systemctl reload puremyhad
 ```
 
+### Pause / Resume Replica
+Exclude a replica from failover candidates without stopping MySQL replication. Useful when a replica is under maintenance but replication should continue.
+
+```bash
+puremyha pause-replica --host <host>     # exclude from failover candidates
+puremyha resume-replica --host <host>    # re-include in failover candidates
+```
+
+### Stop / Start Replication
+Stop or start MySQL replication on a replica. `stop-replication` also excludes the node from failover candidates (auto-pause), and `start-replication` re-includes it (auto-resume).
+
+```bash
+puremyha stop-replication --host <host>   # STOP REPLICA + exclude from failover
+puremyha start-replication --host <host>  # START REPLICA + re-include in failover
+```
+
 ### Pause / Resume Auto-Failover
 Temporarily disable automatic failover cluster-wide for planned maintenance windows without stopping the daemon.
 

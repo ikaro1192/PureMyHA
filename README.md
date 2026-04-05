@@ -45,6 +45,8 @@ Inspired by the design of Orchestrator, PureMyHA provides topology discovery, fa
 
 ### Operator Controls
 - **Config Hot-Reload** — Reloads `monitoring` and `hooks` config on SIGHUP without restart
+- **Pause/Resume Replica** — Exclude a replica from failover candidates without stopping MySQL replication
+- **Stop/Start Replication** — Stop or start MySQL replication on a replica (auto-pauses/resumes failover candidacy)
 - **Pause/Resume Auto-Failover** — Temporarily disable automatic failover for maintenance windows
 - **Runtime Log Level** — Change verbosity without restarting via `puremyha set-log-level`
 - **Config Validation** — `puremyha validate-config` validates offline, no daemon required

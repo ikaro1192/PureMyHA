@@ -1,4 +1,9 @@
-module PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica) where
+module PureMyHA.Failover.PauseReplica
+  ( runPauseReplica
+  , runResumeReplica
+  , runStopReplication
+  , runStartReplication
+  ) where
 
 import Control.Concurrent.STM (atomically, writeTBQueue)
 import Control.Monad.IO.Class (liftIO)
@@ -13,23 +18,63 @@ import PureMyHA.MySQL.Query (stopReplica, startReplica)
 import PureMyHA.Topology.State (getClusterTopology)
 import PureMyHA.Types
 
--- | Pause replication on a replica node for maintenance
+-- | Pause monitoring on a replica node (exclude from failover candidates).
+-- Does NOT execute STOP REPLICA — use 'runStopReplication' for that.
 runPauseReplica
   :: HostName   -- ^ host to pause
   -> App (Either Text ())
 runPauseReplica targetHost =
-  withTargetNode "Pausing" targetHost stopReplica ReplicaPaused
+  withTargetNodeNoMySQL "Pausing" targetHost ReplicaPaused
 
--- | Resume replication on a paused replica node
+-- | Resume monitoring on a paused replica node (re-include in failover candidates).
+-- Does NOT execute START REPLICA — use 'runStartReplication' for that.
 runResumeReplica
   :: HostName   -- ^ host to resume
   -> App (Either Text ())
 runResumeReplica targetHost =
-  withTargetNode "Resuming" targetHost startReplica ReplicaResumed
+  withTargetNodeNoMySQL "Resuming" targetHost ReplicaResumed
 
--- | Common logic for pause/resume: find node, connect, run action, emit event.
+-- | Stop MySQL replication on a replica node.
+-- Executes STOP REPLICA and automatically pauses monitoring (nsPaused=True).
+runStopReplication
+  :: HostName   -- ^ host to stop replication on
+  -> App (Either Text ())
+runStopReplication targetHost =
+  withTargetNode "Stopping" targetHost stopReplica ReplicaPaused
+
+-- | Start MySQL replication on a replica node.
+-- Executes START REPLICA and automatically resumes monitoring (nsPaused=False).
+runStartReplication
+  :: HostName   -- ^ host to start replication on
+  -> App (Either Text ())
+runStartReplication targetHost =
+  withTargetNode "Starting" targetHost startReplica ReplicaResumed
+
+-- | Emit an event for a target node without connecting to MySQL.
+-- Used for pause/resume which only change daemon-side state.
+withTargetNodeNoMySQL
+  :: Text                            -- ^ action name for logging
+  -> HostName                        -- ^ target host
+  -> (NodeId -> MonitorEvent)        -- ^ event constructor on success
+  -> App (Either Text ())
+withTargetNodeNoMySQL actionName targetHost mkEvent = do
+  tvar  <- asks envDaemonState
+  cc    <- asks envCluster
+  queue <- asks envEventQueue
+  mTopo <- liftIO $ getClusterTopology tvar (ccName cc)
+  case mTopo of
+    Nothing -> pure (Left "Cluster not found")
+    Just topo ->
+      case findNodeByHost targetHost (ctNodes topo) of
+        Nothing -> pure (Left $ "Node not found: " <> unHostName targetHost)
+        Just targetNs -> do
+          liftIO $ atomically $ writeTBQueue queue (mkEvent (nsNodeId targetNs))
+          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replica " <> unHostName targetHost
+          pure (Right ())
+
+-- | Common logic for stop/start-replication: find node, connect, run MySQL action, emit event.
 withTargetNode
-  :: Text                            -- ^ action name for logging (e.g. "Pausing")
+  :: Text                            -- ^ action name for logging (e.g. "Stopping")
   -> HostName                        -- ^ target host
   -> (MySQLConn -> IO ())            -- ^ MySQL action to execute
   -> (NodeId -> MonitorEvent)        -- ^ event constructor on success
@@ -60,6 +105,6 @@ withTargetNode actionName targetHost mysqlAction mkEvent = do
               pure (Right ())
   where
     actionResult = case actionName of
-      "Pausing"  -> "paused"
-      "Resuming" -> "resumed"
+      "Stopping" -> "stopped"
+      "Starting" -> "started"
       other      -> other

@@ -33,6 +33,8 @@ data Command
   | CmdDiscovery
   | CmdPauseReplica  HostName
   | CmdResumeReplica HostName
+  | CmdStopReplication  HostName
+  | CmdStartReplication HostName
   | CmdPauseFailover
   | CmdResumeFailover
   | CmdSetLogLevel Text
@@ -76,9 +78,13 @@ cliOptions = CLIOptions
         <> command "discovery"
             (info (pure CmdDiscovery) (progDesc "Trigger manual topology discovery"))
         <> command "pause-replica"
-            (info pauseReplicaCmd (progDesc "Pause replication on a node for maintenance"))
+            (info pauseReplicaCmd (progDesc "Exclude a replica from failover candidates (does not stop MySQL replication)"))
         <> command "resume-replica"
-            (info resumeReplicaCmd (progDesc "Resume replication on a paused node"))
+            (info resumeReplicaCmd (progDesc "Re-include a paused replica in failover candidates (does not start MySQL replication)"))
+        <> command "stop-replication"
+            (info stopReplicationCmd (progDesc "Stop MySQL replication on a replica and exclude from failover"))
+        <> command "start-replication"
+            (info startReplicationCmd (progDesc "Start MySQL replication on a replica and re-include in failover"))
         <> command "pause-failover"
             (info (pure CmdPauseFailover) (progDesc "Pause automatic failover for maintenance"))
         <> command "resume-failover"
@@ -108,6 +114,12 @@ pauseReplicaCmd = CmdPauseReplica <$> (HostName <$> strOption (long "host" <> me
 
 resumeReplicaCmd :: Parser Command
 resumeReplicaCmd = CmdResumeReplica <$> (HostName <$> strOption (long "host" <> metavar "HOST" <> help "Node to resume"))
+
+stopReplicationCmd :: Parser Command
+stopReplicationCmd = CmdStopReplication <$> (HostName <$> strOption (long "host" <> metavar "HOST" <> help "Node to stop replication on"))
+
+startReplicationCmd :: Parser Command
+startReplicationCmd = CmdStartReplication <$> (HostName <$> strOption (long "host" <> metavar "HOST" <> help "Node to start replication on"))
 
 setLogLevelCmd :: Parser Command
 setLogLevelCmd = CmdSetLogLevel
@@ -171,6 +183,8 @@ main = do
             CmdDiscovery          -> ReqDiscovery mCluster
             CmdPauseReplica  host -> ReqPauseReplica  mCluster host
             CmdResumeReplica host -> ReqResumeReplica mCluster host
+            CmdStopReplication  host -> ReqStopReplication  mCluster host
+            CmdStartReplication host -> ReqStartReplication mCluster host
             CmdPauseFailover      -> ReqPauseFailover  mCluster
             CmdResumeFailover     -> ReqResumeFailover mCluster
             CmdSetLogLevel lvl    -> ReqSetLogLevel lvl
