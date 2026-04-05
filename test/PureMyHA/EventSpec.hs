@@ -140,6 +140,16 @@ spec = describe "PureMyHA.Monitor.Event" $ do
           mNs = Map.lookup sourceId (ctNodes newTopo)
       fmap nsRole mNs `shouldBe` Just Source
 
+    it "detects NotReplicating when Replica-role node has no replica status" $ do
+      let -- db2 was a Replica, but probe returns prReplicaStatus = Nothing
+          -- During recovery block, role is preserved as Replica
+          withRecovery = baseTopo { ctRecoveryBlockedUntil = Just fixedTime2 }
+          event = NodeProbed replicaId (ProbeSuccess fixedTime Nothing emptyGtidSet) emptyGtidSet fixedTime
+          (newTopo, _) = applyEvent testFdc testFc testMc withRecovery event
+          mNs = Map.lookup replicaId (ctNodes newTopo)
+      fmap nsRole mNs `shouldBe` Just Replica
+      fmap nsHealth mNs `shouldBe` Just NotReplicating
+
     it "emits lag hook on Lagging transition" $ do
       let rs = (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100") { rsSecondsBehindSource = Just 120 }
           topo = baseTopo

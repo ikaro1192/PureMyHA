@@ -137,6 +137,10 @@ spec = do
     it "returns Healthy for a normal replica" $
       detectNodeHealth Nothing healthyReplica `shouldBe` Healthy
 
+    it "returns NotReplicating for a Replica-role node with no replica status" $ do
+      let ns = mkNodeState (NodeId "db3" 3306) Replica Nothing Healthy
+      detectNodeHealth Nothing ns `shouldBe` NotReplicating
+
     it "returns Healthy for Source node with residual replica status" $ do
       let rs = mkReplicaStatus "db1" 3306 IOConnecting ""
           ns = mkNodeState (NodeId "db2" 3306) Source (Just rs) Healthy

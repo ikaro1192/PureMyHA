@@ -51,6 +51,7 @@ instance ToJSON NodeHealth where
   toJSON NoSourceDetected           = String "NoSourceDetected"
   toJSON (NeedsAttention msg)       = object ["NeedsAttention" .= msg]
   toJSON (Lagging s)                = object ["Lagging" .= s]
+  toJSON NotReplicating              = String "NotReplicating"
 
 instance FromJSON NodeHealth where
   parseJSON (String "Healthy")                  = pure Healthy
@@ -61,6 +62,7 @@ instance FromJSON NodeHealth where
   parseJSON (String "SplitBrainSuspected")      = pure SplitBrainSuspected
   parseJSON (String "ReplicaIOConnecting")      = pure ReplicaIOConnecting
   parseJSON (String "NoSourceDetected")         = pure NoSourceDetected
+  parseJSON (String "NotReplicating")           = pure NotReplicating
   parseJSON (Object o)                          = (Lagging <$> o .: "Lagging")
                                               <|> (NodeUnreachable <$> o .: "NodeUnreachable")
                                               <|> (ReplicaIOStopped <$> o .: "ReplicaIOStopped")

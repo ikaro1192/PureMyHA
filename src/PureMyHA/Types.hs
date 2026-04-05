@@ -150,6 +150,7 @@ data NodeHealth
   | NoSourceDetected             -- ^ Cluster-level: no node has source role
   | NeedsAttention Text          -- ^ Escape hatch for truly unexpected/unclassified conditions
   | Lagging Int
+  | NotReplicating                 -- ^ Replica role but SHOW REPLICA STATUS is empty
   deriving (Eq, Show, Generic)
 
 -- | Extract a human-readable error message from an unhealthy state, if any.
@@ -169,6 +170,7 @@ healthErrorMessage InsufficientQuorum      = Just "Insufficient quorum for dead 
 healthErrorMessage UnreachableSource       = Just "Unreachable source"
 healthErrorMessage DeadSourceAndAllReplicas = Just "Dead source and all replicas"
 healthErrorMessage SplitBrainSuspected     = Just "Split brain suspected"
+healthErrorMessage NotReplicating           = Just "Replica has no replication configuration"
 healthErrorMessage Healthy                 = Nothing
 
 -- | Is this health state considered unhealthy?

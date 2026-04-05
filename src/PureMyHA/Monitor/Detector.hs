@@ -82,7 +82,7 @@ detectNodeHealth mLagThreshold ns = case nsProbeResult ns of
         ErrantGtidDetected (nsErrantGtids ns)
     | isSource ns -> Healthy  -- Source nodes ignore residual replica status
     | Just rs <- mrs -> detectReplicaHealth mLagThreshold rs
-    | otherwise      -> Healthy  -- standalone
+    | otherwise      -> NotReplicating
 
 detectReplicaHealth :: Maybe Int -> ReplicaStatus -> NodeHealth
 detectReplicaHealth mLagThreshold rs

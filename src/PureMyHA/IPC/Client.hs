@@ -132,6 +132,7 @@ showHealth (ErrantGtidDetected g)   = "ErrantGtidDetected: " <> T.unpack (render
 showHealth NoSourceDetected         = "NoSourceDetected"
 showHealth (NeedsAttention msg)     = "NeedsAttention: " <> T.unpack msg
 showHealth (Lagging n)              = "Lagging: " <> show n <> "s"
+showHealth NotReplicating           = "NotReplicating"
 
 showTime :: UTCTime -> String
 showTime = formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ"
