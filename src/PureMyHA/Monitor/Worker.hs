@@ -18,6 +18,9 @@ module PureMyHA.Monitor.Worker
   , decideDriftActions
   , decideLagActions
   , executeHookAction
+  , mergeTopology
+  , computeNewNodes
+  , computeDriftConditions
   ) where
 
 import Control.Concurrent (threadDelay)
@@ -103,37 +106,27 @@ runTopologyRefresh reg = do
   env <- ask
   let cc   = envCluster env
       tvar = envDaemonState env
-  newTopo <- discoverTopology
+  -- 1. Discover + merge topology (pure merge)
+  newTopo  <- discoverTopology
   mOldTopo <- liftIO $ getClusterTopology tvar (ccName cc)
-  let mergedTopo = case mOldTopo of
-        Nothing      -> newTopo
-        Just oldTopo ->
-          newTopo { ctNodes = deduplicateByHostname
-                      (Map.unionWith mergeNodeState (ctNodes newTopo) (ctNodes oldTopo)) }
+  let mergedTopo = mergeTopology newTopo mOldTopo
   liftIO $ atomically $ updateClusterTopology tvar mergedTopo
+  -- 2. Worker management: start new, prune stale (pure decisions)
   knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
   let discovered = Map.keysSet (ctNodes mergedTopo)
-      newNodes   = Set.toList (Set.difference discovered knownNodes)
+      newNodes   = computeNewNodes discovered knownNodes
   unless (null newNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: "
       <> T.pack (show (length newNodes)) <> " new node(s) found"
-  -- Start workers for newly discovered nodes
   liftIO $ forM_ newNodes $ \nid -> do
     a <- async (runApp env (runWorker nid))
     atomically $ modifyTVar' reg (Map.insert nid a)
-  -- Prune workers for truly decommissioned nodes
   staleNodes <- liftIO $ detectAndPruneStaleWorkers reg cc discovered
   unless (null staleNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: pruning "
       <> T.pack (show (length staleNodes)) <> " stale worker(s)"
-  -- Topology drift detection: use reachability so that stopped nodes register
-  -- as missing even though they remain in the topology with a failed probe result.
-  let configuredHosts = Set.fromList $ map (HostName . ncHost) (NE.toList (ccNodes cc))
-      reachableNodes  = filter nsIsReachable (Map.elems (ctNodes mergedTopo))
-      discoveredHosts = Set.fromList $ map (nodeHost . nsNodeId) reachableNodes
-      healthyReplicas = length $ filter (\ns -> nsRole ns == Replica) reachableNodes
-      minReplicas     = fcMinReplicasForFailover (ccFailover cc)
-      driftConditions = detectTopologyDrift configuredHosts discoveredHosts minReplicas healthyReplicas
+  -- 3. Drift detection (pure computation + IO state update + pure decision)
+  let driftConditions = computeDriftConditions cc mergedTopo
       hasDrift        = not (null driftConditions)
   wasInDrift <- liftIO $ atomically $ do
     mTopo <- getClusterTopologySTM tvar (ccName cc)
@@ -144,6 +137,12 @@ runTopologyRefresh reg = do
     mHooks <- readTVarIO (envHooks env)
     forM_ [e | FireHook e <- driftActions] $
       executeHookAction mHooks (ccName cc) Nothing
+
+-- | Compute newly discovered nodes: those in the discovered set but not yet
+-- in the known (registered) set.
+computeNewNodes :: Set.Set NodeId -> Set.Set NodeId -> [NodeId]
+computeNewNodes discoveredNodes knownNodes =
+  Set.toList (Set.difference discoveredNodes knownNodes)
 
 -- | Compute nodes to prune: those in the registry but absent from both
 -- the merged topology and the configured seed list.
@@ -194,6 +193,18 @@ data DriftCondition
   | ReplicaCountBelowThreshold Int Int    -- ^ (actual healthy replicas, min_replicas_for_failover)
   deriving (Eq, Show)
 
+-- | Pure: compute drift conditions from cluster config and merged topology.
+-- Extracts configured hosts, filters reachable nodes, counts healthy replicas,
+-- and delegates to 'detectTopologyDrift'.
+computeDriftConditions :: ClusterConfig -> ClusterTopology -> [DriftCondition]
+computeDriftConditions cc topo =
+  let configuredHosts = Set.fromList $ map (HostName . ncHost) (NE.toList (ccNodes cc))
+      reachableNodes  = filter nsIsReachable (Map.elems (ctNodes topo))
+      discoveredHosts = Set.fromList $ map (nodeHost . nsNodeId) reachableNodes
+      healthyReplicas = length $ filter (\ns -> nsRole ns == Replica) reachableNodes
+      minReplicas     = fcMinReplicasForFailover (ccFailover cc)
+  in detectTopologyDrift configuredHosts discoveredHosts minReplicas healthyReplicas
+
 -- | Pure: detect topology drift by comparing configured and discovered host sets
 -- and checking healthy replica count against the failover threshold.
 detectTopologyDrift
@@ -207,6 +218,15 @@ detectTopologyDrift configured discovered minReplicas healthyReplicas =
   ++ [ UnexpectedNode h | h <- Set.toList (Set.difference discovered configured) ]
   ++ [ ReplicaCountBelowThreshold healthyReplicas minReplicas
      | healthyReplicas < minReplicas ]
+
+-- | Merge a newly discovered topology with an optional previous topology.
+-- Preserves daemon-managed fields from old nodes via 'mergeNodeState' and
+-- deduplicates entries that represent the same hostname with different IPs.
+mergeTopology :: ClusterTopology -> Maybe ClusterTopology -> ClusterTopology
+mergeTopology newTopo Nothing = newTopo
+mergeTopology newTopo (Just oldTopo) =
+  newTopo { ctNodes = deduplicateByHostname
+              (Map.unionWith mergeNodeState (ctNodes newTopo) (ctNodes oldTopo)) }
 
 -- | When merging topology discovery results with existing state, preserve
 -- daemon-managed node fields. The monitoring workers are the authoritative

@@ -11,7 +11,7 @@ import Data.List.NonEmpty (NonEmpty ((:|)))
 import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
 import PureMyHA.Env (runApp)
 import qualified Data.Set as Set
-import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv, mergeNodeState, detectTopologyDrift, DriftCondition (..), decideClusterActions)
+import PureMyHA.Monitor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv, mergeNodeState, detectTopologyDrift, DriftCondition (..), decideClusterActions, mergeTopology, computeNewNodes, computeDriftConditions)
 import PureMyHA.Hook (HookEnv (..))
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
@@ -392,6 +392,95 @@ spec = do
     it "returns empty list when health stays Healthy" $
       decideClusterActions testFC (mkTopo Healthy True) Healthy
         `shouldBe` []
+
+  describe "mergeTopology" $ do
+    let baseTopo nodes = ClusterTopology
+          { ctClusterName          = "test"
+          , ctNodes                = nodes
+          , ctSourceNodeId         = Nothing
+          , ctHealth               = Healthy
+          , ctObservedHealthy      = False
+          , ctRecoveryBlockedUntil = Nothing
+          , ctLastFailoverAt       = Nothing
+          , ctPaused               = False
+          , ctTopologyDrift        = False
+          }
+
+    it "returns newTopo unchanged when mOldTopo is Nothing" $ do
+      let newTopo = baseTopo (Map.singleton (nsNodeId healthySource) healthySource)
+          merged  = mergeTopology newTopo Nothing
+      ctNodes merged `shouldBe` ctNodes newTopo
+
+    it "merges nodes from old topology preserving old health/role" $ do
+      let db1 = nsNodeId healthySource
+          -- new topology discovers db1 as Replica (e.g. probe without replica status failed)
+          newNs = healthyReplica { nsNodeId = db1 }
+          newTopo = baseTopo (Map.singleton db1 newNs)
+          oldTopo = baseTopo (Map.singleton db1 healthySource)
+          merged = mergeTopology newTopo (Just oldTopo)
+      -- mergeNodeState preserves old role
+      nsRole (ctNodes merged Map.! db1) `shouldBe` Source
+
+    it "includes nodes only present in old topology" $ do
+      let db1 = nsNodeId healthySource
+          db2 = nsNodeId healthyReplica
+          newTopo = baseTopo (Map.singleton db1 healthySource)
+          oldTopo = baseTopo (Map.singleton db2 healthyReplica)
+          merged = mergeTopology newTopo (Just oldTopo)
+      Map.size (ctNodes merged) `shouldBe` 2
+
+  describe "computeNewNodes" $ do
+    let db1 = NodeId "db1" 3306
+        db2 = NodeId "db2" 3306
+        db3 = NodeId "db3" 3306
+
+    it "returns nodes in discovered but not in known" $
+      computeNewNodes (Set.fromList [db1, db2, db3]) (Set.fromList [db1])
+        `shouldMatchList` [db2, db3]
+
+    it "returns [] when discovered is subset of known" $
+      computeNewNodes (Set.fromList [db1]) (Set.fromList [db1, db2])
+        `shouldBe` []
+
+    it "returns all discovered when known is empty" $
+      computeNewNodes (Set.fromList [db1, db2]) Set.empty
+        `shouldMatchList` [db1, db2]
+
+  describe "computeDriftConditions" $ do
+    let mkTopo nodes = ClusterTopology
+          { ctClusterName          = "test"
+          , ctNodes                = nodes
+          , ctSourceNodeId         = Nothing
+          , ctHealth               = Healthy
+          , ctObservedHealthy      = True
+          , ctRecoveryBlockedUntil = Nothing
+          , ctLastFailoverAt       = Nothing
+          , ctPaused               = False
+          , ctTopologyDrift        = False
+          }
+        ccWith nodes fc = testCC { ccNodes = nodes, ccFailover = fc }
+
+    it "returns [] when all configured hosts are reachable with sufficient replicas" $ do
+      let cc = ccWith (NodeConfig "db1" (Port 3306) :| [NodeConfig "db2" (Port 3306)]) (testFC { fcMinReplicasForFailover = 1 })
+          topo = mkTopo (Map.fromList [(nsNodeId healthySource, healthySource), (nsNodeId healthyReplica, healthyReplica)])
+      computeDriftConditions cc topo `shouldBe` []
+
+    it "returns [MissingNode] for configured host absent from reachable nodes" $ do
+      let cc = ccWith (NodeConfig "db1" (Port 3306) :| [NodeConfig "db2" (Port 3306)]) (testFC { fcMinReplicasForFailover = 0 })
+          topo = mkTopo (Map.singleton (nsNodeId healthySource) healthySource)
+      computeDriftConditions cc topo `shouldContain` [MissingNode (HostName "db2")]
+
+    it "returns [ReplicaCountBelowThreshold] when healthy replicas < min" $ do
+      let cc = ccWith (NodeConfig "db1" (Port 3306) :| []) (testFC { fcMinReplicasForFailover = 1 })
+          topo = mkTopo (Map.singleton (nsNodeId healthySource) healthySource)
+      computeDriftConditions cc topo `shouldContain` [ReplicaCountBelowThreshold 0 1]
+
+    it "excludes unreachable nodes from discovered hosts" $ do
+      let db2id = NodeId (mkHostInfoFromName "db2") 3306
+          cc = ccWith (NodeConfig "db1" (Port 3306) :| [NodeConfig "db2" (Port 3306)]) (testFC { fcMinReplicasForFailover = 0 })
+          topo = mkTopo (Map.fromList [(nsNodeId healthySource, healthySource), (db2id, unreachableNode db2id)])
+      -- db2 is in the topology but unreachable, so it should be missing from discovered hosts
+      computeDriftConditions cc topo `shouldContain` [MissingNode (HostName "db2")]
 
 isFireHook :: ClusterAction -> Bool
 isFireHook (FireHook _) = True
