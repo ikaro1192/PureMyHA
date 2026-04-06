@@ -105,14 +105,16 @@ spec = do
       result <- runApp env simulateFailover
       result `shouldBe` Left "Cluster not found"
 
-    it "returns preconditions FAIL message for healthy cluster" $ do
+    it "returns candidate when cluster is healthy (health check bypassed for simulation)" $ do
       tvar <- newDaemonState
       let topo = buildClusterTopology 1 "main" clusterHealthy
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env simulateFailover
       case result of
-        Right msg -> msg `shouldSatisfy` T.isInfixOf "FAIL"
+        Right msg -> do
+          msg `shouldSatisfy` T.isInfixOf "Would promote"
+          msg `shouldSatisfy` T.isInfixOf "db2"
         Left err  -> expectationFailure (show err)
 
     it "returns candidate host when cluster is in DeadSource state" $ do
