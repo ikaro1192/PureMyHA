@@ -45,10 +45,10 @@ simulateFailover = do
       let healthDesc    = "Current health: " <> T.pack (show (ctHealth topo))
           pauseNote     = [ "Note: auto-failover is currently paused by operator"
                           | ctPaused topo ]
-          -- Check structural preconditions, bypassing the pause flag since that
-          -- is an operational constraint unrelated to topology readiness.
+          -- Check structural preconditions, bypassing the pause flag and health
+          -- state since simulate-failover asks "what if the source died now?"
           precondResult = checkAutoFailoverPreconditions now
-                            (topo { ctPaused = False })
+                            (topo { ctPaused = False, ctHealth = DeadSource })
                             (fcMinReplicasForFailover fc)
           candidates    = rankCandidates (fcNeverPromote fc)
                             (fmap unPositiveInt (fcMaxReplicaLagForCandidate fc))
