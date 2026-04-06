@@ -86,7 +86,8 @@ current_source=$(get_source_host)
 assert_eq "Source unchanged after dry-run demote" "$orig_source" "$current_source"
 
 # ---------------------------------------------------------------------------
-# 4. simulate-failover: healthy cluster should report preconditions FAIL
+# 4. simulate-failover: healthy cluster should report preconditions OK and a candidate
+#    (health check is bypassed — simulation assumes source just died)
 # ---------------------------------------------------------------------------
 echo "  Testing simulate-failover on healthy cluster..."
 wait_for_health "Healthy" 30
@@ -95,7 +96,8 @@ sim_result=$(cli_simulate_failover)
 echo "  Simulate-failover (healthy) response: $sim_result"
 
 sim_success=$(echo "$sim_result" | jq -r '.success // empty')
-assert_contains "simulate-failover reports preconditions FAIL on healthy cluster" "FAIL" "$sim_success"
+assert_contains "simulate-failover shows preconditions OK on healthy cluster" "Preconditions: OK" "$sim_success"
+assert_contains "simulate-failover shows candidate on healthy cluster" "Would promote" "$sim_success"
 assert_contains "simulate-failover shows current health" "Healthy" "$sim_success"
 
 # ---------------------------------------------------------------------------
