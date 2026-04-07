@@ -21,7 +21,7 @@ import PureMyHA.Env
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
-import PureMyHA.Monitor.Event (MonitorEvent (..))
+import PureMyHA.Supervisor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.MySQL.Query

@@ -29,7 +29,7 @@ import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet)
 import PureMyHA.MySQL.Query (showReplicaStatus, showReplicas, getGtidExecuted, resolveHostInfo)
 import PureMyHA.Types
-import PureMyHA.Monitor.Detector (identifySource, detectClusterHealth)
+import PureMyHA.Supervisor.Detector (identifySource, detectClusterHealth)
 
 -- | Internal environment for discovery, bundling invariant parameters.
 data DiscoveryEnv = DiscoveryEnv

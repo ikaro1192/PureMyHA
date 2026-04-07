@@ -1,5 +1,5 @@
 {-# LANGUAGE StrictData #-}
-module PureMyHA.Monitor.Event
+module PureMyHA.Supervisor.Event
   ( MonitorEvent (..)
   , StateEffect (..)
   , applyEvent
@@ -13,7 +13,7 @@ import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time (UTCTime, NominalDiffTime, diffUTCTime)
 import PureMyHA.Config (FailureDetectionConfig (..), FailoverConfig (..), MonitoringConfig (..), AtLeastOne (..), PositiveDuration (..))
-import PureMyHA.Monitor.Detector (detectClusterHealth, detectNodeHealth, identifySource)
+import PureMyHA.Supervisor.Detector (detectClusterHealth, detectNodeHealth, identifySource)
 import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.Types
 

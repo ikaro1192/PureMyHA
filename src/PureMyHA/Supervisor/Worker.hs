@@ -1,4 +1,4 @@
-module PureMyHA.Monitor.Worker
+module PureMyHA.Supervisor.Worker
   ( startMonitorWorkers
   , startTopologyRefreshWorker
   , WorkerRegistry
@@ -36,7 +36,7 @@ import PureMyHA.Config
 import PureMyHA.Env
 import PureMyHA.Hook (HookEnv (..))
 import PureMyHA.Logger (logDebug)
-import PureMyHA.Monitor.Event (MonitorEvent (..))
+import PureMyHA.Supervisor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
 import PureMyHA.MySQL.GTID (emptyGtidSet)
 import PureMyHA.MySQL.Query

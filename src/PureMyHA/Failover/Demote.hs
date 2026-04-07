@@ -7,7 +7,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import PureMyHA.Config (ClusterConfig (..))
 import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getReplCredentials, getTLSConfig, appLogInfo, appLogError)
-import PureMyHA.Monitor.Event (MonitorEvent (..))
+import PureMyHA.Supervisor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.Query
   ( stopReplica, setReadOnly, changeReplicationSourceTo, startReplica )

@@ -1,4 +1,4 @@
-module PureMyHA.Monitor.Detector
+module PureMyHA.Supervisor.Detector
   ( detectClusterHealth
   , detectNodeHealth
   , detectReplicaHealth

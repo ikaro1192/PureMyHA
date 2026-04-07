@@ -1,4 +1,4 @@
-module PureMyHA.Monitor.StateManager
+module PureMyHA.Supervisor.StateManager
   ( newEventQueue
   , submitEvent
   , stateManager
@@ -14,7 +14,7 @@ import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Failover.Auto (runAutoFailover, runAutoFence)
 import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
 import PureMyHA.Logger (logInfo, logWarn)
-import PureMyHA.Monitor.Event (MonitorEvent, StateEffect (..), applyEvent)
+import PureMyHA.Supervisor.Event (MonitorEvent, StateEffect (..), applyEvent)
 import PureMyHA.Types
 
 -- | Create a new bounded event queue with capacity = nodeCount * 2.
