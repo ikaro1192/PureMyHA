@@ -48,10 +48,10 @@ library
     PureMyHA.MySQL.TLS
     PureMyHA.Topology.Discovery
     PureMyHA.Topology.State
-    PureMyHA.Monitor.Worker
-    PureMyHA.Monitor.Detector
-    PureMyHA.Monitor.Event
-    PureMyHA.Monitor.StateManager
+    PureMyHA.Supervisor.Worker
+    PureMyHA.Supervisor.Detector
+    PureMyHA.Supervisor.Event
+    PureMyHA.Supervisor.StateManager
     PureMyHA.Failover.Candidate
     PureMyHA.Failover.Auto
     PureMyHA.Failover.Demote

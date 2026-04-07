@@ -20,7 +20,7 @@ import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.Text (Text)
 import PureMyHA.Config
 import PureMyHA.Logger (Logger, logInfo, logWarn, logError)
-import PureMyHA.Monitor.Event (MonitorEvent)
+import PureMyHA.Supervisor.Event (MonitorEvent)
 import PureMyHA.Topology.State (TVarDaemonState, FailoverLock)
 import PureMyHA.Types (ClusterName)
 

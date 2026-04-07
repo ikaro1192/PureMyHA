@@ -6,7 +6,7 @@ import Test.Hspec
 
 import Fixtures
 import PureMyHA.Config
-import PureMyHA.Monitor.Event
+import PureMyHA.Supervisor.Event
 import PureMyHA.MySQL.GTID (emptyGtidSet)
 import PureMyHA.Types
 
@@ -43,7 +43,7 @@ replicaId :: NodeId
 replicaId = nsNodeId healthyReplica
 
 spec :: Spec
-spec = describe "PureMyHA.Monitor.Event" $ do
+spec = describe "PureMyHA.Supervisor.Event" $ do
 
   describe "applyEvent NodeProbed" $ do
     let baseNodes = clusterHealthy

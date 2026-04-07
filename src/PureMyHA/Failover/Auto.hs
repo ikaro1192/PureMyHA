@@ -23,7 +23,7 @@ import PureMyHA.Failover.Candidate (selectCandidate, selectSurvivor, rankCandida
 import PureMyHA.Hook
   ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
 import PureMyHA.Logger (logInfo, logError)
-import PureMyHA.Monitor.Event (MonitorEvent (..))
+import PureMyHA.Supervisor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State

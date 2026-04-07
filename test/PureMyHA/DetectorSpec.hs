@@ -3,7 +3,7 @@ module PureMyHA.DetectorSpec (spec) where
 import qualified Data.Map.Strict as Map
 import Test.Hspec
 import Fixtures
-import PureMyHA.Monitor.Detector
+import PureMyHA.Supervisor.Detector
 import PureMyHA.MySQL.GTID (emptyGtidSet)
 import PureMyHA.Types
 
