@@ -11,7 +11,7 @@
   <img src="/docs/PureMyHA.png" />
 </p>
 
-A simple, pure-Haskell High Availability management tool for MySQL 8.4 replication topologies.
+A simple yet powerful, pure-Haskell High Availability management tool for MySQL 8.4 replication topologies.
 
 Inspired by the design of Orchestrator, PureMyHA provides topology discovery, failure detection, and automatic failover — with no C library dependencies.
 
