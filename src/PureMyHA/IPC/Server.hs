@@ -262,7 +262,7 @@ toClusterTopologyView ct = ClusterTopologyView
 toNodeStateView :: NodeState -> NodeStateView
 toNodeStateView ns = NodeStateView
   { nsvHost        = nodeHost (nsNodeId ns)
-  , nsvPort        = nodePort (nsNodeId ns)
+  , nsvPort        = unPort (nodePort (nsNodeId ns))
   , nsvRole        = nsRole ns
   , nsvHealth      = nsHealth ns
   , nsvLagSeconds  = case nsProbeResult ns of

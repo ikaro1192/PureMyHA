@@ -113,7 +113,7 @@ runClone recipientSpec_ mDonorSpec_ = runExceptT $ do
   mTls        <- lift getTLSConfig
   creds       <- lift getMonCredentials
   let donorHost   = unIPAddr (nodeIPAddr donorId)
-      donorPort   = nodePort donorId
+      donorPort   = unPort (nodePort donorId)
       donorCi     = makeConnectInfo donorId creds
       recipientCi = makeConnectInfo recipientId creds
   checkCloneActive mTls donorCi "donor" donorHost

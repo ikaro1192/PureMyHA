@@ -22,7 +22,7 @@ import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.List.NonEmpty as NE
 import System.Timeout (timeout)
-import PureMyHA.Config (ClusterConfig (..), DbCredentials, FailoverConfig (..), MonitoringConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), TLSConfig)
+import PureMyHA.Config (ClusterConfig (..), DbCredentials, FailoverConfig (..), MonitoringConfig (..), NodeConfig (..), PositiveDuration (..), TLSConfig)
 import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getMonitoringConfig, getTLSConfig)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
@@ -157,7 +157,7 @@ runProbe nid = do
           pure []
         Nothing -> do
           -- source node: discover downstream replicas via SHOW REPLICAS + performance_schema.processlist
-          (discovered, expected, rawHosts) <- showReplicas conn (nodePort nid)
+          (discovered, expected, rawHosts) <- showReplicas conn (unPort (nodePort nid))
           logInfo deLogger $ "[" <> unHostName (nodeHost nid) <> "] Raw hosts from SHOW REPLICAS/processlist: "
             <> T.pack (show rawHosts)
           logInfo deLogger $ "[" <> unHostName (nodeHost nid) <> "] Resolved replica NodeIds: "
@@ -219,7 +219,7 @@ nextDiscoveryTargets ns visited rest =
 resolveQueueEntry :: NodeId -> IO NodeId
 resolveQueueEntry nid = do
   hi <- resolveHostInfo (nodeHost nid)
-  pure (unsafeNodeId hi (nodePort nid))
+  pure (mkNodeId hi (nodePort nid))
 
 -- | Remove duplicate nodes that represent the same hostname:port with different
 -- IP representations. Prefers the entry with a resolved IP (IP text differs

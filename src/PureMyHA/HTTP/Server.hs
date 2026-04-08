@@ -15,7 +15,7 @@ import Network.HTTP.Types (status200, status404, status405, methodGet, Header)
 import Network.Wai (Application, Request (..), Response, responseLBS)
 import Network.Wai.Handler.Warp (defaultSettings, runSettings, setHost, setPort)
 
-import PureMyHA.Config (HttpConfig (..), Port (..))
+import PureMyHA.Config (HttpConfig (..))
 import PureMyHA.IPC.Protocol ()   -- ToJSON instances
 import PureMyHA.IPC.Server (toClusterStatus, toClusterTopologyView)
 import PureMyHA.Topology.State (TVarDaemonState, readDaemonState)

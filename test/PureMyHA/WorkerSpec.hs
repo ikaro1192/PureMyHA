@@ -9,7 +9,7 @@ import Test.Hspec
 import Data.Time (addUTCTime)
 import Fixtures
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
 import PureMyHA.Env (runApp)
 import qualified Data.Set as Set
 import PureMyHA.Supervisor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv, mergeNodeState, detectTopologyDrift, mergeTopology, computeNewNodes, computeDriftConditions, WorkerRegistry (..))

@@ -23,6 +23,7 @@ module PureMyHA.Config
   , TLSMinVersion (..)
   , TLSConfig (..)
   , Port (..)
+  , mkPort
   , PositiveDuration (..)
   , AtLeastOne (..)
   , PositiveInt (..)
@@ -47,7 +48,7 @@ import Data.Time (NominalDiffTime)
 import Data.Yaml (decodeFileEither)
 import GHC.Generics (Generic)
 import Text.Read (readMaybe)
-import PureMyHA.Types (ClusterName (..), unClusterName, HostInfo, HostName (..), mkHostInfoFromName, hiHostName)
+import PureMyHA.Types (ClusterName (..), unClusterName, HostInfo, HostName (..), mkHostInfoFromName, hiHostName, Port (..), mkPort)
 
 data Config = Config
   { cfgClusters :: NonEmpty ClusterConfig
@@ -239,10 +240,6 @@ data HooksConfig = HooksConfig
   , hcOnTopologyDrift             :: Maybe FilePath  -- ^ Fired on transition to topology drift state
   } deriving (Show, Generic)
 
--- | A TCP/IP port number in the range 1–65535.
-newtype Port = Port { unPort :: Int }
-  deriving (Show, Eq)
-
 -- | A strictly positive duration (> 0).
 newtype PositiveDuration = PositiveDuration { unPositiveDuration :: NominalDiffTime }
   deriving (Show, Eq)
@@ -254,13 +251,6 @@ newtype AtLeastOne = AtLeastOne { unAtLeastOne :: Int }
 -- | A strictly positive integer (> 0).
 newtype PositiveInt = PositiveInt { unPositiveInt :: Int }
   deriving (Show, Eq)
-
-instance FromJSON Port where
-  parseJSON v = do
-    n <- parseJSON v
-    if n >= 1 && n <= 65535
-      then pure (Port n)
-      else fail $ "port out of range (1-65535): " <> show n
 
 instance FromJSON PositiveDuration where
   parseJSON v = do

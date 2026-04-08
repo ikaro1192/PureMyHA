@@ -5,7 +5,8 @@ module PureMyHA.Types
   , nodePort
   , mkNodeId
   , unsafeNodeId
-  , NodeIdError (..)
+  , Port (..)
+  , mkPort
   , nodeHost
   , nodeIPAddr
   , ClusterName (..)
@@ -107,26 +108,46 @@ instance IsString HostInfo where
 mkHostInfoFromName :: HostName -> HostInfo
 mkHostInfoFromName h = HostInfo h (IPAddr (unHostName h))
 
+-- | A TCP/IP port number in the range 1–65535.
+newtype Port = Port { unPort :: Int }
+  deriving (Eq, Ord, Generic)
+
+-- | Renders the bare integer (no @Port @ prefix), so existing
+-- @T.pack (show (nodePort ...))@ call sites in hooks/logs are unchanged.
+instance Show Port where
+  show (Port n) = show n
+
+instance FromJSON Port where
+  parseJSON v = do
+    n <- parseJSON v
+    if n >= 1 && n <= 65535
+      then pure (Port n)
+      else fail $ "port out of range (1-65535): " <> show n
+
+instance ToJSON Port where
+  toJSON (Port n) = toJSON n
+
+-- | Smart constructor for 'Port'; validates 1..65535.
+mkPort :: Int -> Either String Port
+mkPort n
+  | n >= 1 && n <= 65535 = Right (Port n)
+  | otherwise            = Left ("port out of range (1-65535): " <> show n)
+
 data NodeId = UnsafeNodeId
   { nodeHostInfo :: HostInfo
-  , nodePort     :: Int
+  , nodePort     :: Port
   } deriving (Show, Generic)
 
--- | Errors when constructing a 'NodeId'.
-data NodeIdError
-  = NodeIdPortOutOfRange Int
-  deriving (Eq, Show)
+-- | Smart constructor: total. Validation lives in 'mkPort'.
+mkNodeId :: HostInfo -> Port -> NodeId
+mkNodeId = UnsafeNodeId
 
--- | Smart constructor: validates that the TCP port is in 1..65535.
-mkNodeId :: HostInfo -> Int -> Either NodeIdError NodeId
-mkNodeId hi p
-  | p >= 1 && p <= 65535 = Right (UnsafeNodeId hi p)
-  | otherwise            = Left (NodeIdPortOutOfRange p)
-
--- | Escape hatch that skips port validation. Should only be used in
--- tests / fixtures where the port is a known-good literal.
+-- | Escape hatch that takes a raw 'Int' for test fixture ergonomics.
+-- Calls 'mkPort' and 'error's on out-of-range values.
 unsafeNodeId :: HostInfo -> Int -> NodeId
-unsafeNodeId = UnsafeNodeId
+unsafeNodeId hi p = case mkPort p of
+  Right port -> UnsafeNodeId hi port
+  Left msg   -> error ("unsafeNodeId: " ++ msg)
 
 instance Eq NodeId where
   a == b = hiIPAddr (nodeHostInfo a) == hiIPAddr (nodeHostInfo b) && nodePort a == nodePort b

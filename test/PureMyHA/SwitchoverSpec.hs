@@ -7,7 +7,7 @@ import qualified Data.Text as T
 import Test.Hspec
 import Fixtures
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
+import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
 import PureMyHA.Env (runApp)
 import PureMyHA.Failover.Switchover (switchoverReconnectTargets, dryRunSwitchover)
 import PureMyHA.IPC.Protocol (SwitchoverTarget (..))

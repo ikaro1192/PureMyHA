@@ -29,7 +29,6 @@ import PureMyHA.Types
   , ErrantGtidInfo (..)
   , NodeId
   , mkNodeId
-  , NodeIdError (..)
   , mkHostInfoFromName
   , nodeHost
   , nodePort
@@ -93,10 +92,7 @@ instance FromJSON NodeId where
   parseJSON = withObject "NodeId" $ \o -> do
     hi <- mkHostInfoFromName <$> o .: "host"
     p  <- o .: "port"
-    case mkNodeId hi p of
-      Right nid -> pure nid
-      Left (NodeIdPortOutOfRange n) ->
-        fail $ "NodeId port out of range (1-65535): " <> show n
+    pure (mkNodeId hi p)
 
 instance ToJSON NodeHealth where
   toJSON Healthy                    = String "Healthy"

@@ -8,7 +8,7 @@ import Fixtures
 import PureMyHA.Config
   ( ClusterConfig (..), Credentials (..), FailoverConfig (..)
   , MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..)
-  , Port (..), PositiveDuration (..), AtLeastOne (..)
+  , PositiveDuration (..), AtLeastOne (..)
   , AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..)
   )
 import PureMyHA.Env (runApp)

@@ -6,7 +6,7 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import Test.Hspec
 import Fixtures
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailureDetectionConfig (..), FailoverConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailureDetectionConfig (..), FailoverConfig (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
 import PureMyHA.Topology.Discovery
   ( buildNodeStateFromProbe
   , buildClusterTopology

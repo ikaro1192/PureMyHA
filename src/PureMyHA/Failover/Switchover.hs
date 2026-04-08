@@ -226,7 +226,7 @@ reconnectToNew newSourceId ns = do
   let ci = makeConnectInfo (nsNodeId ns) monCreds
   liftIO $ void $ withNodeConn mTls ci $ \conn -> do
     void $ try @SomeException (stopReplica conn)
-    changeReplicationSourceTo conn (unHostName (nodeHost newSourceId)) (nodePort newSourceId) replCreds mTls
+    changeReplicationSourceTo conn (unHostName (nodeHost newSourceId)) (unPort (nodePort newSourceId)) replCreds mTls
     setReadOnly conn
     startReplica conn
 

@@ -112,7 +112,7 @@ identifySource nodes =
        _   ->
          -- Fall back: find the node whose host:port is referenced by replicas as their source
          let isReferencedAsSource n =
-               (nodeHost (nsNodeId n), nodePort (nsNodeId n)) `elem` replicaSourcePairs
+               (nodeHost (nsNodeId n), unPort (nodePort (nsNodeId n))) `elem` replicaSourcePairs
              allSources = filter isReferencedAsSource nodes
          in case allSources of
               [s] -> Just (nsNodeId s)
