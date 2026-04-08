@@ -7,9 +7,10 @@ import qualified Data.Text as T
 import Test.Hspec
 import Fixtures
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
+import PureMyHA.Config (ClusterConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
 import PureMyHA.Env (runApp)
 import PureMyHA.Failover.Switchover (switchoverReconnectTargets, dryRunSwitchover)
+import PureMyHA.IPC.Protocol (SwitchoverTarget (..))
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
 import PureMyHA.Types
@@ -52,7 +53,7 @@ spec = do
       let topo = buildClusterTopology 1 "main" clusterHealthy
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
-      result <- runApp env $ dryRunSwitchover Nothing
+      result <- runApp env $ dryRunSwitchover AutoSelectTarget
       case result of
         Right msg -> msg `shouldSatisfy` T.isPrefixOf "Dry run: would promote"
         Left err  -> expectationFailure (show err)
@@ -60,7 +61,7 @@ spec = do
     it "returns Left when cluster is not found" $ do
       tvar <- newDaemonState
       env <- mkTestEnv tvar testCC testFC
-      result <- runApp env $ dryRunSwitchover Nothing
+      result <- runApp env $ dryRunSwitchover AutoSelectTarget
       result `shouldBe` Left "Cluster not found"
 
     it "returns Left when specified host does not exist" $ do
@@ -68,7 +69,7 @@ spec = do
       let topo = buildClusterTopology 1 "main" clusterHealthy
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
-      result <- runApp env $ dryRunSwitchover (Just "nonexistent.host")
+      result <- runApp env $ dryRunSwitchover (ExplicitTarget "nonexistent.host" Nothing)
       result `shouldSatisfy` isLeft
 
 testCC :: ClusterConfig
@@ -79,20 +80,20 @@ testCC = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
   , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
-  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing [] False
+  , ccFailover               = FailoverConfig AutoFailoverOn 1 [] 60 FenceManual Nothing [] AllowUnobserved
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }
 
 testFC :: FailoverConfig
 testFC = FailoverConfig
-  { fcAutoFailover                   = True
+  { fcAutoFailover                   = AutoFailoverOn
   , fcMinReplicasForFailover         = 1
   , fcCandidatePriority              = []
   , fcWaitRelayLogTimeout            = 60
-  , fcAutoFence                      = False
+  , fcAutoFence                      = FenceManual
   , fcMaxReplicaLagForCandidate      = Nothing
   , fcNeverPromote                   = []
-  , fcFailoverWithoutObservedHealthy = False
+  , fcFailoverWithoutObservedHealthy = RequireObservedHealthy
   }
 

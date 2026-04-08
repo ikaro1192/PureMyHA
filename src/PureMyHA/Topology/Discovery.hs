@@ -89,11 +89,11 @@ buildClusterTopology minReplicas name nodeStates =
        , ctNodes                = nodeStates'
        , ctSourceNodeId         = sourceId
        , ctHealth               = health
-       , ctObservedHealthy      = health == Healthy
+       , ctObservedHealthy      = if health == Healthy then HasBeenObservedHealthy else NeverObservedHealthy
        , ctRecoveryBlockedUntil = Nothing
        , ctLastFailoverAt       = Nothing
-       , ctPaused               = False
-       , ctTopologyDrift        = False
+       , ctPaused               = Running
+       , ctTopologyDrift        = NoDrift
        , ctLastEmergencyCheckAt = Nothing
        }
 
@@ -185,9 +185,9 @@ buildNodeStateFromProbe nid _ (Left err) = NodeState
   , nsHealth              = NodeUnreachable err
   , nsProbeResult         = ProbeFailure err
   , nsErrantGtids         = emptyGtidSet
-  , nsPaused              = False
+  , nsPaused              = Running
   , nsConsecutiveFailures = 0
-  , nsFenced              = False
+  , nsFenced              = Unfenced
   }
 buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
   { nsNodeId              = nid
@@ -195,9 +195,9 @@ buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
   , nsHealth              = Healthy
   , nsProbeResult         = ProbeSuccess now mRs gtidExec
   , nsErrantGtids         = emptyGtidSet
-  , nsPaused              = False
+  , nsPaused              = Running
   , nsConsecutiveFailures = 0
-  , nsFenced              = False
+  , nsFenced              = Unfenced
   }
 
 -- | Calculate next nodes to probe from a discovered node's replica status (pure)
@@ -249,10 +249,10 @@ buildInitialTopology cc = ClusterTopology
   , ctNodes                = Map.empty
   , ctSourceNodeId         = Nothing
   , ctHealth               = NeedsAttention "Initializing"
-  , ctObservedHealthy      = False
+  , ctObservedHealthy      = NeverObservedHealthy
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
-  , ctPaused               = False
-  , ctTopologyDrift        = False
+  , ctPaused               = Running
+  , ctTopologyDrift        = NoDrift
   , ctLastEmergencyCheckAt = Nothing
   }

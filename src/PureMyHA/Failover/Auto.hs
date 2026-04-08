@@ -8,7 +8,7 @@ module PureMyHA.Failover.Auto
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM
-import Control.Monad (forM_, void, when)
+import Control.Monad (forM_, void)
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -21,13 +21,18 @@ import PureMyHA.Config
 import PureMyHA.Env
 import PureMyHA.Failover.Candidate (selectCandidate, selectSurvivor, rankCandidates, CandidateInfo (..))
 import PureMyHA.Hook
-  ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
+  ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..), SourceChange (..) )
 import PureMyHA.Logger (logInfo, logError)
 import PureMyHA.Supervisor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
 import PureMyHA.MySQL.Query
 import PureMyHA.Topology.State
 import PureMyHA.Types
+
+-- | Local helper: build a SourceChange from an optional old host and a new host.
+mkSourceChangeAuto :: Maybe HostInfo -> HostInfo -> SourceChange
+mkSourceChangeAuto Nothing     newH = InitialSourcePromotion newH
+mkSourceChangeAuto (Just oldH) newH = SourceChanged oldH newH
 
 -- | Simulate failover: report what would happen if the source died right now.
 -- The pause flag is an operational constraint shown as a note; structural
@@ -43,12 +48,13 @@ simulateFailover = do
     Just topo -> do
       now <- liftIO getCurrentTime
       let healthDesc    = "Current health: " <> T.pack (show (ctHealth topo))
-          pauseNote     = [ "Note: auto-failover is currently paused by operator"
-                          | ctPaused topo ]
+          pauseNote     = case ctPaused topo of
+                            Paused  -> ["Note: auto-failover is currently paused by operator"]
+                            Running -> []
           -- Check structural preconditions, bypassing the pause flag and health
           -- state since simulate-failover asks "what if the source died now?"
           precondResult = checkAutoFailoverPreconditions now
-                            (topo { ctPaused = False, ctHealth = DeadSource })
+                            (topo { ctPaused = Running, ctHealth = DeadSource })
                             (fcMinReplicasForFailover fc)
           candidates    = rankCandidates (fcNeverPromote fc)
                             (fmap unPositiveInt (fcMaxReplicaLagForCandidate fc))
@@ -72,7 +78,7 @@ simulateFailover = do
 -- | Execute automatic failover for a cluster
 runAutoFailover :: App (Either Text ())
 runAutoFailover = do
-  lock <- asks envLock
+  FailoverLock lock <- asks envLock
   acquired <- liftIO $ atomically $ tryTakeTMVar lock
   case acquired of
     Nothing -> pure (Left "Failover already in progress")
@@ -88,7 +94,9 @@ checkAutoFailoverPreconditions
   -> Int               -- ^ fcMinReplicasForFailover
   -> Either Text ()
 checkAutoFailoverPreconditions now topo minReplicas = do
-  when (ctPaused topo) $ Left "Failover paused by operator (pause-failover)"
+  case ctPaused topo of
+    Paused  -> Left "Failover paused by operator (pause-failover)"
+    Running -> Right ()
   case ctRecoveryBlockedUntil topo of
     Just deadline | now < deadline ->
       Left "Failover blocked by anti-flap period"
@@ -143,8 +151,7 @@ executeFailover topo = runExceptT $ do
   ts <- liftIO getCurrentTimestamp
   mHooks <- lift getHooksConfig
   let postEnv = HookEnv { hookClusterName  = ccName cc
-                        , hookNewSource    = Just (nodeHostInfo candidateId)
-                        , hookOldSource    = oldSourceHost
+                        , hookSourceChange = mkSourceChangeAuto oldSourceHost (nodeHostInfo candidateId)
                         , hookFailureType  = Just "DeadSource"
                         , hookTimestamp    = ts
                         , hookLagSeconds   = Nothing
@@ -161,8 +168,7 @@ runPreFailoverHook candidateId oldSourceHost = do
   mHooks <- getHooksConfig
   ts <- liftIO getCurrentTimestamp
   let preEnv = HookEnv { hookClusterName  = ccName cc
-                       , hookNewSource    = Just (nodeHostInfo candidateId)
-                       , hookOldSource    = oldSourceHost
+                       , hookSourceChange = mkSourceChangeAuto oldSourceHost (nodeHostInfo candidateId)
                        , hookFailureType  = Just "DeadSource"
                        , hookTimestamp    = ts
                        , hookLagSeconds   = Nothing
@@ -187,8 +193,7 @@ promoteWithOnFailureHook candidateId waitTimeout oldSourceHost = do
       ts <- liftIO getCurrentTimestamp
       mHooks <- getHooksConfig
       let failEnv = HookEnv { hookClusterName  = clusterName
-                             , hookNewSource    = Just (nodeHostInfo candidateId)
-                             , hookOldSource    = oldSourceHost
+                             , hookSourceChange = mkSourceChangeAuto oldSourceHost (nodeHostInfo candidateId)
                              , hookFailureType  = Just "PromoteFailed"
                              , hookTimestamp    = ts
                              , hookLagSeconds   = Nothing
@@ -252,7 +257,7 @@ reconnectReplica newSourceId ns = do
 -- Reuses envLock to prevent concurrent fence/failover operations.
 runAutoFence :: App ()
 runAutoFence = do
-  lock <- asks envLock
+  FailoverLock lock <- asks envLock
   acquired <- liftIO $ atomically $ tryTakeTMVar lock
   case acquired of
     Nothing -> appLogInfo "Auto-fence skipped: failover/fence operation already in progress"
@@ -277,7 +282,7 @@ doAutoFence = do
     Nothing -> appLogError $ prefix <> "Auto-fence: cluster not found"
     Just topo -> do
       let sources = filter isSource (Map.elems (ctNodes topo))
-          unfenced = filter (not . nsFenced) sources
+          unfenced = filter (\ns -> case nsFenced ns of Unfenced -> True; Fenced -> False) sources
       case unfenced of
         []  -> pure ()  -- all already fenced or no sources
         _   -> do
@@ -313,8 +318,7 @@ fenceNode clusterName survivorHost ns = do
       appLogInfo $ prefix <> "Auto-fence: " <> unHostName (nodeHost nid) <> " fenced (super_read_only=ON)"
       ts <- liftIO getCurrentTimestamp
       let hookEnv = HookEnv { hookClusterName  = clusterName
-                             , hookNewSource    = Just survivorHost
-                             , hookOldSource    = Just (nodeHostInfo nid)
+                             , hookSourceChange = SourceChanged (nodeHostInfo nid) survivorHost
                              , hookFailureType  = Nothing
                              , hookTimestamp    = ts
                              , hookLagSeconds   = Nothing

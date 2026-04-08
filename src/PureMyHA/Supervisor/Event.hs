@@ -1,6 +1,7 @@
 {-# LANGUAGE StrictData #-}
 module PureMyHA.Supervisor.Event
   ( MonitorEvent (..)
+  , SwitchoverOrigin (..)
   , StateEffect (..)
   , applyEvent
   , decideClusterActions
@@ -13,7 +14,7 @@ import Data.Maybe (isJust)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time (UTCTime, NominalDiffTime, diffUTCTime)
-import PureMyHA.Config (FailureDetectionConfig (..), FailoverConfig (..), MonitoringConfig (..), AtLeastOne (..), PositiveDuration (..))
+import PureMyHA.Config (FailureDetectionConfig (..), FailoverConfig (..), MonitoringConfig (..), AtLeastOne (..), PositiveDuration (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
 import PureMyHA.Supervisor.Detector (detectClusterHealth, detectNodeHealth, identifySource)
 import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.Types
@@ -32,7 +33,7 @@ data MonitorEvent
       { neMergedTopology :: ClusterTopology
       }
   | TopologyDriftUpdated
-      { neDrift          :: Bool
+      { neDrift          :: DriftState
       , neDriftConditions :: [DriftCondition]
       }
   | FailoverCommitted
@@ -51,8 +52,7 @@ data MonitorEvent
       { neDemotedNodeId :: NodeId
       }
   | SwitchoverCommitted
-      { neSwNewSourceId :: NodeId
-      , neSwOldSourceId :: Maybe NodeId
+      { neSwOrigin :: SwitchoverOrigin
       }
   | ReplicaPaused
       { nePausedNodeId :: NodeId
@@ -64,6 +64,16 @@ data MonitorEvent
   | FailoverPaused
   | FailoverResumed
   deriving (Show)
+
+-- | Origin of a switchover commit.
+--
+-- 'InitialPromotion' means there was no previously detected source
+-- (e.g. cluster bootstrap or recovery from a state with no Source role).
+-- 'Promoted' means an existing source was demoted in favour of a new one.
+data SwitchoverOrigin
+  = InitialPromotion { spNewSource :: NodeId }
+  | Promoted         { spOldSource :: NodeId, spNewSource :: NodeId }
+  deriving (Eq, Show)
 
 -- | Side effects emitted by the reducer, to be executed asynchronously
 -- by the stateManager after applying the state transition.
@@ -124,9 +134,9 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
         , nsHealth              = Healthy   -- placeholder, computed below
         , nsProbeResult         = probeResult
         , nsErrantGtids         = errantGtids
-        , nsPaused              = False     -- placeholder, preserved below
+        , nsPaused              = Running   -- placeholder, preserved below
         , nsConsecutiveFailures = newFailures
-        , nsFenced              = False     -- placeholder, preserved below
+        , nsFenced              = Unfenced  -- placeholder, preserved below
         }
 
       -- 5. Detect node health
@@ -182,7 +192,11 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
       minReplicas = fcMinReplicasForFailover fc
       newClusterHealth = detectClusterHealth minReplicas newNodes
       newSrcId = identifySource (Map.elems newNodes)
-      observedHealthy = ctObservedHealthy ct || newClusterHealth == Healthy
+      observedHealthy = case ctObservedHealthy ct of
+        HasBeenObservedHealthy -> HasBeenObservedHealthy
+        NeverObservedHealthy
+          | newClusterHealth == Healthy -> HasBeenObservedHealthy
+          | otherwise                   -> NeverObservedHealthy
       clusterTransitioned = ctHealth ct /= newClusterHealth
 
       -- 13. Cluster health transition log
@@ -219,8 +233,12 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
 
 -- TopologyRefreshed: merge new topology, preserving daemon-managed fields
 applyEvent _ _ _ ct (TopologyRefreshed newTopo) =
-  let merged = newTopo
-        { ctObservedHealthy      = ctObservedHealthy ct || ctObservedHealthy newTopo
+  let mergedObserved = case (ctObservedHealthy ct, ctObservedHealthy newTopo) of
+        (HasBeenObservedHealthy, _) -> HasBeenObservedHealthy
+        (_, HasBeenObservedHealthy) -> HasBeenObservedHealthy
+        _                           -> NeverObservedHealthy
+      merged = newTopo
+        { ctObservedHealthy      = mergedObserved
         , ctPaused               = ctPaused ct
         , ctTopologyDrift        = ctTopologyDrift ct
         , ctRecoveryBlockedUntil = ctRecoveryBlockedUntil ct
@@ -233,15 +251,14 @@ applyEvent _ _ _ ct (TopologyRefreshed newTopo) =
 
 -- TopologyDriftUpdated: set drift flag, fire per-condition hooks on False→True transition
 applyEvent _ _ _ ct (TopologyDriftUpdated hasDrift driftConditions) =
-  let wasInDrift = ctTopologyDrift ct
-      newCt = ct { ctTopologyDrift = hasDrift }
-      effects
-        | hasDrift && not wasInDrift =
-            [ FireHookEffect (OnTopologyDrift dt dd) Nothing
-            | dc <- driftConditions
-            , let (dt, dd) = renderDriftCondition dc
-            ]
-        | otherwise = []
+  let newCt = ct { ctTopologyDrift = hasDrift }
+      effects = case (ctTopologyDrift ct, hasDrift) of
+        (NoDrift, DriftDetected) ->
+          [ FireHookEffect (OnTopologyDrift dt dd) Nothing
+          | dc <- driftConditions
+          , let (dt, dd) = renderDriftCondition dc
+          ]
+        _ -> []
   in (newCt, effects)
 
 -- FailoverCommitted: atomic role swap + recovery block + timestamp
@@ -261,12 +278,12 @@ applyEvent _ _ _ ct (FailoverCommitted newSrcId oldSrcIds failoverAt recoveryBlo
 
 -- NodeFenced: set nsFenced = True
 applyEvent _ _ _ ct (NodeFenced nid) =
-  let newCt = ct { ctNodes = Map.adjust (\ns -> ns { nsFenced = True }) nid (ctNodes ct) }
+  let newCt = ct { ctNodes = Map.adjust (\ns -> ns { nsFenced = Fenced }) nid (ctNodes ct) }
   in (newCt, [])
 
--- NodeUnfenced: set nsFenced = False
+-- NodeUnfenced: set nsFenced = Unfenced
 applyEvent _ _ _ ct (NodeUnfenced nid) =
-  let newCt = ct { ctNodes = Map.adjust (\ns -> ns { nsFenced = False }) nid (ctNodes ct) }
+  let newCt = ct { ctNodes = Map.adjust (\ns -> ns { nsFenced = Unfenced }) nid (ctNodes ct) }
   in (newCt, [])
 
 -- NodeDemoted: set role to Replica
@@ -275,22 +292,23 @@ applyEvent _ _ _ ct (NodeDemoted nid) =
   in (newCt, [])
 
 -- SwitchoverCommitted: role swap
-applyEvent _ _ _ ct (SwitchoverCommitted newSrcId mOldSrcId) =
-  let demoted = case mOldSrcId of
-        Just srcId -> Map.adjust (\ns -> ns { nsRole = Replica }) srcId (ctNodes ct)
-        Nothing    -> ctNodes ct
+applyEvent _ _ _ ct (SwitchoverCommitted origin) =
+  let (newSrcId, demoted) = case origin of
+        InitialPromotion newId       -> (newId, ctNodes ct)
+        Promoted oldId newId         ->
+          (newId, Map.adjust (\ns -> ns { nsRole = Replica }) oldId (ctNodes ct))
       promoted = Map.adjust (\ns -> ns { nsRole = Source }) newSrcId demoted
       newCt = ct { ctNodes = promoted }
   in (newCt, [])
 
 -- ReplicaPaused: set nsPaused = True
 applyEvent _ _ _ ct (ReplicaPaused nid) =
-  let newCt = ct { ctNodes = Map.adjust (\ns -> ns { nsPaused = True }) nid (ctNodes ct) }
+  let newCt = ct { ctNodes = Map.adjust (\ns -> ns { nsPaused = Paused }) nid (ctNodes ct) }
   in (newCt, [])
 
--- ReplicaResumed: set nsPaused = False
+-- ReplicaResumed: set nsPaused = Running
 applyEvent _ _ _ ct (ReplicaResumed nid) =
-  let newCt = ct { ctNodes = Map.adjust (\ns -> ns { nsPaused = False }) nid (ctNodes ct) }
+  let newCt = ct { ctNodes = Map.adjust (\ns -> ns { nsPaused = Running }) nid (ctNodes ct) }
   in (newCt, [])
 
 -- RecoveryBlockCleared
@@ -299,11 +317,11 @@ applyEvent _ _ _ ct RecoveryBlockCleared =
 
 -- FailoverPaused
 applyEvent _ _ _ ct FailoverPaused =
-  (ct { ctPaused = True }, [])
+  (ct { ctPaused = Paused }, [])
 
 -- FailoverResumed
 applyEvent _ _ _ ct FailoverResumed =
-  (ct { ctPaused = False }, [])
+  (ct { ctPaused = Running }, [])
 
 -- Helper: reuse pure decision functions from Worker module
 -- (inlined here to avoid circular imports)
@@ -318,7 +336,17 @@ decideLagActions oldHealth newHealth = case (oldHealth, newHealth) of
 decideClusterActions :: FailoverConfig -> ClusterTopology -> NodeHealth -> Maybe UTCTime -> NominalDiffTime -> [ClusterAction]
 decideClusterActions fc topo newHealth mNow checkInterval =
   let transitioned    = ctHealth topo /= newHealth
-      observedHealthy = fcFailoverWithoutObservedHealthy fc || ctObservedHealthy topo || newHealth == Healthy
+      requirementMet = case fcFailoverWithoutObservedHealthy fc of
+        AllowUnobserved        -> True
+        RequireObservedHealthy -> case ctObservedHealthy topo of
+          HasBeenObservedHealthy -> True
+          NeverObservedHealthy   -> newHealth == Healthy
+      autoFailoverEnabled = case fcAutoFailover fc of
+        AutoFailoverOn  -> True
+        AutoFailoverOff -> False
+      autoFenceEnabled = case fcAutoFence fc of
+        FenceAuto   -> True
+        FenceManual -> False
       hookActions
         | transitioned = case newHealth of
             DeadSource               -> [FireHook (OnFailureDetection "DeadSource")]
@@ -328,10 +356,10 @@ decideClusterActions fc topo newHealth mNow checkInterval =
         | otherwise = []
       failoverActions =
         [ TriggerAutoFailover
-        | newHealth == DeadSource, fcAutoFailover fc, observedHealthy ]
+        | newHealth == DeadSource, autoFailoverEnabled, requirementMet ]
       fenceActions =
         [ TriggerAutoFence
-        | transitioned, newHealth == SplitBrainSuspected, fcAutoFence fc, observedHealthy ]
+        | transitioned, newHealth == SplitBrainSuspected, autoFenceEnabled, requirementMet ]
       replicaCheckActions =
         [ TriggerEmergencyReplicaCheck
         | newHealth == UnreachableSource

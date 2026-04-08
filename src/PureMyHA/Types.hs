@@ -15,6 +15,10 @@ module PureMyHA.Types
   , healthErrorMessage
   , isUnhealthy
   , NodeRole (..)
+  , PauseState (..)
+  , FenceState (..)
+  , ObservationState (..)
+  , DriftState (..)
   , isSource
   , findNodeByHost
   , ProbeResult (..)
@@ -181,6 +185,25 @@ isUnhealthy _       = True
 data NodeRole = Source | Replica
   deriving (Eq, Show, Generic)
 
+-- | Whether monitoring/replication is paused on a node or whether
+-- automatic failover is paused on a cluster.
+data PauseState = Running | Paused
+  deriving (Eq, Show, Generic)
+
+-- | Whether a node is currently fenced (super_read_only set by auto-fence).
+data FenceState = Unfenced | Fenced
+  deriving (Eq, Show, Generic)
+
+-- | Whether the cluster has ever been observed Healthy since the daemon
+-- started. Two-state: this is monotonic — once observed healthy, the value
+-- never reverts.
+data ObservationState = NeverObservedHealthy | HasBeenObservedHealthy
+  deriving (Eq, Show, Generic)
+
+-- | Whether the cluster currently exhibits topology drift.
+data DriftState = NoDrift | DriftDetected
+  deriving (Eq, Show, Generic)
+
 isSource :: NodeState -> Bool
 isSource ns = nsRole ns == Source
 
@@ -210,9 +233,9 @@ data NodeState = NodeState
   , nsHealth              :: NodeHealth
   , nsProbeResult         :: ProbeResult
   , nsErrantGtids         :: GtidSet
-  , nsPaused              :: Bool
+  , nsPaused              :: PauseState
   , nsConsecutiveFailures :: Int    -- ^ Number of consecutive probe failures; resets to 0 on success
-  , nsFenced              :: Bool   -- ^ True if super_read_only was set by auto-fence
+  , nsFenced              :: FenceState  -- ^ Fenced if super_read_only was set by auto-fence
   } deriving (Eq, Show, Generic)
 
 -- | True if the last probe succeeded
@@ -226,11 +249,11 @@ data ClusterTopology = ClusterTopology
   , ctNodes                 :: Map NodeId NodeState
   , ctSourceNodeId          :: Maybe NodeId
   , ctHealth                :: NodeHealth
-  , ctObservedHealthy       :: Bool             -- True if cluster has ever been Healthy since daemon start
+  , ctObservedHealthy       :: ObservationState  -- HasBeenObservedHealthy iff cluster has been Healthy since daemon start
   , ctRecoveryBlockedUntil  :: Maybe UTCTime
   , ctLastFailoverAt        :: Maybe UTCTime
-  , ctPaused                :: Bool
-  , ctTopologyDrift         :: Bool             -- True if topology drift is currently detected
+  , ctPaused                :: PauseState
+  , ctTopologyDrift         :: DriftState        -- DriftDetected if topology drift is currently observed
   , ctLastEmergencyCheckAt :: Maybe UTCTime    -- Last emergency replica check timestamp
   } deriving (Show, Generic)
 
@@ -245,7 +268,7 @@ data ClusterStatus = ClusterStatus
   , csSourceHost  :: Maybe HostName
   , csNodeCount   :: Int
   , csRecoveryBlockedUntil :: Maybe UTCTime
-  , csPaused    :: Bool
+  , csPaused    :: PauseState
   } deriving (Show, Eq, Generic)
 
 data ClusterTopologyView = ClusterTopologyView
@@ -256,13 +279,13 @@ data ClusterTopologyView = ClusterTopologyView
 data NodeStateView = NodeStateView
   { nsvHost         :: HostName
   , nsvPort         :: Int
-  , nsvIsSource     :: Bool
+  , nsvRole         :: NodeRole
   , nsvHealth       :: NodeHealth
   , nsvLagSeconds   :: Maybe Int
   , nsvErrantGtids  :: GtidSet
   , nsvConnectError :: Maybe Text
-  , nsvPaused       :: Bool
-  , nsvFenced       :: Bool
+  , nsvPaused       :: PauseState
+  , nsvFenced       :: FenceState
   } deriving (Show, Eq, Generic)
 
 data OperationResult

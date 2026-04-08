@@ -43,11 +43,13 @@ mkGtidTag :: Text -> Either String GtidTag
 mkGtidTag t
   | T.null t = Left "GtidTag cannot be empty"
   | T.length t > 32 = Left "GtidTag must be at most 32 characters"
-  | not (isValidFirst (T.head t)) = Left "GtidTag must start with a letter or underscore"
+  | not (isValidFirst t) = Left "GtidTag must start with a letter or underscore"
   | not (T.all isValidChar t) = Left "GtidTag must contain only alphanumeric characters and underscores"
   | otherwise = Right (GtidTag t)
   where
-    isValidFirst c = isAlpha c || c == '_'
+    isValidFirst s = case T.uncons s of
+      Nothing     -> False
+      Just (c, _) -> isAlpha c || c == '_'
     isValidChar  c = isAlphaNum c || c == '_'
 
 -- | A single interval within a GTID set

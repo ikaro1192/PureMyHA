@@ -1,6 +1,8 @@
 module PureMyHA.IPC.Protocol
   ( Request (..)
   , Response (..)
+  , ExecutionMode (..)
+  , SwitchoverTarget (..)
   , NodeStateView (..)
   , ClusterStatus (..)
   , ClusterTopologyView (..)
@@ -17,6 +19,9 @@ import PureMyHA.Types
   ( ClusterName
   , HostName (..)
   , NodeHealth (..)
+  , NodeRole (..)
+  , PauseState (..)
+  , FenceState (..)
   , ClusterStatus (..)
   , ClusterTopologyView (..)
   , NodeStateView (..)
@@ -27,6 +32,56 @@ import PureMyHA.Types
   , nodeHost
   , nodePort
   )
+
+-- | Whether an operation should execute or only report what it would do.
+data ExecutionMode = DryRun | Live
+  deriving (Eq, Show, Generic)
+
+-- | Target selection for a switchover request.
+--
+-- The drain timeout is only meaningful when an explicit target host has been
+-- chosen by the operator; auto-selected switchovers do not drain because the
+-- old source's identity is determined by the daemon.
+data SwitchoverTarget
+  = AutoSelectTarget
+  | ExplicitTarget
+      { etTargetHost   :: HostName
+      , etDrainTimeout :: Maybe Int  -- ^ seconds; Nothing = no drain
+      }
+  deriving (Eq, Show, Generic)
+
+-- Wire format: serialise as Bool (Live = false, DryRun = true) so existing
+-- IPC clients are unaffected.
+instance ToJSON ExecutionMode where
+  toJSON DryRun = toJSON True
+  toJSON Live   = toJSON False
+
+instance FromJSON ExecutionMode where
+  parseJSON v = (\b -> if b then DryRun else Live) <$> parseJSON v
+
+pauseStateToBool :: PauseState -> Bool
+pauseStateToBool Paused  = True
+pauseStateToBool Running = False
+
+pauseStateFromBool :: Bool -> PauseState
+pauseStateFromBool True  = Paused
+pauseStateFromBool False = Running
+
+fenceStateToBool :: FenceState -> Bool
+fenceStateToBool Fenced   = True
+fenceStateToBool Unfenced = False
+
+fenceStateFromBool :: Bool -> FenceState
+fenceStateFromBool True  = Fenced
+fenceStateFromBool False = Unfenced
+
+isSourceRole :: NodeRole -> Bool
+isSourceRole Source  = True
+isSourceRole Replica = False
+
+roleFromBool :: Bool -> NodeRole
+roleFromBool True  = Source
+roleFromBool False = Replica
 -- JSON instances for core types
 
 instance ToJSON NodeId where
@@ -78,7 +133,7 @@ instance ToJSON ClusterStatus where
     , "sourceHost"            .= csSourceHost
     , "nodeCount"             .= csNodeCount
     , "recoveryBlockedUntil"  .= csRecoveryBlockedUntil
-    , "paused"                .= csPaused
+    , "paused"                .= pauseStateToBool csPaused
     ]
 
 instance FromJSON ClusterStatus where
@@ -89,19 +144,19 @@ instance FromJSON ClusterStatus where
       <*> o .: "sourceHost"
       <*> o .: "nodeCount"
       <*> o .: "recoveryBlockedUntil"
-      <*> o .: "paused"
+      <*> (pauseStateFromBool <$> o .: "paused")
 
 instance ToJSON NodeStateView where
   toJSON NodeStateView{..} = object
     [ "host"         .= nsvHost
     , "port"         .= nsvPort
-    , "isSource"     .= nsvIsSource
+    , "isSource"     .= isSourceRole nsvRole
     , "health"       .= nsvHealth
     , "lagSeconds"   .= nsvLagSeconds
     , "errantGtids"  .= nsvErrantGtids
     , "connectError" .= nsvConnectError
-    , "paused"       .= nsvPaused
-    , "fenced"       .= nsvFenced
+    , "paused"       .= pauseStateToBool nsvPaused
+    , "fenced"       .= fenceStateToBool nsvFenced
     ]
 
 instance FromJSON NodeStateView where
@@ -109,13 +164,13 @@ instance FromJSON NodeStateView where
     NodeStateView
       <$> o .:  "host"
       <*> o .:  "port"
-      <*> o .:  "isSource"
+      <*> (roleFromBool <$> o .: "isSource")
       <*> o .:  "health"
       <*> o .:  "lagSeconds"
       <*> o .:  "errantGtids"
       <*> o .:  "connectError"
-      <*> o .:  "paused"
-      <*> o .:? "fenced" .!= False
+      <*> (pauseStateFromBool <$> o .: "paused")
+      <*> (fenceStateFromBool <$> o .:? "fenced" .!= False)
 
 instance ToJSON ClusterTopologyView where
   toJSON ClusterTopologyView{..} = object
@@ -157,15 +212,14 @@ data Request
   = ReqStatus   { reqCluster :: Maybe ClusterName }
   | ReqTopology { reqCluster :: Maybe ClusterName }
   | ReqSwitchover
-      { reqCluster      :: Maybe ClusterName
-      , reqToHost       :: Maybe HostName
-      , reqDryRun       :: Bool
-      , reqDrainTimeout :: Maybe Int  -- ^ seconds; Nothing = no drain
+      { reqCluster          :: Maybe ClusterName
+      , reqSwitchoverTarget :: SwitchoverTarget
+      , reqDryRun           :: ExecutionMode
       }
   | ReqAckRecovery { reqCluster :: Maybe ClusterName }
   | ReqErrantGtid { reqCluster :: Maybe ClusterName }
-  | ReqFixErrantGtid { reqCluster :: Maybe ClusterName, reqDryRun :: Bool }
-  | ReqDemote { reqCluster :: Maybe ClusterName, reqDemoteHost :: HostName, reqDemoteSourceHost :: HostName, reqDryRun :: Bool }
+  | ReqFixErrantGtid { reqCluster :: Maybe ClusterName, reqDryRun :: ExecutionMode }
+  | ReqDemote { reqCluster :: Maybe ClusterName, reqDemoteHost :: HostName, reqDemoteSourceHost :: HostName, reqDryRun :: ExecutionMode }
   | ReqSimulateFailover { reqCluster :: Maybe ClusterName }
   | ReqDiscovery { reqCluster :: Maybe ClusterName }
   | ReqPauseReplica  { reqCluster :: Maybe ClusterName, reqPauseHost  :: HostName }
@@ -186,7 +240,11 @@ data Request
 instance ToJSON Request where
   toJSON (ReqStatus mc)          = object ["type" .= ("status" :: Text),         "cluster" .= mc]
   toJSON (ReqTopology mc)        = object ["type" .= ("topology" :: Text),        "cluster" .= mc]
-  toJSON (ReqSwitchover mc mh dr mDt) = object ["type" .= ("switchover" :: Text), "cluster" .= mc, "toHost" .= mh, "dryRun" .= dr, "drainTimeout" .= mDt]
+  toJSON (ReqSwitchover mc tgt dr) =
+    let (mh, mDt) = case tgt of
+          AutoSelectTarget          -> (Nothing, Nothing)
+          ExplicitTarget host mDrain -> (Just host, mDrain)
+    in object ["type" .= ("switchover" :: Text), "cluster" .= mc, "toHost" .= mh, "dryRun" .= dr, "drainTimeout" .= mDt]
   toJSON (ReqAckRecovery mc)     = object ["type" .= ("ack-recovery" :: Text),    "cluster" .= mc]
   toJSON (ReqErrantGtid mc)      = object ["type" .= ("errant-gtid" :: Text),     "cluster" .= mc]
   toJSON (ReqFixErrantGtid mc dr) = object ["type" .= ("fix-errant-gtid" :: Text), "cluster" .= mc, "dryRun" .= dr]
@@ -209,11 +267,19 @@ instance FromJSON Request where
     case t of
       "status"          -> ReqStatus        <$> o .:? "cluster"
       "topology"        -> ReqTopology      <$> o .:? "cluster"
-      "switchover"      -> ReqSwitchover    <$> o .:? "cluster" <*> o .:? "toHost" <*> o .: "dryRun" <*> o .:? "drainTimeout"
+      "switchover"      -> do
+        mc  <- o .:? "cluster"
+        mh  <- o .:? "toHost"
+        dr  <- o .:  "dryRun"
+        mDt <- o .:? "drainTimeout"
+        let tgt = case mh of
+              Nothing   -> AutoSelectTarget
+              Just host -> ExplicitTarget host mDt
+        pure (ReqSwitchover mc tgt dr)
       "ack-recovery"    -> ReqAckRecovery   <$> o .:? "cluster"
       "errant-gtid"     -> ReqErrantGtid    <$> o .:? "cluster"
-      "fix-errant-gtid"   -> ReqFixErrantGtid    <$> o .:? "cluster" <*> o .:? "dryRun" .!= False
-      "demote"            -> ReqDemote           <$> o .:? "cluster" <*> o .: "host" <*> o .: "sourceHost" <*> o .:? "dryRun" .!= False
+      "fix-errant-gtid"   -> ReqFixErrantGtid    <$> o .:? "cluster" <*> o .:? "dryRun" .!= Live
+      "demote"            -> ReqDemote           <$> o .:? "cluster" <*> o .: "host" <*> o .: "sourceHost" <*> o .:? "dryRun" .!= Live
       "simulate-failover" -> ReqSimulateFailover <$> o .:? "cluster"
       "discovery"       -> ReqDiscovery    <$> o .:? "cluster"
       "pause-replica"   -> ReqPauseReplica  <$> o .:? "cluster" <*> o .: "host"

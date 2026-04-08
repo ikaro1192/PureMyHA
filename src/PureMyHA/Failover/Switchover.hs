@@ -21,8 +21,9 @@ import PureMyHA.Config
 import PureMyHA.Env
 import PureMyHA.Failover.Candidate (selectCandidate)
 import PureMyHA.Hook
-  ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..) )
-import PureMyHA.Supervisor.Event (MonitorEvent (..))
+  ( runHookFireForget, runHookOrAbort, getCurrentTimestamp, HookEnv (..), SourceChange (..) )
+import PureMyHA.IPC.Protocol (SwitchoverTarget (..))
+import PureMyHA.Supervisor.Event (MonitorEvent (..), SwitchoverOrigin (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
 import PureMyHA.MySQL.GTID (GtidSet)
 import PureMyHA.MySQL.Query
@@ -40,12 +41,19 @@ switchoverReconnectTargets
 switchoverReconnectTargets nodes candidateId =
   filter (\ns -> nsNodeId ns /= candidateId) (Map.elems nodes)
 
+-- | Build a SourceChange describing a transition into the given new source.
+mkSourceChange :: Maybe HostInfo -> HostInfo -> SourceChange
+mkSourceChange Nothing       newH = InitialSourcePromotion newH
+mkSourceChange (Just oldH)   newH = SourceChanged oldH newH
+
 -- | Execute a manual switchover
 runSwitchover
-  :: Maybe HostName    -- ^ --to host
-  -> Maybe Int         -- ^ --drain-timeout seconds (Nothing = no drain)
+  :: SwitchoverTarget
   -> App (Either Text ())
-runSwitchover mToHost mDrainTimeout = do
+runSwitchover target = do
+  let (mToHost, mDrainTimeout) = case target of
+        AutoSelectTarget                -> (Nothing, Nothing)
+        ExplicitTarget host mDrain      -> (Just host, mDrain)
   tvar <- asks envDaemonState
   cc   <- asks envCluster
   fc   <- asks envFailover
@@ -62,6 +70,7 @@ runSwitchover mToHost mDrainTimeout = do
         Right candidateId -> do
           let oldSourceId   = ctSourceNodeId topo
               oldSourceHost = fmap nodeHostInfo oldSourceId
+              newSourceHost = nodeHostInfo candidateId
 
           appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Switchover started"
 
@@ -69,8 +78,7 @@ runSwitchover mToHost mDrainTimeout = do
           mHooks <- getHooksConfig
           ts <- liftIO getCurrentTimestamp
           let preEnv = HookEnv { hookClusterName  = ccName cc
-                               , hookNewSource    = Just (nodeHostInfo candidateId)
-                               , hookOldSource    = oldSourceHost
+                               , hookSourceChange = mkSourceChange oldSourceHost newSourceHost
                                , hookFailureType  = Nothing
                                , hookTimestamp    = ts
                                , hookLagSeconds   = Nothing
@@ -166,7 +174,10 @@ finalizeSwitchover candidateId oldSourceId oldSourceHost topo = do
   let clName = ccName cc
 
   -- Emit switchover event — reducer handles the role swap atomically
-  liftIO $ atomically $ writeTBQueue queue (SwitchoverCommitted candidateId oldSourceId)
+  let origin = case oldSourceId of
+        Nothing    -> InitialPromotion candidateId
+        Just oldId -> Promoted oldId candidateId
+  liftIO $ atomically $ writeTBQueue queue (SwitchoverCommitted origin)
 
   -- Reconnect remaining replicas (including old source)
   let others = switchoverReconnectTargets (ctNodes topo) candidateId
@@ -176,8 +187,7 @@ finalizeSwitchover candidateId oldSourceId oldSourceHost topo = do
   mHooks <- getHooksConfig
   ts <- liftIO getCurrentTimestamp
   let postEnv = HookEnv { hookClusterName  = clName
-                        , hookNewSource    = Just (nodeHostInfo candidateId)
-                        , hookOldSource    = oldSourceHost
+                        , hookSourceChange = mkSourceChange oldSourceHost (nodeHostInfo candidateId)
                         , hookFailureType  = Nothing
                         , hookTimestamp    = ts
                         , hookLagSeconds   = Nothing
@@ -253,9 +263,12 @@ waitThenKill mTls srcCi clusterName timeoutSecs = go timeoutSecs
 
 -- | Dry-run switchover: validate and select candidate without executing SQL
 dryRunSwitchover
-  :: Maybe HostName      -- ^ --to host
+  :: SwitchoverTarget
   -> App (Either Text Text)
-dryRunSwitchover mToHost = do
+dryRunSwitchover target = do
+  let mToHost = case target of
+        AutoSelectTarget        -> Nothing
+        ExplicitTarget host _   -> Just host
   tvar <- asks envDaemonState
   cc   <- asks envCluster
   fc   <- asks envFailover

@@ -59,9 +59,9 @@ mkNodeState nid role mRs health = NodeState
   , nsHealth              = health
   , nsProbeResult         = ProbeSuccess fixedTime mRs emptyGtidSet
   , nsErrantGtids         = emptyGtidSet
-  , nsPaused              = False
+  , nsPaused              = Running
   , nsConsecutiveFailures = 0
-  , nsFenced              = False
+  , nsFenced              = Unfenced
   }
 
 -- | Build a test ClusterEnv with dummy values for fields not under test
@@ -115,9 +115,9 @@ unreachableNode nid = NodeState
   , nsHealth              = NodeUnreachable "Connection refused"
   , nsProbeResult         = ProbeFailure "Connection refused"
   , nsErrantGtids         = emptyGtidSet
-  , nsPaused              = False
+  , nsPaused              = Running
   , nsConsecutiveFailures = 0
-  , nsFenced              = False
+  , nsFenced              = Unfenced
   }
 
 unreachableReplica :: NodeState
@@ -133,9 +133,9 @@ clusterWithDeadSource = Map.fromList
       , nsHealth              = Healthy
       , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")) emptyGtidSet
       , nsErrantGtids         = emptyGtidSet
-      , nsPaused              = False
+      , nsPaused              = Running
       , nsConsecutiveFailures = 0
-      , nsFenced              = False
+      , nsFenced              = Unfenced
       })
   ]
 

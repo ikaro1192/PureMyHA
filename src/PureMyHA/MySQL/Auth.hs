@@ -203,7 +203,10 @@ handleAuthResponse is writePacket nonce pass = loop
                     writePacket (putToPacket (serverSeqN + 1) (Binary.putWord8 0x02))
                     keyPkt <- readPacket is
                     -- Key packet body: 0x01 <PEM bytes>
-                    let pemKey = BL.toStrict (BL.tail (pBody keyPkt))
+                    pemKey <- case BL.uncons (pBody keyPkt) of
+                        Just (_, body) -> pure (BL.toStrict body)
+                        Nothing -> throwIO
+                            (userError "malformed auth packet: empty RSA key body")
                     doRSAAuth writePacket (pSeqN keyPkt + 1) pass nonce pemKey
                     p' <- readPacket is
                     if isOK p'
@@ -213,8 +216,11 @@ handleAuthResponse is writePacket nonce pass = loop
 
     handleSwitch p = do
         -- AUTH_SWITCH_REQUEST body: 0xFE <plugin\0> <new_nonce>
-        let bs           = BL.toStrict (BL.tail (pBody p))
-            (pluginName, afterNul) = B.break (== 0x00) bs
+        bs <- case BL.uncons (pBody p) of
+            Just (_, body) -> pure (BL.toStrict body)
+            Nothing -> throwIO
+                (userError "malformed auth packet: empty AUTH_SWITCH_REQUEST body")
+        let (pluginName, afterNul) = B.break (== 0x00) bs
             newNonce     = B.drop 1 afterNul
         if pluginName == "caching_sha2_password"
             then do

@@ -123,7 +123,7 @@ spec = do
       selectCandidate [] (Just 30) nodes [] Nothing `shouldBe` Right (NodeId "db2" 3306)
 
     it "excludes paused replica from auto-select" $ do
-      let pausedReplica = healthyReplica { nsPaused = True }
+      let pausedReplica = healthyReplica { nsPaused = Paused }
           replica3 = healthyReplica { nsNodeId = NodeId "db3" 3306 }
           nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
@@ -133,7 +133,7 @@ spec = do
       selectCandidate [] Nothing nodes [] Nothing `shouldBe` Right (NodeId "db3" 3306)
 
     it "rejects --to for paused replica" $ do
-      let pausedReplica = healthyReplica { nsPaused = True }
+      let pausedReplica = healthyReplica { nsPaused = Paused }
           nodes = Map.fromList
             [ (NodeId "db1" 3306, healthySource)
             , (NodeId "db2" 3306, pausedReplica)
@@ -210,7 +210,7 @@ spec = do
       isEligibleCandidate [] Nothing lagging `shouldBe` False
 
     it "returns False for a paused replica" $ do
-      let paused = healthyReplica { nsPaused = True }
+      let paused = healthyReplica { nsPaused = Paused }
       isEligibleCandidate [] Nothing paused `shouldBe` False
 
     it "returns False when lag exceeds maxLag" $ do

@@ -12,6 +12,10 @@ module PureMyHA.Config
   , HooksConfig (..)
   , LoggingConfig (..)
   , HttpConfig (..)
+  , HttpMode (..)
+  , AutoFailoverMode (..)
+  , FenceMode (..)
+  , ObservedHealthyRequirement (..)
   , CandidatePriority (..)
   , GlobalConfig (..)
   , LogLevel (..)
@@ -51,14 +55,38 @@ data Config = Config
   , cfgHttp     :: HttpConfig
   } deriving (Show, Generic)
 
+data HttpMode = HttpDisabled | HttpEnabled
+  deriving (Show, Eq, Generic)
+
+instance FromJSON HttpMode where
+  parseJSON v = (\b -> if b then HttpEnabled else HttpDisabled) <$> parseJSON v
+
 data HttpConfig = HttpConfig
-  { hcEnabled       :: Bool
+  { hcEnabled       :: HttpMode
   , hcListenAddress :: String
   , hcPort          :: Port
   } deriving (Show, Eq, Generic)
 
 defaultHttpConfig :: HttpConfig
-defaultHttpConfig = HttpConfig False "127.0.0.1" (Port 8080)
+defaultHttpConfig = HttpConfig HttpDisabled "127.0.0.1" (Port 8080)
+
+data AutoFailoverMode = AutoFailoverOff | AutoFailoverOn
+  deriving (Show, Eq, Generic)
+
+instance FromJSON AutoFailoverMode where
+  parseJSON v = (\b -> if b then AutoFailoverOn else AutoFailoverOff) <$> parseJSON v
+
+data FenceMode = FenceManual | FenceAuto
+  deriving (Show, Eq, Generic)
+
+instance FromJSON FenceMode where
+  parseJSON v = (\b -> if b then FenceAuto else FenceManual) <$> parseJSON v
+
+data ObservedHealthyRequirement = RequireObservedHealthy | AllowUnobserved
+  deriving (Show, Eq, Generic)
+
+instance FromJSON ObservedHealthyRequirement where
+  parseJSON v = (\b -> if b then AllowUnobserved else RequireObservedHealthy) <$> parseJSON v
 
 data LogLevel = LogLevelDebug | LogLevelInfo | LogLevelWarn | LogLevelError
   deriving (Show, Eq, Bounded, Enum)
@@ -170,14 +198,14 @@ data FailureDetectionConfig = FailureDetectionConfig
   } deriving (Show, Generic)
 
 data FailoverConfig = FailoverConfig
-  { fcAutoFailover                    :: Bool
+  { fcAutoFailover                    :: AutoFailoverMode
   , fcMinReplicasForFailover          :: Int
   , fcCandidatePriority               :: [CandidatePriority]
   , fcWaitRelayLogTimeout             :: NominalDiffTime  -- ^ Seconds to wait for relay log apply before promotion (default 60s)
-  , fcAutoFence                       :: Bool             -- ^ Automatically set super_read_only on split-brain nodes (default false)
+  , fcAutoFence                       :: FenceMode        -- ^ Automatically set super_read_only on split-brain nodes (default FenceManual)
   , fcMaxReplicaLagForCandidate       :: Maybe PositiveInt -- ^ Max lag in seconds for failover candidates; lagging nodes are excluded (default Nothing)
   , fcNeverPromote                    :: [HostInfo]        -- ^ Hosts permanently excluded from promotion; they continue to replicate but are never selected as candidates (default [])
-  , fcFailoverWithoutObservedHealthy  :: Bool             -- ^ Allow failover on startup even if cluster was never observed healthy (default false)
+  , fcFailoverWithoutObservedHealthy  :: ObservedHealthyRequirement  -- ^ Allow failover on startup even if cluster was never observed healthy (default RequireObservedHealthy)
   } deriving (Show, Generic)
 
 data CandidatePriority = CandidatePriority
@@ -188,14 +216,14 @@ data CandidatePriority = CandidatePriority
 -- to support field-level merging between per-cluster and global sections.
 -- 'candidate_priority' and 'never_promote' are cluster-only and never inherited from global.
 data RawFailoverConfig = RawFailoverConfig
-  { rfcAutoFailover                    :: Maybe Bool
+  { rfcAutoFailover                    :: Maybe AutoFailoverMode
   , rfcMinReplicasForFailover          :: Maybe Int
   , rfcCandidatePriority               :: [CandidatePriority]
   , rfcWaitRelayLogTimeout             :: Maybe NominalDiffTime
-  , rfcAutoFence                       :: Maybe Bool
+  , rfcAutoFence                       :: Maybe FenceMode
   , rfcMaxReplicaLagForCandidate       :: Maybe PositiveInt
   , rfcNeverPromote                    :: [Text]
-  , rfcFailoverWithoutObservedHealthy  :: Maybe Bool
+  , rfcFailoverWithoutObservedHealthy  :: Maybe ObservedHealthyRequirement
   } deriving (Show, Generic)
 
 data HooksConfig = HooksConfig
@@ -277,14 +305,14 @@ instance FromJSON DurationField where
 -- 'candidate_priority' and 'never_promote' are cluster-only and never inherited from global.
 resolveFailover :: Maybe RawFailoverConfig -> Maybe RawFailoverConfig -> FailoverConfig
 resolveFailover clusterRaw globalRaw = FailoverConfig
-  { fcAutoFailover                   = fromMaybe True  (pick rfcAutoFailover)
-  , fcMinReplicasForFailover         = fromMaybe 1     (pick rfcMinReplicasForFailover)
+  { fcAutoFailover                   = fromMaybe AutoFailoverOn       (pick rfcAutoFailover)
+  , fcMinReplicasForFailover         = fromMaybe 1                    (pick rfcMinReplicasForFailover)
   , fcCandidatePriority              = maybe [] rfcCandidatePriority clusterRaw
-  , fcWaitRelayLogTimeout            = fromMaybe 60    (pick rfcWaitRelayLogTimeout)
-  , fcAutoFence                      = fromMaybe False (pick rfcAutoFence)
+  , fcWaitRelayLogTimeout            = fromMaybe 60                   (pick rfcWaitRelayLogTimeout)
+  , fcAutoFence                      = fromMaybe FenceManual          (pick rfcAutoFence)
   , fcMaxReplicaLagForCandidate      = pick rfcMaxReplicaLagForCandidate
   , fcNeverPromote                   = map (mkHostInfoFromName . HostName) (maybe [] rfcNeverPromote clusterRaw)
-  , fcFailoverWithoutObservedHealthy = fromMaybe False (pick rfcFailoverWithoutObservedHealthy)
+  , fcFailoverWithoutObservedHealthy = fromMaybe RequireObservedHealthy (pick rfcFailoverWithoutObservedHealthy)
   }
   where
     pick :: (RawFailoverConfig -> Maybe a) -> Maybe a
@@ -441,7 +469,7 @@ instance FromJSON CandidatePriority where
 instance FromJSON HttpConfig where
   parseJSON = withObject "HttpConfig" $ \o ->
     HttpConfig
-      <$> o .:? "enabled"        .!= False
+      <$> o .:? "enabled"        .!= HttpDisabled
       <*> o .:? "listen_address" .!= "127.0.0.1"
       <*> o .:? "port"           .!= Port 8080
 
@@ -510,4 +538,5 @@ validateConfig cfg = clusterErrors
 
 -- | Return elements that appear more than once in the list.
 duplicates :: Ord a => [a] -> [a]
+-- NE.head is total here: NE.group produces a [NonEmpty a].
 duplicates = map NE.head . filter ((> 1) . length) . NE.group . sort

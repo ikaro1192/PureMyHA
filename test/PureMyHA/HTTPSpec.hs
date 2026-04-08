@@ -35,11 +35,11 @@ spec = do
                 , ctNodes                = clusterHealthy
                 , ctSourceNodeId         = Just (NodeId "db1" 3306)
                 , ctHealth               = Healthy
-                , ctObservedHealthy      = True
+                , ctObservedHealthy      = HasBeenObservedHealthy
                 , ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt       = Nothing
-                , ctPaused               = False
-                , ctTopologyDrift        = False
+                , ctPaused               = Running
+                , ctTopologyDrift        = NoDrift
                 , ctLastEmergencyCheckAt = Nothing
                 }
         ds     = DaemonState (Map.singleton "test" ct)
@@ -86,7 +86,7 @@ spec = do
       output `shouldContain` "puremyha_cluster_topology_drift{cluster=\"test\"} 0"
 
     it "reports topology_drift=1 when drift is detected" $ do
-      let driftCt = ct { ctTopologyDrift = True }
+      let driftCt = ct { ctTopologyDrift = DriftDetected }
           ds'     = DaemonState (Map.singleton "test" driftCt)
           out     = BSL8.unpack (renderMetrics ds')
       out `shouldContain` "puremyha_cluster_topology_drift{cluster=\"test\"} 1"
@@ -115,9 +115,9 @@ spec = do
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterWithDeadSource
                 , ctSourceNodeId = Nothing, ctHealth = DeadSource
-                , ctObservedHealthy = False, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False
+                , ctObservedHealthy = NeverObservedHealthy, ctRecoveryBlockedUntil = Nothing
+                , ctLastFailoverAt = Nothing, ctPaused = Running
+                , ctTopologyDrift = NoDrift
                 , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["health"] }
@@ -129,9 +129,9 @@ spec = do
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterHealthy
                 , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
-                , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False
+                , ctObservedHealthy = HasBeenObservedHealthy, ctRecoveryBlockedUntil = Nothing
+                , ctLastFailoverAt = Nothing, ctPaused = Running
+                , ctTopologyDrift = NoDrift
                 , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "status"] }
@@ -149,9 +149,9 @@ spec = do
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterHealthy
                 , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
-                , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False
+                , ctObservedHealthy = HasBeenObservedHealthy, ctRecoveryBlockedUntil = Nothing
+                , ctLastFailoverAt = Nothing, ctPaused = Running
+                , ctTopologyDrift = NoDrift
                 , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "topology"] }
@@ -179,11 +179,11 @@ spec = do
                 , ctNodes = Map.singleton (NodeId "db2" 3306) ns
                 , ctSourceNodeId = Nothing
                 , ctHealth = Healthy
-                , ctObservedHealthy = True
+                , ctObservedHealthy = HasBeenObservedHealthy
                 , ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing
-                , ctPaused = False
-                , ctTopologyDrift = False
+                , ctPaused = Running
+                , ctTopologyDrift = NoDrift
                 , ctLastEmergencyCheckAt = Nothing }
           ds = DaemonState (Map.singleton "test" ct)
           out = BSL8.unpack (renderMetrics ds)

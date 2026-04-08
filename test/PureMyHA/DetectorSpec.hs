@@ -42,9 +42,9 @@ spec = do
                 , nsHealth              = Healthy
                 , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOConnecting "")) emptyGtidSet
                 , nsErrantGtids         = emptyGtidSet
-                , nsPaused              = False
+                , nsPaused              = Running
                 , nsConsecutiveFailures = 0
-                , nsFenced              = False
+                , nsFenced              = Unfenced
                 })
             ]
       detectClusterHealth 1 cluster `shouldBe` DeadSource
@@ -58,9 +58,9 @@ spec = do
                 , nsHealth              = Healthy
                 , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "")) emptyGtidSet
                 , nsErrantGtids         = emptyGtidSet
-                , nsPaused              = False
+                , nsPaused              = Running
                 , nsConsecutiveFailures = 0
-                , nsFenced              = False
+                , nsFenced              = Unfenced
                 })
             ]
       detectClusterHealth 1 cluster `shouldBe` UnreachableSource

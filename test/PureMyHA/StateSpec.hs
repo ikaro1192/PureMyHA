@@ -17,11 +17,11 @@ emptyTopo = ClusterTopology
   , ctNodes                = Map.empty
   , ctSourceNodeId         = Nothing
   , ctHealth               = NeedsAttention "Initializing"
-  , ctObservedHealthy      = False
+  , ctObservedHealthy      = NeverObservedHealthy
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
-  , ctPaused               = False
-  , ctTopologyDrift        = False
+  , ctPaused               = Running
+  , ctTopologyDrift        = NoDrift
   , ctLastEmergencyCheckAt = Nothing
   }
 
@@ -30,7 +30,7 @@ healthyTopo = emptyTopo
   { ctNodes          = Map.fromList [(NodeId "db1" 3306, healthySource), (NodeId "db2" 3306, healthyReplica)]
   , ctSourceNodeId   = Just (NodeId "db1" 3306)
   , ctHealth         = Healthy
-  , ctObservedHealthy = True
+  , ctObservedHealthy = HasBeenObservedHealthy
   }
 
 -- | Seed a TVarDaemonState with a single cluster topology
@@ -53,20 +53,20 @@ spec = do
       mct <- getClusterTopology tvar "test"
       fmap ctClusterName mct `shouldBe` Just "test"
 
-    it "preserves ctObservedHealthy=True on update (OR semantics)" $ do
+    it "preserves ctObservedHealthy=HasBeenObservedHealthy on update (OR semantics)" $ do
       tvar <- newDaemonState
-      seedCluster tvar healthyTopo  -- ctObservedHealthy = True
-      let updateTopo = emptyTopo { ctObservedHealthy = False }
+      seedCluster tvar healthyTopo  -- ctObservedHealthy = HasBeenObservedHealthy
+      let updateTopo = emptyTopo { ctObservedHealthy = NeverObservedHealthy }
       atomically $ updateClusterTopology tvar updateTopo
       mct <- getClusterTopology tvar "test"
-      fmap ctObservedHealthy mct `shouldBe` Just True
+      fmap ctObservedHealthy mct `shouldBe` Just HasBeenObservedHealthy
 
     it "preserves ctPaused from previous topology" $ do
       tvar <- newDaemonState
-      seedCluster tvar emptyTopo { ctPaused = True }
-      atomically $ updateClusterTopology tvar emptyTopo { ctPaused = False }
+      seedCluster tvar emptyTopo { ctPaused = Paused }
+      atomically $ updateClusterTopology tvar emptyTopo { ctPaused = Running }
       mct <- getClusterTopology tvar "test"
-      fmap ctPaused mct `shouldBe` Just True
+      fmap ctPaused mct `shouldBe` Just Paused
 
     it "preserves ctHealth from previous topology (monitoring workers own health)" $ do
       tvar <- newDaemonState

@@ -11,6 +11,7 @@ import PureMyHA.Config
   ( ClusterConfig (..), Credentials (..), FailoverConfig (..)
   , MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..)
   , Port (..), PositiveDuration (..), AtLeastOne (..)
+  , AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..)
   )
 import PureMyHA.Env (runApp)
 import PureMyHA.Failover.Auto (checkAutoFailoverPreconditions, simulateFailover)
@@ -29,11 +30,11 @@ deadSourceTopo = ClusterTopology
   , ctNodes                = clusterWithDeadSource
   , ctSourceNodeId         = Just (NodeId "db1" 3306)
   , ctHealth               = DeadSource
-  , ctObservedHealthy      = True
+  , ctObservedHealthy      = HasBeenObservedHealthy
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
-  , ctPaused               = False
-  , ctTopologyDrift        = False
+  , ctPaused               = Running
+  , ctTopologyDrift        = NoDrift
   , ctLastEmergencyCheckAt = Nothing
   }
 
@@ -95,7 +96,7 @@ spec = do
         `shouldSatisfy` isLeft
 
     it "returns Left when cluster is paused" $
-      checkAutoFailoverPreconditions now (deadSourceTopo { ctPaused = True }) 1
+      checkAutoFailoverPreconditions now (deadSourceTopo { ctPaused = Paused }) 1
         `shouldSatisfy` isLeft
 
   describe "simulateFailover" $ do
@@ -148,7 +149,7 @@ spec = do
 
     it "shows candidate even when failover is paused, with a pause note" $ do
       tvar <- newDaemonState
-      let topo = (deadSourceTopo { ctClusterName = "main" }) { ctPaused = True }
+      let topo = (deadSourceTopo { ctClusterName = "main" }) { ctPaused = Paused }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env simulateFailover
@@ -166,21 +167,21 @@ testCC = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
   , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
-  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing [] False
+  , ccFailover               = FailoverConfig AutoFailoverOn 1 [] 60 FenceManual Nothing [] AllowUnobserved
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }
 
 testFC :: FailoverConfig
 testFC = FailoverConfig
-  { fcAutoFailover                   = True
+  { fcAutoFailover                   = AutoFailoverOn
   , fcMinReplicasForFailover         = 1
   , fcCandidatePriority              = []
   , fcWaitRelayLogTimeout            = 60
-  , fcAutoFence                      = False
+  , fcAutoFence                      = FenceManual
   , fcMaxReplicaLagForCandidate      = Nothing
   , fcNeverPromote                   = []
-  , fcFailoverWithoutObservedHealthy = False
+  , fcFailoverWithoutObservedHealthy = RequireObservedHealthy
   }
 
 

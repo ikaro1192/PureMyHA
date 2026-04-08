@@ -1,7 +1,7 @@
 module PureMyHA.Supervisor.Worker
   ( startMonitorWorkers
   , startTopologyRefreshWorker
-  , WorkerRegistry
+  , WorkerRegistry (..)
   , monitorNode
   , runWorker
   , emergencyReplicaCheck
@@ -34,7 +34,7 @@ import qualified Data.Text as T
 import Data.Time (getCurrentTime, NominalDiffTime)
 import PureMyHA.Config
 import PureMyHA.Env
-import PureMyHA.Hook (HookEnv (..))
+import PureMyHA.Hook (HookEnv (..), SourceChange (..))
 import PureMyHA.Logger (logDebug)
 import PureMyHA.Supervisor.Event (MonitorEvent (..))
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn, withNodeConnRetry)
@@ -44,7 +44,8 @@ import PureMyHA.Topology.Discovery (discoverTopology, deduplicateByHostname)
 import PureMyHA.Topology.State
 import PureMyHA.Types
 
-type WorkerRegistry = TVar (Map.Map NodeId (Async ()))
+newtype WorkerRegistry = WorkerRegistry
+  { unWorkerRegistry :: TVar (Map.Map NodeId (Async ())) }
 
 -- | Start one async monitor worker per node in a cluster; also returns registry
 startMonitorWorkers :: App (WorkerRegistry, [Async ()])
@@ -54,10 +55,11 @@ startMonitorWorkers = do
         hi <- resolveHostInfo (HostName (ncHost nc))
         pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes (envCluster env)))
   liftIO $ do
-    reg <- newTVarIO Map.empty
+    regTVar <- newTVarIO Map.empty
+    let reg = WorkerRegistry regTVar
     asyncs <- forM nodes $ \nid -> do
       a <- async (runApp env (runWorker nid))
-      atomically $ modifyTVar' reg (Map.insert nid a)
+      atomically $ modifyTVar' regTVar (Map.insert nid a)
       pure a
     pure (reg, asyncs)
 
@@ -97,7 +99,7 @@ topologyRefreshLoop reg = do
       loop env
 
 runTopologyRefresh :: WorkerRegistry -> App ()
-runTopologyRefresh reg = do
+runTopologyRefresh reg@(WorkerRegistry regTVar) = do
   env <- ask
   let cc   = envCluster env
       tvar = envDaemonState env
@@ -108,7 +110,7 @@ runTopologyRefresh reg = do
   let mergedTopo = mergeTopology newTopo mOldTopo
   liftIO $ atomically $ writeTBQueue queue (TopologyRefreshed mergedTopo)
   -- 2. Worker management: start new, prune stale (pure decisions)
-  knownNodes <- liftIO $ Map.keysSet <$> readTVarIO reg
+  knownNodes <- liftIO $ Map.keysSet <$> readTVarIO regTVar
   let discovered = Map.keysSet (ctNodes mergedTopo)
       newNodes   = computeNewNodes discovered knownNodes
   unless (null newNodes) $
@@ -116,14 +118,14 @@ runTopologyRefresh reg = do
       <> T.pack (show (length newNodes)) <> " new node(s) found"
   liftIO $ forM_ newNodes $ \nid -> do
     a <- async (runApp env (runWorker nid))
-    atomically $ modifyTVar' reg (Map.insert nid a)
+    atomically $ modifyTVar' regTVar (Map.insert nid a)
   staleNodes <- liftIO $ detectAndPruneStaleWorkers reg cc discovered
   unless (null staleNodes) $
     appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Topology refresh: pruning "
       <> T.pack (show (length staleNodes)) <> " stale worker(s)"
   -- 3. Drift detection — emit event; reducer compares old vs new and fires hooks
   let driftConditions = computeDriftConditions cc mergedTopo
-      hasDrift        = not (null driftConditions)
+      hasDrift        = if null driftConditions then NoDrift else DriftDetected
   liftIO $ atomically $ writeTBQueue queue (TopologyDriftUpdated hasDrift driftConditions)
 
 -- | Compute newly discovered nodes: those in the discovered set but not yet
@@ -140,16 +142,16 @@ computeStaleNodes knownNodes discoveredNodes configuredNodes =
 
 -- | Cancel and remove stale workers from the registry.
 pruneStaleWorkers :: WorkerRegistry -> [NodeId] -> IO ()
-pruneStaleWorkers reg staleNodes =
+pruneStaleWorkers (WorkerRegistry regTVar) staleNodes =
   forM_ staleNodes $ \nid -> do
-    mAsync <- Map.lookup nid <$> readTVarIO reg
+    mAsync <- Map.lookup nid <$> readTVarIO regTVar
     forM_ mAsync cancel
-    atomically $ modifyTVar' reg (Map.delete nid)
+    atomically $ modifyTVar' regTVar (Map.delete nid)
 
 -- | Detect and prune stale workers given current registry and topology state.
 detectAndPruneStaleWorkers :: WorkerRegistry -> ClusterConfig -> Set.Set NodeId -> IO [NodeId]
-detectAndPruneStaleWorkers reg cc discovered = do
-  knownNodes <- Map.keysSet <$> readTVarIO reg
+detectAndPruneStaleWorkers reg@(WorkerRegistry regTVar) cc discovered = do
+  knownNodes <- Map.keysSet <$> readTVarIO regTVar
   configuredNodes <- Set.fromList <$>
         mapM (\nc -> do
           hi <- resolveHostInfo (HostName (ncHost nc))
@@ -230,8 +232,7 @@ mergeNodeState new old = new
 buildLagHookEnv :: ClusterName -> NodeId -> T.Text -> HookEnv
 buildLagHookEnv clusterName nid ts =
   HookEnv { hookClusterName  = clusterName
-           , hookNewSource    = Nothing
-           , hookOldSource    = Nothing
+           , hookSourceChange = NoSourceChange
            , hookFailureType  = Nothing
            , hookTimestamp    = ts
            , hookLagSeconds   = Nothing
@@ -285,9 +286,9 @@ monitorNode nid = do
         , nsHealth              = Healthy
         , nsProbeResult         = probeResult
         , nsErrantGtids         = emptyGtidSet
-        , nsPaused              = False
+        , nsPaused              = Running
         , nsConsecutiveFailures = 0
-        , nsFenced              = False
+        , nsFenced              = Unfenced
         }
   enriched <- enrichErrantGtids dummyNs
   -- Emit the raw fact — all derived state computation happens in applyEvent

@@ -12,7 +12,7 @@ import qualified Data.Text as T
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.Failover.Auto (runAutoFailover, runAutoFence)
-import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..))
+import PureMyHA.Hook (runHookFireForget, getCurrentTimestamp, HookEnv (..), SourceChange (..))
 import PureMyHA.Logger (logInfo, logWarn)
 import PureMyHA.Supervisor.Event (MonitorEvent, StateEffect (..), applyEvent)
 import PureMyHA.Types
@@ -74,8 +74,7 @@ executeHookAction :: Maybe HooksConfig -> ClusterName -> Maybe NodeId -> HookEve
 executeHookAction mHooks clusterName mNid event = do
   ts <- getCurrentTimestamp
   let base = HookEnv { hookClusterName  = clusterName
-                      , hookNewSource    = Nothing
-                      , hookOldSource    = Nothing
+                      , hookSourceChange = NoSourceChange
                       , hookFailureType  = Nothing
                       , hookTimestamp    = ts
                       , hookLagSeconds   = Nothing

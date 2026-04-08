@@ -4,7 +4,7 @@ import Control.Concurrent.Async (Async, async, waitAnyCancel, race_, cancel)
 import Control.Concurrent.STM   (TMVar, TVar, atomically, newTVarIO, newEmptyTMVarIO,
                                   putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
-import Control.Monad (void, when, forM_)
+import Control.Monad (void, forM_)
 import Data.Foldable (find)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
@@ -20,10 +20,10 @@ import System.Posix.Signals (installHandler, sigTERM, sigINT, sigHUP, sigUSR1, H
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.HTTP.Server (startHTTPServer)
-import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction)
+import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction (..), ClusterMap (..), DiscoveryMap (..))
 import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, setLogLevel, logInfo, logWarn)
 import PureMyHA.Supervisor.StateManager (newEventQueue, stateManager)
-import PureMyHA.Supervisor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry, runWorker, emergencyReplicaCheck)
+import PureMyHA.Supervisor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry (..), runWorker, emergencyReplicaCheck)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
 import PureMyHA.Topology.State
 import PureMyHA.Types (ClusterTopology(..), unClusterName)
@@ -66,9 +66,11 @@ main = do
   installUSR1Handler (lcLogFile (cfgLogging cfg)) loggerVar
 
   allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar loggerVar
-  when (hcEnabled (cfgHttp cfg)) $ do
-    a <- async (startHTTPServer (cfgHttp cfg) tvar)
-    atomically $ writeTVar httpAsyncVar (Just a)
+  case hcEnabled (cfgHttp cfg) of
+    HttpEnabled -> do
+      a <- async (startHTTPServer (cfgHttp cfg) tvar)
+      atomically $ writeTVar httpAsyncVar (Just a)
+    HttpDisabled -> pure ()
 
   logger <- readTVarIO loggerVar
   logInfo logger "puremyhad started"
@@ -106,11 +108,11 @@ installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar = do
               writeTVar (envHooks env)      (ccHooks cc)
         mOld <- readTVarIO httpAsyncVar
         forM_ mOld cancel
-        if hcEnabled (cfgHttp cfg')
-          then do
+        case hcEnabled (cfgHttp cfg') of
+          HttpEnabled -> do
             a <- async (startHTTPServer (cfgHttp cfg') tvar)
             atomically $ writeTVar httpAsyncVar (Just a)
-          else atomically $ writeTVar httpAsyncVar Nothing
+          HttpDisabled -> atomically $ writeTVar httpAsyncVar Nothing
         setLogLevel logger (lcLogLevel (cfgLogging cfg'))
         logInfo logger "SIGHUP: config reloaded"
         ) Nothing
@@ -127,7 +129,7 @@ installUSR1Handler logFile loggerVar = do
 
 startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> TVar Logger -> IO [Async ()]
 startAllWorkers clusterEnvs socketPath tvar loggerVar = do
-  let clusterMap = Map.fromList
+  let clusterMap = ClusterMap $ Map.fromList
         [ (ccName (envCluster env), env)
         | env <- clusterEnvs
         ]
@@ -135,8 +137,8 @@ startAllWorkers clusterEnvs socketPath tvar loggerVar = do
   -- Spawn stateManager threads (one per cluster, before monitor workers)
   stateManagerAsyncs <- mapM (\env -> do
     let clName = ccName (envCluster env)
-    clusterTVars <- readTVarIO tvar
-    case Map.lookup clName clusterTVars of
+    mCtVar <- lookupClusterTVar tvar clName
+    case mCtVar of
       Nothing    -> error $ "BUG: cluster TVar not found for " <> show (unClusterName clName)
       Just ctVar -> async $ stateManager (envEventQueue env) ctVar env
                               (runApp env emergencyReplicaCheck)
@@ -151,7 +153,7 @@ startAllWorkers clusterEnvs socketPath tvar loggerVar = do
     (\(env, reg) -> runApp env (startTopologyRefreshWorker reg))
     (zip clusterEnvs registries)
 
-  let discoveryMap = Map.fromList
+  let discoveryMap = DiscoveryMap $ Map.fromList
         [ (ccName (envCluster env), makeDiscoveryAction env reg)
         | (env, reg) <- zip clusterEnvs registries
         ]
@@ -223,16 +225,16 @@ loadPassword creds = do
     Right pwd -> pure pwd
 
 makeDiscoveryAction :: ClusterEnv -> WorkerRegistry -> DiscoveryAction
-makeDiscoveryAction env reg = do
+makeDiscoveryAction env (WorkerRegistry regTVar) = DiscoveryAction $ do
   let tvar = envDaemonState env
   newTopo <- runApp env discoverTopology
   atomically $ updateClusterTopology tvar newTopo
-  knownNodes <- Map.keysSet <$> readTVarIO reg
+  knownNodes <- Map.keysSet <$> readTVarIO regTVar
   let discovered = Map.keysSet (ctNodes newTopo)
       newNodes   = Set.difference discovered knownNodes
   forM_ newNodes $ \nid -> do
     a <- async (runApp env (runWorker nid))
-    atomically $ modifyTVar' reg (Map.insert nid a)
+    atomically $ modifyTVar' regTVar (Map.insert nid a)
   pure $ Right $ "Discovery complete: " <> T.pack (show (Map.size (ctNodes newTopo)))
     <> " node(s) found, " <> T.pack (show (Set.size newNodes)) <> " new"
 

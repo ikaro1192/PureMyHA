@@ -20,6 +20,7 @@ import PureMyHA.Config
   , TLSMode (..), TLSMinVersion (..), TLSConfig (..)
   , NodeConfig (..), Credentials (..)
   , Port (..), PositiveDuration (..), AtLeastOne (..)
+  , AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..)
   )
 
 spec :: Spec
@@ -121,8 +122,8 @@ spec = do
           let cc = NE.head (cfgClusters cfg)
           mcInterval (ccMonitoring cc) `shouldBe` PositiveDuration 5
           fdcRecoveryBlockPeriod (ccFailureDetection cc) `shouldBe` 3600
-          fcAutoFailover (ccFailover cc) `shouldBe` True
-          fcAutoFence   (ccFailover cc) `shouldBe` False
+          fcAutoFailover (ccFailover cc) `shouldBe` AutoFailoverOn
+          fcAutoFence   (ccFailover cc) `shouldBe` FenceManual
 
     it "cluster-level monitoring overrides global" $ do
       let yaml = BC.pack $ unlines
@@ -209,7 +210,7 @@ spec = do
       case decodeConfig yaml of
         Left err -> expectationFailure err
         Right cfg ->
-          fcAutoFailover (ccFailover (NE.head (cfgClusters cfg))) `shouldBe` False
+          fcAutoFailover (ccFailover (NE.head (cfgClusters cfg))) `shouldBe` AutoFailoverOff
 
     it "cluster-level hooks override global hooks" $ do
       let yaml = BC.pack $ unlines
@@ -406,8 +407,8 @@ spec = do
         Left err -> expectationFailure err
         Right cfg -> do
           let fc = ccFailover (NE.head (cfgClusters cfg))
-          fcAutoFailover fc `shouldBe` True
-          fcAutoFence    fc `shouldBe` False
+          fcAutoFailover fc `shouldBe` AutoFailoverOn
+          fcAutoFence    fc `shouldBe` FenceManual
           fcCandidatePriority fc `shouldSatisfy` null
           fcNeverPromote      fc `shouldBe` []
 
@@ -971,7 +972,7 @@ minimalCluster = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig (PositiveDuration 5) (PositiveDuration 2) 10 30 300 (AtLeastOne 1) 1
   , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
-  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing [] False
+  , ccFailover               = FailoverConfig AutoFailoverOn 1 [] 60 FenceManual Nothing [] AllowUnobserved
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }

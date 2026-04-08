@@ -6,7 +6,7 @@ import qualified Data.Set as Set
 import Data.Time (UTCTime (..), fromGregorian)
 import Test.Hspec
 import Fixtures
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailureDetectionConfig (..), FailoverConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), MonitoringConfig (..), FailureDetectionConfig (..), FailoverConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
 import PureMyHA.Topology.Discovery
   ( buildNodeStateFromProbe
   , buildClusterTopology
@@ -33,7 +33,7 @@ testCC = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
   , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
-  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing [] False
+  , ccFailover               = FailoverConfig AutoFailoverOn 1 [] 60 FenceManual Nothing [] AllowUnobserved
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }
@@ -70,12 +70,12 @@ spec = do
       let topo = buildClusterTopology 1 "prod" clusterHealthy
       ctHealth          topo `shouldBe` Healthy
       ctSourceNodeId    topo `shouldBe` Just (NodeId "db1" 3306)
-      ctObservedHealthy topo `shouldBe` True
+      ctObservedHealthy topo `shouldBe` HasBeenObservedHealthy
 
     it "cluster with dead source has DeadSource health" $ do
       let topo = buildClusterTopology 1 "prod" clusterWithDeadSource
       ctHealth          topo `shouldBe` DeadSource
-      ctObservedHealthy topo `shouldBe` False
+      ctObservedHealthy topo `shouldBe` NeverObservedHealthy
 
     it "empty cluster has NeedsAttention health and no source" $ do
       let topo = buildClusterTopology 1 "empty" Map.empty

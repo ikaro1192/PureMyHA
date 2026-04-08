@@ -1,7 +1,9 @@
 module PureMyHA.IPC.Server
   ( startIPCServer
   , defaultSocketPath
-  , DiscoveryAction
+  , DiscoveryAction (..)
+  , ClusterMap (..)
+  , DiscoveryMap (..)
   , toClusterStatus
   , toClusterTopologyView
   ) where
@@ -40,9 +42,9 @@ import PureMyHA.Types
 defaultSocketPath :: FilePath
 defaultSocketPath = "/run/puremyhad.sock"
 
-type ClusterMap   = Map ClusterName ClusterEnv
-type DiscoveryAction = IO (Either Text Text)
-type DiscoveryMap = Map ClusterName DiscoveryAction
+newtype ClusterMap = ClusterMap { unClusterMap :: Map ClusterName ClusterEnv }
+newtype DiscoveryAction = DiscoveryAction { runDiscoveryAction :: IO (Either Text Text) }
+newtype DiscoveryMap = DiscoveryMap { unDiscoveryMap :: Map ClusterName DiscoveryAction }
 
 -- | Start the Unix domain socket IPC server (blocks forever)
 startIPCServer
@@ -109,19 +111,18 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
     let topos = filterClusters mCluster (dsClusters ds)
     pure $ RespTopology (map toClusterTopologyView topos)
 
-  ReqSwitchover mCluster mToHost dryRun mDrainTimeout ->
-    withClusterEnv mCluster clusterMap $ \env ->
-      if dryRun
-        then do
-          result <- runApp env $ dryRunSwitchover mToHost
-          pure $ RespOperation $ case result of
-            Left err  -> OperationFailure err
-            Right msg -> OperationSuccess msg
-        else do
-          result <- runApp env $ runSwitchover mToHost mDrainTimeout
-          pure $ RespOperation $ case result of
-            Left err -> OperationFailure err
-            Right () -> OperationSuccess "Switchover completed"
+  ReqSwitchover mCluster target dryRun ->
+    withClusterEnv mCluster clusterMap $ \env -> case dryRun of
+      DryRun -> do
+        result <- runApp env $ dryRunSwitchover target
+        pure $ RespOperation $ case result of
+          Left err  -> OperationFailure err
+          Right msg -> OperationSuccess msg
+      Live -> do
+        result <- runApp env $ runSwitchover target
+        pure $ RespOperation $ case result of
+          Left err -> OperationFailure err
+          Right () -> OperationSuccess "Switchover completed"
 
   ReqAckRecovery mCluster ->
     withClusterEnv mCluster clusterMap $ \env -> do
@@ -134,25 +135,27 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
     let errants = concatMap clusterErrantGtids topos
     pure (RespErrantGtids errants)
 
-  ReqFixErrantGtid mCluster dryRun ->
-    if dryRun
-      then withClusterEnv mCluster clusterMap $ \env -> do
-             result <- runApp env dryRunFixErrantGtid
-             pure $ RespOperation $ case result of
-               Left err  -> OperationFailure err
-               Right msg -> OperationSuccess msg
-      else runClusterOp mCluster clusterMap
-             (\env -> runApp env runFixErrantGtid) "Errant GTIDs fixed on source"
+  ReqFixErrantGtid mCluster dryRun -> case dryRun of
+    DryRun ->
+      withClusterEnv mCluster clusterMap $ \env -> do
+        result <- runApp env dryRunFixErrantGtid
+        pure $ RespOperation $ case result of
+          Left err  -> OperationFailure err
+          Right msg -> OperationSuccess msg
+    Live ->
+      runClusterOp mCluster clusterMap
+        (\env -> runApp env runFixErrantGtid) "Errant GTIDs fixed on source"
 
-  ReqDemote mCluster host srcHost dryRun ->
-    if dryRun
-      then withClusterEnv mCluster clusterMap $ \env -> do
-             result <- runApp env (dryRunDemote host srcHost)
-             pure $ RespOperation $ case result of
-               Left err  -> OperationFailure err
-               Right msg -> OperationSuccess msg
-      else runClusterOp mCluster clusterMap
-             (\env -> runApp env $ runDemote host srcHost) ("Demote completed: " <> unHostName host <> " is now a replica")
+  ReqDemote mCluster host srcHost dryRun -> case dryRun of
+    DryRun ->
+      withClusterEnv mCluster clusterMap $ \env -> do
+        result <- runApp env (dryRunDemote host srcHost)
+        pure $ RespOperation $ case result of
+          Left err  -> OperationFailure err
+          Right msg -> OperationSuccess msg
+    Live ->
+      runClusterOp mCluster clusterMap
+        (\env -> runApp env $ runDemote host srcHost) ("Demote completed: " <> unHostName host <> " is now a replica")
 
   ReqSimulateFailover mCluster ->
     withClusterEnv mCluster clusterMap $ \env -> do
@@ -162,10 +165,10 @@ handleRequest tvar clusterMap discoveryMap loggerVar req = case req of
         Right msg -> OperationSuccess msg
 
   ReqDiscovery mCluster ->
-    case lookupByCluster mCluster discoveryMap of
+    case lookupByCluster mCluster (unDiscoveryMap discoveryMap) of
       Nothing -> pure (RespError "Cluster not found")
       Just action -> do
-        result <- action
+        result <- runDiscoveryAction action
         pure $ RespOperation $ case result of
           Left err  -> OperationFailure err
           Right msg -> OperationSuccess msg
@@ -227,7 +230,7 @@ lookupByCluster Nothing  m = case Map.elems m of { [x] -> Just x; _ -> Nothing }
 lookupByCluster (Just n) m = Map.lookup n m
 
 withClusterEnv :: Maybe ClusterName -> ClusterMap -> (ClusterEnv -> IO Response) -> IO Response
-withClusterEnv mc cm action =
+withClusterEnv mc (ClusterMap cm) action =
   case lookupByCluster mc cm of
     Nothing  -> pure (RespError "Cluster not found")
     Just env -> action env
@@ -260,7 +263,7 @@ toNodeStateView :: NodeState -> NodeStateView
 toNodeStateView ns = NodeStateView
   { nsvHost        = nodeHost (nsNodeId ns)
   , nsvPort        = nodePort (nsNodeId ns)
-  , nsvIsSource    = isSource ns
+  , nsvRole        = nsRole ns
   , nsvHealth      = nsHealth ns
   , nsvLagSeconds  = case nsProbeResult ns of
       ProbeSuccess{prReplicaStatus = Just rs} -> rsSecondsBehindSource rs
