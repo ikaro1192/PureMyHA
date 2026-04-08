@@ -159,6 +159,10 @@ switchoverCmd = CmdSwitchover
         <> metavar "SECS"
         <> help "Wait up to SECS seconds for user connections to close, then KILL remaining" ))
 
+toExec :: Bool -> ExecutionMode
+toExec True  = DryRun
+toExec False = Live
+
 main :: IO ()
 main = do
   opts <- execParser (info (cliOptions <**> helper)
@@ -174,11 +178,15 @@ main = do
       let req = case cmd of
             CmdStatus             -> ReqStatus mCluster
             CmdTopology           -> ReqTopology mCluster
-            CmdSwitchover mTo dr mDt -> ReqSwitchover mCluster mTo dr mDt
+            CmdSwitchover mTo dr mDt ->
+              let target = case mTo of
+                    Nothing   -> AutoSelectTarget
+                    Just host -> ExplicitTarget host mDt
+              in ReqSwitchover mCluster target (toExec dr)
             CmdAckRecovery        -> ReqAckRecovery mCluster
             CmdErrantGtid         -> ReqErrantGtid mCluster
-            CmdFixErrantGtid dr   -> ReqFixErrantGtid mCluster dr
-            CmdDemote host src dr -> ReqDemote mCluster host src dr
+            CmdFixErrantGtid dr   -> ReqFixErrantGtid mCluster (toExec dr)
+            CmdDemote host src dr -> ReqDemote mCluster host src (toExec dr)
             CmdSimulateFailover   -> ReqSimulateFailover mCluster
             CmdDiscovery          -> ReqDiscovery mCluster
             CmdPauseReplica  host -> ReqPauseReplica  mCluster host

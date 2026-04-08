@@ -1,6 +1,12 @@
 {-# LANGUAGE StrictData #-}
 module PureMyHA.Types
-  ( NodeId (..)
+  ( NodeId
+  , nodeHostInfo
+  , nodePort
+  , mkNodeId
+  , unsafeNodeId
+  , Port (..)
+  , mkPort
   , nodeHost
   , nodeIPAddr
   , ClusterName (..)
@@ -15,6 +21,10 @@ module PureMyHA.Types
   , healthErrorMessage
   , isUnhealthy
   , NodeRole (..)
+  , PauseState (..)
+  , FenceState (..)
+  , ObservationState (..)
+  , DriftState (..)
   , isSource
   , findNodeByHost
   , ProbeResult (..)
@@ -98,10 +108,46 @@ instance IsString HostInfo where
 mkHostInfoFromName :: HostName -> HostInfo
 mkHostInfoFromName h = HostInfo h (IPAddr (unHostName h))
 
-data NodeId = NodeId
+-- | A TCP/IP port number in the range 1–65535.
+newtype Port = Port { unPort :: Int }
+  deriving (Eq, Ord, Generic)
+
+-- | Renders the bare integer (no @Port @ prefix), so existing
+-- @T.pack (show (nodePort ...))@ call sites in hooks/logs are unchanged.
+instance Show Port where
+  show (Port n) = show n
+
+instance FromJSON Port where
+  parseJSON v = do
+    n <- parseJSON v
+    if n >= 1 && n <= 65535
+      then pure (Port n)
+      else fail $ "port out of range (1-65535): " <> show n
+
+instance ToJSON Port where
+  toJSON (Port n) = toJSON n
+
+-- | Smart constructor for 'Port'; validates 1..65535.
+mkPort :: Int -> Either String Port
+mkPort n
+  | n >= 1 && n <= 65535 = Right (Port n)
+  | otherwise            = Left ("port out of range (1-65535): " <> show n)
+
+data NodeId = UnsafeNodeId
   { nodeHostInfo :: HostInfo
-  , nodePort     :: Int
+  , nodePort     :: Port
   } deriving (Show, Generic)
+
+-- | Smart constructor: total. Validation lives in 'mkPort'.
+mkNodeId :: HostInfo -> Port -> NodeId
+mkNodeId = UnsafeNodeId
+
+-- | Escape hatch that takes a raw 'Int' for test fixture ergonomics.
+-- Calls 'mkPort' and 'error's on out-of-range values.
+unsafeNodeId :: HostInfo -> Int -> NodeId
+unsafeNodeId hi p = case mkPort p of
+  Right port -> UnsafeNodeId hi port
+  Left msg   -> error ("unsafeNodeId: " ++ msg)
 
 instance Eq NodeId where
   a == b = hiIPAddr (nodeHostInfo a) == hiIPAddr (nodeHostInfo b) && nodePort a == nodePort b
@@ -181,6 +227,25 @@ isUnhealthy _       = True
 data NodeRole = Source | Replica
   deriving (Eq, Show, Generic)
 
+-- | Whether monitoring/replication is paused on a node or whether
+-- automatic failover is paused on a cluster.
+data PauseState = Running | Paused
+  deriving (Eq, Show, Generic)
+
+-- | Whether a node is currently fenced (super_read_only set by auto-fence).
+data FenceState = Unfenced | Fenced
+  deriving (Eq, Show, Generic)
+
+-- | Whether the cluster has ever been observed Healthy since the daemon
+-- started. Two-state: this is monotonic — once observed healthy, the value
+-- never reverts.
+data ObservationState = NeverObservedHealthy | HasBeenObservedHealthy
+  deriving (Eq, Show, Generic)
+
+-- | Whether the cluster currently exhibits topology drift.
+data DriftState = NoDrift | DriftDetected
+  deriving (Eq, Show, Generic)
+
 isSource :: NodeState -> Bool
 isSource ns = nsRole ns == Source
 
@@ -210,9 +275,9 @@ data NodeState = NodeState
   , nsHealth              :: NodeHealth
   , nsProbeResult         :: ProbeResult
   , nsErrantGtids         :: GtidSet
-  , nsPaused              :: Bool
+  , nsPaused              :: PauseState
   , nsConsecutiveFailures :: Int    -- ^ Number of consecutive probe failures; resets to 0 on success
-  , nsFenced              :: Bool   -- ^ True if super_read_only was set by auto-fence
+  , nsFenced              :: FenceState  -- ^ Fenced if super_read_only was set by auto-fence
   } deriving (Eq, Show, Generic)
 
 -- | True if the last probe succeeded
@@ -226,11 +291,11 @@ data ClusterTopology = ClusterTopology
   , ctNodes                 :: Map NodeId NodeState
   , ctSourceNodeId          :: Maybe NodeId
   , ctHealth                :: NodeHealth
-  , ctObservedHealthy       :: Bool             -- True if cluster has ever been Healthy since daemon start
+  , ctObservedHealthy       :: ObservationState  -- HasBeenObservedHealthy iff cluster has been Healthy since daemon start
   , ctRecoveryBlockedUntil  :: Maybe UTCTime
   , ctLastFailoverAt        :: Maybe UTCTime
-  , ctPaused                :: Bool
-  , ctTopologyDrift         :: Bool             -- True if topology drift is currently detected
+  , ctPaused                :: PauseState
+  , ctTopologyDrift         :: DriftState        -- DriftDetected if topology drift is currently observed
   , ctLastEmergencyCheckAt :: Maybe UTCTime    -- Last emergency replica check timestamp
   } deriving (Show, Generic)
 
@@ -245,7 +310,7 @@ data ClusterStatus = ClusterStatus
   , csSourceHost  :: Maybe HostName
   , csNodeCount   :: Int
   , csRecoveryBlockedUntil :: Maybe UTCTime
-  , csPaused    :: Bool
+  , csPaused    :: PauseState
   } deriving (Show, Eq, Generic)
 
 data ClusterTopologyView = ClusterTopologyView
@@ -256,13 +321,13 @@ data ClusterTopologyView = ClusterTopologyView
 data NodeStateView = NodeStateView
   { nsvHost         :: HostName
   , nsvPort         :: Int
-  , nsvIsSource     :: Bool
+  , nsvRole         :: NodeRole
   , nsvHealth       :: NodeHealth
   , nsvLagSeconds   :: Maybe Int
   , nsvErrantGtids  :: GtidSet
   , nsvConnectError :: Maybe Text
-  , nsvPaused       :: Bool
-  , nsvFenced       :: Bool
+  , nsvPaused       :: PauseState
+  , nsvFenced       :: FenceState
   } deriving (Show, Eq, Generic)
 
 data OperationResult

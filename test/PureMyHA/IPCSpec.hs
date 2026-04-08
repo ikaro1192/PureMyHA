@@ -27,16 +27,20 @@ spec = do
       roundTrip (ReqTopology (Just "main")) `shouldBe` Just (ReqTopology (Just "main"))
 
     it "round-trips ReqSwitchover with dryRun=false" $
-      roundTrip (ReqSwitchover (Just "main") (Just "db2") False Nothing)
-        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") False Nothing)
+      roundTrip (ReqSwitchover (Just "main") (ExplicitTarget "db2" Nothing) Live)
+        `shouldBe` Just (ReqSwitchover (Just "main") (ExplicitTarget "db2" Nothing) Live)
 
     it "round-trips ReqSwitchover with dryRun=true" $
-      roundTrip (ReqSwitchover (Just "main") (Just "db2") True Nothing)
-        `shouldBe` Just (ReqSwitchover (Just "main") (Just "db2") True Nothing)
+      roundTrip (ReqSwitchover (Just "main") (ExplicitTarget "db2" Nothing) DryRun)
+        `shouldBe` Just (ReqSwitchover (Just "main") (ExplicitTarget "db2" Nothing) DryRun)
 
     it "round-trips ReqSwitchover with drain-timeout" $
-      roundTrip (ReqSwitchover (Just "main") Nothing False (Just 30))
-        `shouldBe` Just (ReqSwitchover (Just "main") Nothing False (Just 30))
+      roundTrip (ReqSwitchover (Just "main") (ExplicitTarget "db2" (Just 30)) Live)
+        `shouldBe` Just (ReqSwitchover (Just "main") (ExplicitTarget "db2" (Just 30)) Live)
+
+    it "round-trips ReqSwitchover with auto-select target" $
+      roundTrip (ReqSwitchover (Just "main") AutoSelectTarget Live)
+        `shouldBe` Just (ReqSwitchover (Just "main") AutoSelectTarget Live)
 
     it "round-trips ReqAckRecovery" $
       roundTrip (ReqAckRecovery Nothing) `shouldBe` Just (ReqAckRecovery Nothing)
@@ -45,7 +49,7 @@ spec = do
       roundTrip (ReqErrantGtid (Just "main")) `shouldBe` Just (ReqErrantGtid (Just "main"))
 
     it "round-trips ReqFixErrantGtid" $
-      roundTrip (ReqFixErrantGtid Nothing False) `shouldBe` Just (ReqFixErrantGtid Nothing False)
+      roundTrip (ReqFixErrantGtid Nothing Live) `shouldBe` Just (ReqFixErrantGtid Nothing Live)
 
     it "round-trips ReqPauseReplica" $
       roundTrip (ReqPauseReplica (Just "main") "db2") `shouldBe` Just (ReqPauseReplica (Just "main") "db2")
@@ -60,15 +64,13 @@ spec = do
       roundTrip (ReqResumeFailover Nothing) `shouldBe` Just (ReqResumeFailover Nothing)
 
   describe "ReqSwitchover field accessors" $ do
-    let req = ReqSwitchover (Just "main") (Just "db2") True (Just 30)
+    let req = ReqSwitchover (Just "main") (ExplicitTarget "db2" (Just 30)) DryRun
     it "reqCluster returns the cluster" $
       reqCluster req `shouldBe` Just "main"
-    it "reqToHost returns the target host" $
-      reqToHost req `shouldBe` Just "db2"
+    it "reqSwitchoverTarget returns the explicit target" $
+      reqSwitchoverTarget req `shouldBe` ExplicitTarget "db2" (Just 30)
     it "reqDryRun returns the dry-run flag" $
-      reqDryRun req `shouldBe` True
-    it "reqDrainTimeout returns the drain timeout" $
-      reqDrainTimeout req `shouldBe` Just 30
+      reqDryRun req `shouldBe` DryRun
 
   describe "Response JSON round-trip" $ do
     it "round-trips RespError" $
@@ -84,7 +86,7 @@ spec = do
         `shouldBe` Just (RespOperation (OperationFailure "error"))
 
     it "round-trips RespErrantGtids" $ do
-      let info = ErrantGtidInfo (NodeId "db3" 3306) (unsafeParseGtidSet' "uuid3:1")
+      let info = ErrantGtidInfo (unsafeNodeId "db3" 3306) (unsafeParseGtidSet' "uuid3:1")
       roundTripResp (RespErrantGtids [info])
         `shouldBe` Just (RespErrantGtids [info])
 
@@ -145,20 +147,20 @@ spec = do
       (decode (BLC.pack "{\"cluster\":\"x\"}") :: Maybe Request) `shouldBe` Nothing
 
     it "round-trips ReqDemote" $
-      roundTrip (ReqDemote (Just "main") "db2" "db1" False)
-        `shouldBe` Just (ReqDemote (Just "main") "db2" "db1" False)
+      roundTrip (ReqDemote (Just "main") "db2" "db1" Live)
+        `shouldBe` Just (ReqDemote (Just "main") "db2" "db1" Live)
 
     it "round-trips ReqFixErrantGtid with dryRun=false" $
-      roundTrip (ReqFixErrantGtid Nothing False)
-        `shouldBe` Just (ReqFixErrantGtid Nothing False)
+      roundTrip (ReqFixErrantGtid Nothing Live)
+        `shouldBe` Just (ReqFixErrantGtid Nothing Live)
 
     it "round-trips ReqFixErrantGtid with dryRun=true" $
-      roundTrip (ReqFixErrantGtid (Just "main") True)
-        `shouldBe` Just (ReqFixErrantGtid (Just "main") True)
+      roundTrip (ReqFixErrantGtid (Just "main") DryRun)
+        `shouldBe` Just (ReqFixErrantGtid (Just "main") DryRun)
 
     it "round-trips ReqDemote with dryRun=true" $
-      roundTrip (ReqDemote (Just "main") "db2" "db1" True)
-        `shouldBe` Just (ReqDemote (Just "main") "db2" "db1" True)
+      roundTrip (ReqDemote (Just "main") "db2" "db1" DryRun)
+        `shouldBe` Just (ReqDemote (Just "main") "db2" "db1" DryRun)
 
     it "round-trips ReqSimulateFailover" $
       roundTrip (ReqSimulateFailover (Just "main"))
@@ -207,19 +209,19 @@ spec = do
       (decode (BLC.pack "{\"type\":\"foobar\",\"data\":[]}") :: Maybe Response) `shouldBe` Nothing
 
     it "round-trips RespTopology" $ do
-      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) emptyGtidSet Nothing False False]
+      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 Source Healthy (Just 0) emptyGtidSet Nothing Running Unfenced]
       roundTripResp (RespTopology [view]) `shouldBe` Just (RespTopology [view])
 
   describe "NodeStateView fenced field" $ do
     it "round-trips NodeStateView with fenced=True" $ do
-      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 True Healthy (Just 0) emptyGtidSet Nothing False True]
+      let view = ClusterTopologyView "test" [NodeStateView "db1" 3306 Source Healthy (Just 0) emptyGtidSet Nothing Running Fenced]
       roundTripResp (RespTopology [view]) `shouldBe` Just (RespTopology [view])
 
     it "defaults fenced to False when field is absent" $ do
       let json = BLC.pack
             "{\"type\":\"topology\",\"data\":[{\"clusterName\":\"test\",\"nodes\":[{\"host\":\"db1\",\"port\":3306,\"isSource\":true,\"health\":\"Healthy\",\"lagSeconds\":0,\"errantGtids\":\"\",\"connectError\":null,\"paused\":false}]}]}"
       let expected = RespTopology [ClusterTopologyView "test"
-                       [NodeStateView "db1" 3306 True Healthy (Just 0) emptyGtidSet Nothing False False]]
+                       [NodeStateView "db1" 3306 Source Healthy (Just 0) emptyGtidSet Nothing Running Unfenced]]
       (decode json :: Maybe Response) `shouldBe` Just expected
 
   describe "NodeHealth FromJSON edge cases" $ do

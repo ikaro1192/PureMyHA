@@ -68,7 +68,7 @@ runDemote demoteHost srcHost = do
           result <- liftIO $ withNodeConn mTls ci $ \conn -> do
             stopReplica conn
             setReadOnly conn
-            changeReplicationSourceTo conn (unHostName (nodeHost srcId)) (nodePort srcId) replCreds mTls
+            changeReplicationSourceTo conn (unHostName (nodeHost srcId)) (unPort (nodePort srcId)) replCreds mTls
             startReplica conn
           case result of
             Left err -> do

@@ -6,14 +6,14 @@ import qualified Data.Text.Encoding as TE
 import Database.MySQL.Base (ConnectInfo (..))
 import PureMyHA.Config (DbCredentials (..))
 import PureMyHA.MySQL.Connection (retryWithBackoff, makeConnectInfo)
-import PureMyHA.Types (NodeId (..))
+import PureMyHA.Types (unsafeNodeId)
 import Test.Hspec
 
 spec :: Spec
 spec = do
 
   describe "makeConnectInfo" $ do
-    let nid  = NodeId "db1.example.com" 3307
+    let nid  = unsafeNodeId "db1.example.com" 3307
         cred = DbCredentials "admin" "secret"
         ci   = makeConnectInfo nid cred
 

@@ -15,7 +15,7 @@ import qualified Data.Text as T
 import PureMyHA.Config (ClusterConfig (..))
 import PureMyHA.Env (App, ClusterEnv (..), getMonCredentials, getTLSConfig)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
-import PureMyHA.MySQL.GTID (GtidEntry (..), GtidSet (..), isEmptyGtidSet, expandGtidEntry)
+import PureMyHA.MySQL.GTID (GtidEntry (..), GtidSet, getGtidEntries, isEmptyGtidSet, expandGtidEntry)
 import PureMyHA.MySQL.Query (injectEmptyTransaction)
 import PureMyHA.Topology.State (getClusterTopology)
 import PureMyHA.Types

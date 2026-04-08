@@ -24,7 +24,7 @@ import PureMyHA.Env (ClusterEnv (..))
 import PureMyHA.Logger (nullLogger)
 import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet, parseGtidSet)
 import PureMyHA.Topology.State (TVarDaemonState, newFailoverLock)
-import PureMyHA.Types
+import PureMyHA.Types hiding (mkNodeId)
 
 -- | Parse a GTID set from text, throwing an error on invalid input.
 -- Only for use in tests.
@@ -37,7 +37,7 @@ fixedTime :: UTCTime
 fixedTime = UTCTime (fromGregorian 2024 1 1) 0
 
 mkNodeId :: Text -> Int -> NodeId
-mkNodeId h p = NodeId (mkHostInfoFromName (HostName h)) p
+mkNodeId h p = unsafeNodeId (mkHostInfoFromName (HostName h)) p
 
 mkReplicaStatus :: Text -> Int -> IORunning -> Text -> ReplicaStatus
 mkReplicaStatus srcHost srcPort ioRunning execGtid = ReplicaStatus
@@ -59,9 +59,9 @@ mkNodeState nid role mRs health = NodeState
   , nsHealth              = health
   , nsProbeResult         = ProbeSuccess fixedTime mRs emptyGtidSet
   , nsErrantGtids         = emptyGtidSet
-  , nsPaused              = False
+  , nsPaused              = Running
   , nsConsecutiveFailures = 0
-  , nsFenced              = False
+  , nsFenced              = Unfenced
   }
 
 -- | Build a test ClusterEnv with dummy values for fields not under test
@@ -115,13 +115,13 @@ unreachableNode nid = NodeState
   , nsHealth              = NodeUnreachable "Connection refused"
   , nsProbeResult         = ProbeFailure "Connection refused"
   , nsErrantGtids         = emptyGtidSet
-  , nsPaused              = False
+  , nsPaused              = Running
   , nsConsecutiveFailures = 0
-  , nsFenced              = False
+  , nsFenced              = Unfenced
   }
 
 unreachableReplica :: NodeState
-unreachableReplica = unreachableNode (NodeId (mkHostInfoFromName "db5") 3306)
+unreachableReplica = unreachableNode (unsafeNodeId (mkHostInfoFromName "db5") 3306)
 
 -- | Cluster where source is unreachable, replicas show IO=No
 clusterWithDeadSource :: Map NodeId NodeState
@@ -133,9 +133,9 @@ clusterWithDeadSource = Map.fromList
       , nsHealth              = Healthy
       , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IONo "uuid1:1-100")) emptyGtidSet
       , nsErrantGtids         = emptyGtidSet
-      , nsPaused              = False
+      , nsPaused              = Running
       , nsConsecutiveFailures = 0
-      , nsFenced              = False
+      , nsFenced              = Unfenced
       })
   ]
 

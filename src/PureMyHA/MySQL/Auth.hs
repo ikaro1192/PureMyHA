@@ -90,7 +90,7 @@ putAuthPacket cap maxPkt charset user authResp db mPlugin = do
     Binary.putByteString authResp
     Binary.putByteString db >> Binary.putWord8 0x00
     case mPlugin of
-        Nothing   -> return ()
+        Nothing   -> pure ()
         Just name -> Binary.putByteString name >> Binary.putWord8 0x00
 
 -- | Parse a PEM-encoded SubjectPublicKeyInfo RSA public key (PKCS#8 / RFC 5480).
@@ -153,11 +153,11 @@ doRSAAuth
     -> ByteString         -- ^ PEM-encoded RSA public key from server
     -> IO ()
 doRSAAuth writePacket seqN pass nonce pemKey = do
-    pubKey <- either (\e -> throwIO (userError ("RSA key parse: " ++ e))) return
+    pubKey <- either (\e -> throwIO (userError ("RSA key parse: " ++ e))) pure
                      (parseRSAPublicKey pemKey)
     result <- OAEP.encrypt (OAEP.defaultOAEPParams SHA1) pubKey
                            (xorPasswordNonce pass nonce)
-    ct <- either (\e -> throwIO (userError ("RSA encrypt: " ++ show e))) return result
+    ct <- either (\e -> throwIO (userError ("RSA encrypt: " ++ show e))) pure result
     writePacket (putToPacket seqN (Binary.putByteString ct))
 
 -- | Handle server packets in the auth exchange after the initial
@@ -182,7 +182,7 @@ handleAuthResponse is writePacket nonce pass = loop
         case BL.uncons (pBody p) of
             Nothing -> throwIO NetworkException
             Just (tag, rest)
-                | tag == 0x00 -> return ()
+                | tag == 0x00 -> pure ()
                 | tag == 0xFF -> decodeFromPacket p >>= throwIO . ERRException
                 | tag == 0xFE -> handleSwitch p
                 | tag == 0x01 -> handleMoreData rest (pSeqN p)
@@ -196,25 +196,31 @@ handleAuthResponse is writePacket nonce pass = loop
                     -- Fast-auth succeeded; server will send an OK packet next.
                     p' <- readPacket is
                     if isOK p'
-                        then return ()
+                        then pure ()
                         else decodeFromPacket p' >>= throwIO . ERRException
                 | status == 0x04 -> do
                     -- Full-auth required; request server's RSA public key.
                     writePacket (putToPacket (serverSeqN + 1) (Binary.putWord8 0x02))
                     keyPkt <- readPacket is
                     -- Key packet body: 0x01 <PEM bytes>
-                    let pemKey = BL.toStrict (BL.tail (pBody keyPkt))
+                    pemKey <- case BL.uncons (pBody keyPkt) of
+                        Just (_, body) -> pure (BL.toStrict body)
+                        Nothing -> throwIO
+                            (userError "malformed auth packet: empty RSA key body")
                     doRSAAuth writePacket (pSeqN keyPkt + 1) pass nonce pemKey
                     p' <- readPacket is
                     if isOK p'
-                        then return ()
+                        then pure ()
                         else decodeFromPacket p' >>= throwIO . ERRException
                 | otherwise -> throwIO NetworkException
 
     handleSwitch p = do
         -- AUTH_SWITCH_REQUEST body: 0xFE <plugin\0> <new_nonce>
-        let bs           = BL.toStrict (BL.tail (pBody p))
-            (pluginName, afterNul) = B.break (== 0x00) bs
+        bs <- case BL.uncons (pBody p) of
+            Just (_, body) -> pure (BL.toStrict body)
+            Nothing -> throwIO
+                (userError "malformed auth packet: empty AUTH_SWITCH_REQUEST body")
+        let (pluginName, afterNul) = B.break (== 0x00) bs
             newNonce     = B.drop 1 afterNul
         if pluginName == "caching_sha2_password"
             then do
@@ -261,10 +267,10 @@ connectWithAuth mTls (ConnectInfo host port db user pass charset) =
             (tlsIs, tlsSend) <- upgradeTLS params sock
             tlsIS' <- decodeInputStream tlsIs
             let writePacket pkt = tlsSend (Binary.runPut (Binary.put pkt))
-            return (writePacket, tlsIS', 2 :: Word8, sslCaps)
+            pure (writePacket, tlsIS', 2 :: Word8, sslCaps)
           _ -> do
             let writePacket pkt = TCP.send c (Binary.runPut (Binary.put pkt))
-            return (writePacket, is', 1 :: Word8, baseCaps)
+            pure (writePacket, is', 1 :: Word8, baseCaps)
 
         let authPkt = putToPacket authSeqN
                         (putAuthPacket authCaps clientMaxPacketSize charset
@@ -275,7 +281,7 @@ connectWithAuth mTls (ConnectInfo host port db user pass charset) =
         consumed <- newIORef True
         let waitNotMandatoryOK =
                 catch (void (waitCommandReply readIS))
-                      ((\_ -> return ()) :: SomeException -> IO ())
+                      (const (pure ()) :: SomeException -> IO ())
             conn = MySQLConn
                        readIS
                        writeP
@@ -283,4 +289,4 @@ connectWithAuth mTls (ConnectInfo host port db user pass charset) =
                         >> waitNotMandatoryOK
                         >> TCP.close c)
                        consumed
-        return conn
+        pure conn

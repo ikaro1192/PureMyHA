@@ -1,6 +1,7 @@
 module PureMyHA.AutoSpec (spec) where
 
 import Control.Concurrent.STM (atomically)
+import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian, addUTCTime)
@@ -9,7 +10,8 @@ import Fixtures
 import PureMyHA.Config
   ( ClusterConfig (..), Credentials (..), FailoverConfig (..)
   , MonitoringConfig (..), FailureDetectionConfig (..), NodeConfig (..)
-  , Port (..), PositiveDuration (..), AtLeastOne (..)
+  , PositiveDuration (..), AtLeastOne (..)
+  , AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..)
   )
 import PureMyHA.Env (runApp)
 import PureMyHA.Failover.Auto (checkAutoFailoverPreconditions, simulateFailover)
@@ -26,13 +28,13 @@ deadSourceTopo :: ClusterTopology
 deadSourceTopo = ClusterTopology
   { ctClusterName          = "test"
   , ctNodes                = clusterWithDeadSource
-  , ctSourceNodeId         = Just (NodeId "db1" 3306)
+  , ctSourceNodeId         = Just (unsafeNodeId "db1" 3306)
   , ctHealth               = DeadSource
-  , ctObservedHealthy      = True
+  , ctObservedHealthy      = HasBeenObservedHealthy
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
-  , ctPaused               = False
-  , ctTopologyDrift        = False
+  , ctPaused               = Running
+  , ctTopologyDrift        = NoDrift
   , ctLastEmergencyCheckAt = Nothing
   }
 
@@ -49,10 +51,10 @@ spec = do
 
     it "selects the node with the higher GTID count" $ do
       let sources = [splitBrainSource1, splitBrainSource2]
-      selectSurvivor [] [] sources `shouldBe` Just (NodeId "db2" 3306)
+      selectSurvivor [] [] sources `shouldBe` Just (unsafeNodeId "db2" 3306)
 
     it "selects the only node when given a single source" $ do
-      selectSurvivor [] [] [splitBrainSource1] `shouldBe` Just (NodeId "db1" 3306)
+      selectSurvivor [] [] [splitBrainSource1] `shouldBe` Just (unsafeNodeId "db1" 3306)
 
     it "returns Nothing for empty list" $
       selectSurvivor [] [] [] `shouldBe` Nothing
@@ -82,8 +84,8 @@ spec = do
     it "returns Left when replica count is below minReplicas" $ do
       let noReplicaTopo = deadSourceTopo
             { ctNodes = Map.fromList
-                [ (NodeId "db1" 3306
-                  , (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
+                [ (unsafeNodeId "db1" 3306
+                  , (unreachableNode (unsafeNodeId "db1" 3306)) { nsRole = Source })
                 ]
             }
       checkAutoFailoverPreconditions now noReplicaTopo 1
@@ -94,7 +96,7 @@ spec = do
         `shouldSatisfy` isLeft
 
     it "returns Left when cluster is paused" $
-      checkAutoFailoverPreconditions now (deadSourceTopo { ctPaused = True }) 1
+      checkAutoFailoverPreconditions now (deadSourceTopo { ctPaused = Paused }) 1
         `shouldSatisfy` isLeft
 
   describe "simulateFailover" $ do
@@ -131,11 +133,11 @@ spec = do
 
     it "reports all eligible candidates" $ do
       tvar <- newDaemonState
-      let replica2 = healthyReplica { nsNodeId = NodeId "db3" 3306 }
+      let replica2 = healthyReplica { nsNodeId = unsafeNodeId "db3" 3306 }
           nodes = Map.fromList
-            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
-            , (NodeId "db2" 3306, healthyReplica)
-            , (NodeId "db3" 3306, replica2)
+            [ (unsafeNodeId "db1" 3306, (unreachableNode (unsafeNodeId "db1" 3306)) { nsRole = Source })
+            , (unsafeNodeId "db2" 3306, healthyReplica)
+            , (unsafeNodeId "db3" 3306, replica2)
             ]
           topo = deadSourceTopo { ctClusterName = "main", ctNodes = nodes }
       atomically $ updateClusterTopology tvar topo
@@ -147,7 +149,7 @@ spec = do
 
     it "shows candidate even when failover is paused, with a pause note" $ do
       tvar <- newDaemonState
-      let topo = (deadSourceTopo { ctClusterName = "main" }) { ctPaused = True }
+      let topo = (deadSourceTopo { ctClusterName = "main" }) { ctPaused = Paused }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env simulateFailover
@@ -165,36 +167,33 @@ testCC = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
   , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
-  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing [] False
+  , ccFailover               = FailoverConfig AutoFailoverOn 1 [] 60 FenceManual Nothing [] AllowUnobserved
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }
 
 testFC :: FailoverConfig
 testFC = FailoverConfig
-  { fcAutoFailover                   = True
+  { fcAutoFailover                   = AutoFailoverOn
   , fcMinReplicasForFailover         = 1
   , fcCandidatePriority              = []
   , fcWaitRelayLogTimeout            = 60
-  , fcAutoFence                      = False
+  , fcAutoFence                      = FenceManual
   , fcMaxReplicaLagForCandidate      = Nothing
   , fcNeverPromote                   = []
-  , fcFailoverWithoutObservedHealthy = False
+  , fcFailoverWithoutObservedHealthy = RequireObservedHealthy
   }
 
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft _        = False
 
 -- | Two source nodes simulating a split-brain scenario
 splitBrainSource1 :: NodeState
 splitBrainSource1 = healthySource
-  { nsNodeId    = NodeId "db1" 3306
+  { nsNodeId    = unsafeNodeId "db1" 3306
   , nsProbeResult = ProbeSuccess fixedTime Nothing (unsafeParseGtidSet "uuid1:1-50")
   }
 
 splitBrainSource2 :: NodeState
 splitBrainSource2 = healthySource
-  { nsNodeId    = NodeId "db2" 3306
+  { nsNodeId    = unsafeNodeId "db2" 3306
   , nsProbeResult = ProbeSuccess fixedTime Nothing (unsafeParseGtidSet "uuid1:1-100")
   }

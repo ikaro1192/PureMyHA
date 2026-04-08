@@ -60,7 +60,7 @@ printClusterStatus cs = do
   let health      = showHealth (csHealth cs)
       source      = maybe "-" (T.unpack . unHostName) (csSourceHost cs)
       nodes       = show (csNodeCount cs)
-      paused      = if csPaused cs then "yes" else "no"
+      paused      = case csPaused cs of Paused -> "yes"; Running -> "no"
       blocked     = maybe "-" showTime (csRecoveryBlockedUntil cs)
   putStrLn $ padR 20 (T.unpack (unClusterName (csClusterName cs)))
            <> padR 25 health
@@ -78,8 +78,9 @@ printClusterTopology :: ClusterTopologyView -> IO ()
 printClusterTopology ctv = do
   TIO.putStrLn $ "Cluster: " <> unClusterName (ctvClusterName ctv)
   let nodes = ctvNodes ctv
-      source = filter nsvIsSource nodes
-      replicas = filter (not . nsvIsSource) nodes
+      isSrc nsv = case nsvRole nsv of Source -> True; Replica -> False
+      source = filter isSrc nodes
+      replicas = filter (not . isSrc) nodes
   mapM_ (printNode True) source
   mapM_ (printNode False) replicas
   putStrLn ""
@@ -88,14 +89,14 @@ printNode :: Bool -> NodeStateView -> IO ()
 printNode isSrc nsv = do
   let prefix = if isSrc then "[SOURCE] " else "  [REPLICA] "
       host   = T.unpack (unHostName (nsvHost nsv)) <> ":" <> show (nsvPort nsv)
-      status = if nsvPaused nsv
-                 then "[PAUSED]"
-                 else "[" <> showHealth (nsvHealth nsv) <> "]"
+      status = case nsvPaused nsv of
+                 Paused  -> "[PAUSED]"
+                 Running -> "[" <> showHealth (nsvHealth nsv) <> "]"
       lag    = case nsvLagSeconds nsv of
         Nothing -> ""
         Just s  -> " lag=" <> show s <> "s"
       errant = if isEmptyGtidSet (nsvErrantGtids nsv) then "" else " ERRANT_GTID"
-      fenced = if nsvFenced nsv then " FENCED" else ""
+      fenced = case nsvFenced nsv of Fenced -> " FENCED"; Unfenced -> ""
   putStrLn $ prefix <> host <> " " <> status <> lag <> errant <> fenced
 
 -- | Print an operation result

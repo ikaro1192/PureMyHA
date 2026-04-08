@@ -1,6 +1,7 @@
 module PureMyHA.HTTPSpec (spec) where
 
 import Control.Concurrent.STM (atomically)
+import Control.Monad (void)
 import qualified Data.ByteString.Lazy.Char8 as BSL8
 import Data.IORef
 import qualified Data.Map.Strict as Map
@@ -19,7 +20,7 @@ runApp :: (Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived)
        -> Request -> IO Response
 runApp app req = do
   ref <- newIORef (error "no response")
-  _ <- app req (\resp -> writeIORef ref resp >> pure ResponseReceived)
+  void $ app req (\resp -> writeIORef ref resp >> pure ResponseReceived)
   readIORef ref
 
 postReq :: Request
@@ -32,13 +33,13 @@ spec = do
     let ct = ClusterTopology
                 { ctClusterName          = "test"
                 , ctNodes                = clusterHealthy
-                , ctSourceNodeId         = Just (NodeId "db1" 3306)
+                , ctSourceNodeId         = Just (unsafeNodeId "db1" 3306)
                 , ctHealth               = Healthy
-                , ctObservedHealthy      = True
+                , ctObservedHealthy      = HasBeenObservedHealthy
                 , ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt       = Nothing
-                , ctPaused               = False
-                , ctTopologyDrift        = False
+                , ctPaused               = Running
+                , ctTopologyDrift        = NoDrift
                 , ctLastEmergencyCheckAt = Nothing
                 }
         ds     = DaemonState (Map.singleton "test" ct)
@@ -85,7 +86,7 @@ spec = do
       output `shouldContain` "puremyha_cluster_topology_drift{cluster=\"test\"} 0"
 
     it "reports topology_drift=1 when drift is detected" $ do
-      let driftCt = ct { ctTopologyDrift = True }
+      let driftCt = ct { ctTopologyDrift = DriftDetected }
           ds'     = DaemonState (Map.singleton "test" driftCt)
           out     = BSL8.unpack (renderMetrics ds')
       out `shouldContain` "puremyha_cluster_topology_drift{cluster=\"test\"} 1"
@@ -114,9 +115,9 @@ spec = do
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterWithDeadSource
                 , ctSourceNodeId = Nothing, ctHealth = DeadSource
-                , ctObservedHealthy = False, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False
+                , ctObservedHealthy = NeverObservedHealthy, ctRecoveryBlockedUntil = Nothing
+                , ctLastFailoverAt = Nothing, ctPaused = Running
+                , ctTopologyDrift = NoDrift
                 , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["health"] }
@@ -127,10 +128,10 @@ spec = do
       tvar <- newDaemonState
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterHealthy
-                , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
-                , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False
+                , ctSourceNodeId = Just (unsafeNodeId "db1" 3306), ctHealth = Healthy
+                , ctObservedHealthy = HasBeenObservedHealthy, ctRecoveryBlockedUntil = Nothing
+                , ctLastFailoverAt = Nothing, ctPaused = Running
+                , ctTopologyDrift = NoDrift
                 , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "status"] }
@@ -147,10 +148,10 @@ spec = do
       tvar <- newDaemonState
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterHealthy
-                , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
-                , ctObservedHealthy = True, ctRecoveryBlockedUntil = Nothing
-                , ctLastFailoverAt = Nothing, ctPaused = False
-                , ctTopologyDrift = False
+                , ctSourceNodeId = Just (unsafeNodeId "db1" 3306), ctHealth = Healthy
+                , ctObservedHealthy = HasBeenObservedHealthy, ctRecoveryBlockedUntil = Nothing
+                , ctLastFailoverAt = Nothing, ctPaused = Running
+                , ctTopologyDrift = NoDrift
                 , ctLastEmergencyCheckAt = Nothing }
       atomically $ updateClusterTopology tvar ct
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "topology"] }
@@ -172,17 +173,17 @@ spec = do
   describe "lagVal edge case" $
     it "reports replication lag=-1 when rsSecondsBehindSource is Nothing" $ do
       let rs = (mkReplicaStatus "db1" 3306 IOYes "uuid1:1") { rsSecondsBehindSource = Nothing }
-          ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
+          ns = mkNodeState (unsafeNodeId "db2" 3306) Replica (Just rs) Healthy
           ct = ClusterTopology
                 { ctClusterName = "test"
-                , ctNodes = Map.singleton (NodeId "db2" 3306) ns
+                , ctNodes = Map.singleton (unsafeNodeId "db2" 3306) ns
                 , ctSourceNodeId = Nothing
                 , ctHealth = Healthy
-                , ctObservedHealthy = True
+                , ctObservedHealthy = HasBeenObservedHealthy
                 , ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing
-                , ctPaused = False
-                , ctTopologyDrift = False
+                , ctPaused = Running
+                , ctTopologyDrift = NoDrift
                 , ctLastEmergencyCheckAt = Nothing }
           ds = DaemonState (Map.singleton "test" ct)
           out = BSL8.unpack (renderMetrics ds)

@@ -22,7 +22,7 @@ import qualified Data.Text as T
 import Data.Time (UTCTime, getCurrentTime)
 import qualified Data.List.NonEmpty as NE
 import System.Timeout (timeout)
-import PureMyHA.Config (ClusterConfig (..), DbCredentials, FailoverConfig (..), MonitoringConfig (..), NodeConfig (..), Port (..), PositiveDuration (..), TLSConfig)
+import PureMyHA.Config (ClusterConfig (..), DbCredentials, FailoverConfig (..), MonitoringConfig (..), NodeConfig (..), PositiveDuration (..), TLSConfig)
 import PureMyHA.Env (App, ClusterEnv (..), envLogger, getMonCredentials, getMonitoringConfig, getTLSConfig)
 import PureMyHA.Logger (Logger, logInfo)
 import PureMyHA.MySQL.Connection (makeConnectInfo, withNodeConn)
@@ -67,7 +67,7 @@ discoverTopology = do
       denv = DiscoveryEnv mTls creds tMicros logger
   seedNodes <- liftIO $ mapM (\nc -> do
     hi <- resolveHostInfo (HostName (ncHost nc))
-    pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
+    pure (unsafeNodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
   fc         <- asks envFailover
   nodeStates <- liftIO $ runReaderT (discoverAll (Set.fromList seedNodes) Set.empty Map.empty) denv
   pure (buildClusterTopology (fcMinReplicasForFailover fc) (ccName cc) nodeStates)
@@ -89,11 +89,11 @@ buildClusterTopology minReplicas name nodeStates =
        , ctNodes                = nodeStates'
        , ctSourceNodeId         = sourceId
        , ctHealth               = health
-       , ctObservedHealthy      = health == Healthy
+       , ctObservedHealthy      = if health == Healthy then HasBeenObservedHealthy else NeverObservedHealthy
        , ctRecoveryBlockedUntil = Nothing
        , ctLastFailoverAt       = Nothing
-       , ctPaused               = False
-       , ctTopologyDrift        = False
+       , ctPaused               = Running
+       , ctTopologyDrift        = NoDrift
        , ctLastEmergencyCheckAt = Nothing
        }
 
@@ -157,7 +157,7 @@ runProbe nid = do
           pure []
         Nothing -> do
           -- source node: discover downstream replicas via SHOW REPLICAS + performance_schema.processlist
-          (discovered, expected, rawHosts) <- showReplicas conn (nodePort nid)
+          (discovered, expected, rawHosts) <- showReplicas conn (unPort (nodePort nid))
           logInfo deLogger $ "[" <> unHostName (nodeHost nid) <> "] Raw hosts from SHOW REPLICAS/processlist: "
             <> T.pack (show rawHosts)
           logInfo deLogger $ "[" <> unHostName (nodeHost nid) <> "] Resolved replica NodeIds: "
@@ -185,9 +185,9 @@ buildNodeStateFromProbe nid _ (Left err) = NodeState
   , nsHealth              = NodeUnreachable err
   , nsProbeResult         = ProbeFailure err
   , nsErrantGtids         = emptyGtidSet
-  , nsPaused              = False
+  , nsPaused              = Running
   , nsConsecutiveFailures = 0
-  , nsFenced              = False
+  , nsFenced              = Unfenced
   }
 buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
   { nsNodeId              = nid
@@ -195,9 +195,9 @@ buildNodeStateFromProbe nid now (Right (mRs, gtidExec)) = NodeState
   , nsHealth              = Healthy
   , nsProbeResult         = ProbeSuccess now mRs gtidExec
   , nsErrantGtids         = emptyGtidSet
-  , nsPaused              = False
+  , nsPaused              = Running
   , nsConsecutiveFailures = 0
-  , nsFenced              = False
+  , nsFenced              = Unfenced
   }
 
 -- | Calculate next nodes to probe from a discovered node's replica status (pure)
@@ -209,7 +209,7 @@ nextDiscoveryTargets
 nextDiscoveryTargets ns visited rest =
   case nsProbeResult ns of
     ProbeSuccess{prReplicaStatus = Just rs} ->
-      let srcId = NodeId (mkHostInfoFromName (rsSourceHost rs)) (rsSourcePort rs)
+      let srcId = unsafeNodeId (mkHostInfoFromName (rsSourceHost rs)) (rsSourcePort rs)
       in if Set.notMember srcId visited && unHostName (rsSourceHost rs) /= ""
            then Set.insert srcId rest
            else rest
@@ -219,7 +219,7 @@ nextDiscoveryTargets ns visited rest =
 resolveQueueEntry :: NodeId -> IO NodeId
 resolveQueueEntry nid = do
   hi <- resolveHostInfo (nodeHost nid)
-  pure (NodeId hi (nodePort nid))
+  pure (mkNodeId hi (nodePort nid))
 
 -- | Remove duplicate nodes that represent the same hostname:port with different
 -- IP representations. Prefers the entry with a resolved IP (IP text differs
@@ -249,10 +249,10 @@ buildInitialTopology cc = ClusterTopology
   , ctNodes                = Map.empty
   , ctSourceNodeId         = Nothing
   , ctHealth               = NeedsAttention "Initializing"
-  , ctObservedHealthy      = False
+  , ctObservedHealthy      = NeverObservedHealthy
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
-  , ctPaused               = False
-  , ctTopologyDrift        = False
+  , ctPaused               = Running
+  , ctTopologyDrift        = NoDrift
   , ctLastEmergencyCheckAt = Nothing
   }

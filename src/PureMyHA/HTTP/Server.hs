@@ -15,7 +15,7 @@ import Network.HTTP.Types (status200, status404, status405, methodGet, Header)
 import Network.Wai (Application, Request (..), Response, responseLBS)
 import Network.Wai.Handler.Warp (defaultSettings, runSettings, setHost, setPort)
 
-import PureMyHA.Config (HttpConfig (..), Port (..))
+import PureMyHA.Config (HttpConfig (..))
 import PureMyHA.IPC.Protocol ()   -- ToJSON instances
 import PureMyHA.IPC.Server (toClusterStatus, toClusterTopologyView)
 import PureMyHA.Topology.State (TVarDaemonState, readDaemonState)
@@ -72,11 +72,11 @@ clusterMetrics =
   , ClusterMetric
       (MetricName "puremyha_cluster_paused")
       (MetricHelp "1 if automatic failover is paused")
-      (\_ ct -> boolVal (ctPaused ct))
+      (\_ ct -> boolVal (case ctPaused ct of Paused -> True; Running -> False))
   , ClusterMetric
       (MetricName "puremyha_cluster_topology_drift")
       (MetricHelp "Whether topology drift is detected (1 = drift, 0 = normal)")
-      (\_ ct -> boolVal (ctTopologyDrift ct))
+      (\_ ct -> boolVal (case ctTopologyDrift ct of DriftDetected -> True; NoDrift -> False))
   ]
 
 nodeMetrics :: [NodeMetric]
@@ -100,7 +100,7 @@ nodeMetrics =
   , NodeMetric
       (MetricName "puremyha_node_paused")
       (MetricHelp "1 if replication is paused on this node")
-      (\_ ns -> boolVal (nsPaused ns))
+      (\_ ns -> boolVal (case nsPaused ns of Paused -> True; Running -> False))
   ]
 
 jsonCT :: Header

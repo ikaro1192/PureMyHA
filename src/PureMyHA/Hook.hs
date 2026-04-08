@@ -5,10 +5,12 @@ module PureMyHA.Hook
   , runHookOrAbort
   , getCurrentTimestamp
   , HookEnv (..)
+  , SourceChange (..)
   ) where
 
 import Control.Concurrent.Async (async)
 import Control.Exception (try, SomeException)
+import Control.Monad (void)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
@@ -17,10 +19,21 @@ import System.Process (createProcess, proc, waitForProcess, env)
 import PureMyHA.Config (HooksConfig (..))
 import PureMyHA.Types (ClusterName, unClusterName, HostInfo, hiHostName, HostName (..))
 
+-- | Describes how the source role changed for a hook invocation.
+--
+-- The wire contract for external hook scripts is preserved exactly:
+-- 'NoSourceChange'           -> neither PUREMYHA_NEW_SOURCE nor PUREMYHA_OLD_SOURCE is set.
+-- 'InitialSourcePromotion'   -> only PUREMYHA_NEW_SOURCE is set (no prior source detected).
+-- 'SourceChanged'            -> both PUREMYHA_NEW_SOURCE and PUREMYHA_OLD_SOURCE are set.
+data SourceChange
+  = NoSourceChange
+  | InitialSourcePromotion { scNewSource :: HostInfo }
+  | SourceChanged          { scOldSource :: HostInfo, scNewSource :: HostInfo }
+  deriving (Eq, Show)
+
 data HookEnv = HookEnv
   { hookClusterName  :: ClusterName
-  , hookNewSource    :: Maybe HostInfo
-  , hookOldSource    :: Maybe HostInfo
+  , hookSourceChange :: SourceChange
   , hookFailureType  :: Maybe Text   -- e.g. "DeadSource", "PromoteFailed"
   , hookTimestamp    :: Text         -- ISO-8601 UTC: "2026-03-17T12:00:00Z"
   , hookLagSeconds   :: Maybe Int    -- e.g. 45 when on_lag_threshold_exceeded fires
@@ -37,11 +50,18 @@ getCurrentTimestamp =
 -- Returns Left with error message if the hook fails.
 runHook :: FilePath -> HookEnv -> IO (Either Text ())
 runHook scriptPath hookEnv = do
-  let envVars =
+  let sourceVars = case hookSourceChange hookEnv of
+        NoSourceChange -> []
+        InitialSourcePromotion newH ->
+          [("PUREMYHA_NEW_SOURCE", T.unpack (unHostName (hiHostName newH)))]
+        SourceChanged oldH newH ->
+          [ ("PUREMYHA_NEW_SOURCE", T.unpack (unHostName (hiHostName newH)))
+          , ("PUREMYHA_OLD_SOURCE", T.unpack (unHostName (hiHostName oldH)))
+          ]
+      envVars =
         [ ("PUREMYHA_CLUSTER", T.unpack (unClusterName (hookClusterName hookEnv)))
         ] ++
-        maybe [] (\h -> [("PUREMYHA_NEW_SOURCE", T.unpack (unHostName (hiHostName h)))]) (hookNewSource hookEnv) ++
-        maybe [] (\h -> [("PUREMYHA_OLD_SOURCE", T.unpack (unHostName (hiHostName h)))]) (hookOldSource hookEnv) ++
+        sourceVars ++
         maybe [] (\ft -> [("PUREMYHA_FAILURE_TYPE", T.unpack ft)]) (hookFailureType hookEnv) ++
         maybe [] (\s  -> [("PUREMYHA_LAG_SECONDS", show s)]) (hookLagSeconds hookEnv) ++
         maybe [] (\n  -> [("PUREMYHA_NODE",        T.unpack n)]) (hookNode hookEnv) ++
@@ -68,9 +88,7 @@ runHookFireForget Nothing _ _ = pure ()
 runHookFireForget (Just hc) getter hookEnv =
   case getter hc of
     Nothing   -> pure ()
-    Just path -> do
-      _ <- async (runHook path hookEnv)
-      pure ()
+    Just path -> void $ async (runHook path hookEnv)
 
 -- | Blocking: run hook and return Left if it fails, aborting the operation
 runHookOrAbort

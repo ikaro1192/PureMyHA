@@ -12,6 +12,8 @@ module PureMyHA.Failover.Candidate
   ) where
 
 import Data.List (sortBy)
+import Data.List.NonEmpty (NonEmpty, nonEmpty)
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Maybe (mapMaybe)
@@ -56,28 +58,28 @@ selectCandidate neverPromote mMaxLag nodes priorities mToHost =
            []  -> Left $ "Host not found as replica: " <> unHostName toHost
            (ns:_)
              | nodeHostInfo (nsNodeId ns) `elem` neverPromote -> Left $ "Cannot promote: host is in never_promote list: " <> unHostName toHost
-             | nsPaused ns -> Left $ "Cannot promote: node is paused: " <> unHostName toHost
+             | Paused <- nsPaused ns -> Left $ "Cannot promote: node is paused: " <> unHostName toHost
              | hasErrantGtid ns -> Left $ "Cannot promote: node has errant GTIDs: " <> unHostName toHost
              | hasConnectError ns -> Left $ "Cannot promote: node unreachable: " <> unHostName toHost
              | otherwise -> Right (nsNodeId ns)
     Nothing ->
       -- Auto-select: filter, rank, pick best
-      let candidates = rankCandidates neverPromote mMaxLag (Map.elems nodes) priorities
-      in case candidates of
-           []    -> Left "No suitable failover candidate found"
-           (c:_) -> Right (ciNodeId c)
+      case rankCandidates neverPromote mMaxLag (Map.elems nodes) priorities of
+        Nothing   -> Left "No suitable failover candidate found"
+        Just cs   -> Right (ciNodeId (NE.head cs))
 
 -- | Rank candidate nodes (replicas without errant GTIDs, within lag threshold, and not in never_promote)
-rankCandidates :: [HostInfo] -> Maybe Int -> [NodeState] -> [CandidatePriority] -> [CandidateInfo]
+rankCandidates :: [HostInfo] -> Maybe Int -> [NodeState] -> [CandidatePriority] -> Maybe (NonEmpty CandidateInfo)
 rankCandidates neverPromote mMaxLag nodes priorities =
   let eligible = filter (isEligibleCandidate neverPromote mMaxLag) nodes
       infos    = map (toCandidateInfo priorities) eligible
-  in sortBy (comparing ciPriorityRank <> comparing (Down . gtidScore)) infos
+      ranked   = sortBy (comparing ciPriorityRank <> comparing (Down . gtidScore)) infos
+  in nonEmpty ranked
 
 isEligibleCandidate :: [HostInfo] -> Maybe Int -> NodeState -> Bool
 isEligibleCandidate neverPromote mMaxLag ns =
   not (isSource ns)
-  && not (nsPaused ns)
+  && (case nsPaused ns of Running -> True; Paused -> False)
   && not (hasErrantGtid ns)
   && not (hasConnectError ns)
   && not (isLagging ns)

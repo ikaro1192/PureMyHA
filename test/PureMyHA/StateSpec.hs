@@ -1,6 +1,7 @@
 module PureMyHA.StateSpec (spec) where
 
 import Control.Concurrent.STM
+import Control.Monad (void)
 import Data.Maybe (isNothing)
 import qualified Data.Map.Strict as Map
 import Test.Hspec
@@ -16,20 +17,20 @@ emptyTopo = ClusterTopology
   , ctNodes                = Map.empty
   , ctSourceNodeId         = Nothing
   , ctHealth               = NeedsAttention "Initializing"
-  , ctObservedHealthy      = False
+  , ctObservedHealthy      = NeverObservedHealthy
   , ctRecoveryBlockedUntil = Nothing
   , ctLastFailoverAt       = Nothing
-  , ctPaused               = False
-  , ctTopologyDrift        = False
+  , ctPaused               = Running
+  , ctTopologyDrift        = NoDrift
   , ctLastEmergencyCheckAt = Nothing
   }
 
 healthyTopo :: ClusterTopology
 healthyTopo = emptyTopo
-  { ctNodes          = Map.fromList [(NodeId "db1" 3306, healthySource), (NodeId "db2" 3306, healthyReplica)]
-  , ctSourceNodeId   = Just (NodeId "db1" 3306)
+  { ctNodes          = Map.fromList [(unsafeNodeId "db1" 3306, healthySource), (unsafeNodeId "db2" 3306, healthyReplica)]
+  , ctSourceNodeId   = Just (unsafeNodeId "db1" 3306)
   , ctHealth         = Healthy
-  , ctObservedHealthy = True
+  , ctObservedHealthy = HasBeenObservedHealthy
   }
 
 -- | Seed a TVarDaemonState with a single cluster topology
@@ -52,20 +53,20 @@ spec = do
       mct <- getClusterTopology tvar "test"
       fmap ctClusterName mct `shouldBe` Just "test"
 
-    it "preserves ctObservedHealthy=True on update (OR semantics)" $ do
+    it "preserves ctObservedHealthy=HasBeenObservedHealthy on update (OR semantics)" $ do
       tvar <- newDaemonState
-      seedCluster tvar healthyTopo  -- ctObservedHealthy = True
-      let updateTopo = emptyTopo { ctObservedHealthy = False }
+      seedCluster tvar healthyTopo  -- ctObservedHealthy = HasBeenObservedHealthy
+      let updateTopo = emptyTopo { ctObservedHealthy = NeverObservedHealthy }
       atomically $ updateClusterTopology tvar updateTopo
       mct <- getClusterTopology tvar "test"
-      fmap ctObservedHealthy mct `shouldBe` Just True
+      fmap ctObservedHealthy mct `shouldBe` Just HasBeenObservedHealthy
 
     it "preserves ctPaused from previous topology" $ do
       tvar <- newDaemonState
-      seedCluster tvar emptyTopo { ctPaused = True }
-      atomically $ updateClusterTopology tvar emptyTopo { ctPaused = False }
+      seedCluster tvar emptyTopo { ctPaused = Paused }
+      atomically $ updateClusterTopology tvar emptyTopo { ctPaused = Running }
       mct <- getClusterTopology tvar "test"
-      fmap ctPaused mct `shouldBe` Just True
+      fmap ctPaused mct `shouldBe` Just Paused
 
     it "preserves ctHealth from previous topology (monitoring workers own health)" $ do
       tvar <- newDaemonState
@@ -77,10 +78,10 @@ spec = do
 
     it "preserves ctSourceNodeId from previous topology" $ do
       tvar <- newDaemonState
-      seedCluster tvar healthyTopo  -- ctSourceNodeId = Just (NodeId "db1" 3306)
+      seedCluster tvar healthyTopo  -- ctSourceNodeId = Just (unsafeNodeId "db1" 3306)
       atomically $ updateClusterTopology tvar emptyTopo  -- ctSourceNodeId = Nothing
       mct <- getClusterTopology tvar "test"
-      fmap ctSourceNodeId mct `shouldBe` Just (Just (NodeId "db1" 3306))
+      fmap ctSourceNodeId mct `shouldBe` Just (Just (unsafeNodeId "db1" 3306))
 
   describe "readDaemonState" $
     it "reads multiple clusters" $ do
@@ -110,6 +111,6 @@ spec = do
 
     it "second acquire returns False (already locked)" $ do
       lock <- newFailoverLock
-      _ <- atomically $ acquireFailoverLock lock
+      void $ atomically $ acquireFailoverLock lock
       result <- atomically $ acquireFailoverLock lock
       result `shouldBe` False

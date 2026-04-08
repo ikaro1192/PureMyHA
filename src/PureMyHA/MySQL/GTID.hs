@@ -12,7 +12,9 @@ module PureMyHA.MySQL.GTID
   , expandGtidEntry
   , GtidInterval (..)
   , GtidEntry (..)
-  , GtidSet (..)
+  , GtidSet
+  , getGtidEntries
+  , unsafeGtidSet
   , GtidTag (..)
   , TransactionId (..)
   , GtidUUID (..)
@@ -43,11 +45,13 @@ mkGtidTag :: Text -> Either String GtidTag
 mkGtidTag t
   | T.null t = Left "GtidTag cannot be empty"
   | T.length t > 32 = Left "GtidTag must be at most 32 characters"
-  | not (isValidFirst (T.head t)) = Left "GtidTag must start with a letter or underscore"
+  | not (isValidFirst t) = Left "GtidTag must start with a letter or underscore"
   | not (T.all isValidChar t) = Left "GtidTag must contain only alphanumeric characters and underscores"
   | otherwise = Right (GtidTag t)
   where
-    isValidFirst c = isAlpha c || c == '_'
+    isValidFirst s = case T.uncons s of
+      Nothing     -> False
+      Just (c, _) -> isAlpha c || c == '_'
     isValidChar  c = isAlphaNum c || c == '_'
 
 -- | A single interval within a GTID set
@@ -65,8 +69,15 @@ data GtidEntry = GtidEntry
   } deriving (Eq, Show)
 
 -- | A parsed GTID set.
-newtype GtidSet = GtidSet { getGtidEntries :: [GtidEntry] }
+-- The constructor is not exported: use 'parseGtidSet' to validate input,
+-- or 'unsafeGtidSet' in tests when the entries are known-good literals.
+newtype GtidSet = UnsafeGtidSet { getGtidEntries :: [GtidEntry] }
   deriving (Eq, Show)
+
+-- | Escape hatch that wraps a list of entries as a 'GtidSet' without
+-- running the text parser. Only intended for tests and fixtures.
+unsafeGtidSet :: [GtidEntry] -> GtidSet
+unsafeGtidSet = UnsafeGtidSet
 
 instance ToJSON GtidSet where
   toJSON = toJSON . renderGtidSet
@@ -80,11 +91,11 @@ instance FromJSON GtidSet where
 
 -- | The empty GTID set.
 emptyGtidSet :: GtidSet
-emptyGtidSet = GtidSet []
+emptyGtidSet = UnsafeGtidSet []
 
 -- | Check if a GTID set is empty.
 isEmptyGtidSet :: GtidSet -> Bool
-isEmptyGtidSet (GtidSet entries) = null entries
+isEmptyGtidSet (UnsafeGtidSet entries) = null entries
 
 -- | Smart constructor that validates giStart <= giEnd.
 mkGtidInterval :: Integer -> Integer -> Either String GtidInterval
@@ -102,7 +113,7 @@ mkSingleGtid uuid tag tid = GtidEntry uuid tag [GtidInterval tid tid]
 parseGtidSet :: Text -> Either String GtidSet
 parseGtidSet t
   | isEmptyText t = Right emptyGtidSet
-  | otherwise = GtidSet <$> mapM parseEntry (T.splitOn "," (T.strip t))
+  | otherwise = UnsafeGtidSet <$> mapM parseEntry (T.splitOn "," (T.strip t))
   where
     isEmptyText = T.null . T.strip
 
@@ -161,11 +172,11 @@ renderGtidEntry (GtidEntry uuid mTag ivs) =
 
 -- | Render a GtidSet to a GTID set string (comma-separated).
 renderGtidSet :: GtidSet -> Text
-renderGtidSet (GtidSet entries) = T.intercalate "," (map renderGtidEntry entries)
+renderGtidSet (UnsafeGtidSet entries) = T.intercalate "," (map renderGtidEntry entries)
 
 -- | Returns the total number of transactions in a GtidSet.
 gtidTransactionCount :: GtidSet -> Integer
-gtidTransactionCount (GtidSet entries) = sum
+gtidTransactionCount (UnsafeGtidSet entries) = sum
   [ getTransactionId (giEnd iv) - getTransactionId (giStart iv) + 1
   | entry <- entries
   , iv    <- geIntervals entry

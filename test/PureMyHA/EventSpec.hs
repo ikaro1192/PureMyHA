@@ -17,7 +17,7 @@ testFdc :: FailureDetectionConfig
 testFdc = FailureDetectionConfig 300 (AtLeastOne 3)
 
 testFc :: FailoverConfig
-testFc = FailoverConfig True 1 [] 60 False Nothing [] False
+testFc = FailoverConfig AutoFailoverOn 1 [] 60 FenceManual Nothing [] AllowUnobserved
 
 testMc :: MonitoringConfig
 testMc = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
@@ -28,11 +28,11 @@ mkTopo nodes = ClusterTopology
   , ctNodes                 = nodes
   , ctSourceNodeId          = Nothing
   , ctHealth                = Healthy
-  , ctObservedHealthy       = True
+  , ctObservedHealthy       = HasBeenObservedHealthy
   , ctRecoveryBlockedUntil  = Nothing
   , ctLastFailoverAt        = Nothing
-  , ctPaused                = False
-  , ctTopologyDrift         = False
+  , ctPaused                = Running
+  , ctTopologyDrift         = NoDrift
   , ctLastEmergencyCheckAt  = Nothing
   }
 
@@ -87,20 +87,20 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
       fmap nsConsecutiveFailures mNs `shouldBe` Just 3
 
     it "preserves nsPaused from current state" $ do
-      let paused = Map.adjust (\ns -> ns { nsPaused = True }) replicaId baseNodes
+      let paused = Map.adjust (\ns -> ns { nsPaused = Paused }) replicaId baseNodes
           topo = baseTopo { ctNodes = paused }
           event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
-      fmap nsPaused mNs `shouldBe` Just True
+      fmap nsPaused mNs `shouldBe` Just Paused
 
     it "preserves nsFenced from current state" $ do
-      let fenced = Map.adjust (\ns -> ns { nsFenced = True }) replicaId baseNodes
+      let fenced = Map.adjust (\ns -> ns { nsFenced = Fenced }) replicaId baseNodes
           topo = baseTopo { ctNodes = fenced }
           event = NodeProbed replicaId (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet) emptyGtidSet fixedTime
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
           mNs = Map.lookup replicaId (ctNodes newTopo)
-      fmap nsFenced mNs `shouldBe` Just True
+      fmap nsFenced mNs `shouldBe` Just Fenced
 
     it "preserves nsRole during recovery block" $ do
       let -- Replica was promoted to Source by failover, recovery block active
@@ -197,8 +197,8 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
   describe "applyEvent TopologyRefreshed" $ do
     it "preserves daemon-managed fields from old topology" $ do
       let topo = (mkTopo clusterHealthy)
-            { ctPaused = True
-            , ctTopologyDrift = True
+            { ctPaused = Paused
+            , ctTopologyDrift = DriftDetected
             , ctRecoveryBlockedUntil = Just fixedTime
             , ctHealth = DeadSource
             , ctSourceNodeId = Just sourceId
@@ -207,8 +207,8 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
           newTopo' = mkTopo clusterHealthy
           event = TopologyRefreshed newTopo'
           (merged, _) = applyEvent testFdc testFc testMc topo event
-      ctPaused merged `shouldBe` True
-      ctTopologyDrift merged `shouldBe` True
+      ctPaused merged `shouldBe` Paused
+      ctTopologyDrift merged `shouldBe` DriftDetected
       ctRecoveryBlockedUntil merged `shouldBe` Just fixedTime
       ctHealth merged `shouldBe` DeadSource
       ctSourceNodeId merged `shouldBe` Just sourceId
@@ -217,59 +217,59 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
   describe "applyEvent TopologyDriftUpdated" $ do
     it "emits drift hook on False -> True transition" $ do
       let topo = mkTopo clusterHealthy
-          event = TopologyDriftUpdated True [MissingNode (HostName "missing-host")]
+          event = TopologyDriftUpdated DriftDetected [MissingNode (HostName "missing-host")]
           (_, effects) = applyEvent testFdc testFc testMc topo event
           hooks = [e | FireHookEffect e _ <- effects]
       hooks `shouldSatisfy` (not . null)
       hooks `shouldBe` [OnTopologyDrift "missing_node" "missing-host"]
 
     it "does not emit hook on True -> True (no transition)" $ do
-      let topo = (mkTopo clusterHealthy) { ctTopologyDrift = True }
-          event = TopologyDriftUpdated True [MissingNode (HostName "missing-host")]
+      let topo = (mkTopo clusterHealthy) { ctTopologyDrift = DriftDetected }
+          event = TopologyDriftUpdated DriftDetected [MissingNode (HostName "missing-host")]
           (_, effects) = applyEvent testFdc testFc testMc topo event
       [e | FireHookEffect e _ <- effects] `shouldBe` []
 
   describe "applyEvent simple events" $ do
-    it "NodeFenced sets nsFenced = True" $ do
+    it "NodeFenced sets nsFenced = Fenced" $ do
       let topo = mkTopo clusterHealthy
           event = NodeFenced sourceId
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
-      fmap nsFenced (Map.lookup sourceId (ctNodes newTopo)) `shouldBe` Just True
+      fmap nsFenced (Map.lookup sourceId (ctNodes newTopo)) `shouldBe` Just Fenced
 
-    it "NodeUnfenced sets nsFenced = False" $ do
-      let fencedNodes = Map.adjust (\ns -> ns { nsFenced = True }) sourceId clusterHealthy
+    it "NodeUnfenced sets nsFenced = Unfenced" $ do
+      let fencedNodes = Map.adjust (\ns -> ns { nsFenced = Fenced }) sourceId clusterHealthy
           topo = mkTopo fencedNodes
           event = NodeUnfenced sourceId
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
-      fmap nsFenced (Map.lookup sourceId (ctNodes newTopo)) `shouldBe` Just False
+      fmap nsFenced (Map.lookup sourceId (ctNodes newTopo)) `shouldBe` Just Unfenced
 
-    it "ReplicaPaused sets nsPaused = True" $ do
+    it "ReplicaPaused sets nsPaused = Paused" $ do
       let topo = mkTopo clusterHealthy
           event = ReplicaPaused replicaId
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
-      fmap nsPaused (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just True
+      fmap nsPaused (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just Paused
 
-    it "ReplicaResumed sets nsPaused = False" $ do
-      let pausedNodes = Map.adjust (\ns -> ns { nsPaused = True }) replicaId clusterHealthy
+    it "ReplicaResumed sets nsPaused = Running" $ do
+      let pausedNodes = Map.adjust (\ns -> ns { nsPaused = Paused }) replicaId clusterHealthy
           topo = mkTopo pausedNodes
           event = ReplicaResumed replicaId
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
-      fmap nsPaused (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just False
+      fmap nsPaused (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just Running
 
     it "RecoveryBlockCleared clears ctRecoveryBlockedUntil" $ do
       let topo = (mkTopo clusterHealthy) { ctRecoveryBlockedUntil = Just fixedTime }
           (newTopo, _) = applyEvent testFdc testFc testMc topo RecoveryBlockCleared
       ctRecoveryBlockedUntil newTopo `shouldBe` Nothing
 
-    it "FailoverPaused sets ctPaused = True" $ do
+    it "FailoverPaused sets ctPaused = Paused" $ do
       let topo = mkTopo clusterHealthy
           (newTopo, _) = applyEvent testFdc testFc testMc topo FailoverPaused
-      ctPaused newTopo `shouldBe` True
+      ctPaused newTopo `shouldBe` Paused
 
-    it "FailoverResumed sets ctPaused = False" $ do
-      let topo = (mkTopo clusterHealthy) { ctPaused = True }
+    it "FailoverResumed sets ctPaused = Running" $ do
+      let topo = (mkTopo clusterHealthy) { ctPaused = Paused }
           (newTopo, _) = applyEvent testFdc testFc testMc topo FailoverResumed
-      ctPaused newTopo `shouldBe` False
+      ctPaused newTopo `shouldBe` Running
 
     it "NodeDemoted sets role to Replica" $ do
       let topo = mkTopo clusterHealthy
@@ -279,7 +279,7 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
 
     it "SwitchoverCommitted swaps roles" $ do
       let topo = mkTopo clusterHealthy
-          event = SwitchoverCommitted replicaId (Just sourceId)
+          event = SwitchoverCommitted (Promoted sourceId replicaId)
           (newTopo, _) = applyEvent testFdc testFc testMc topo event
       fmap nsRole (Map.lookup sourceId (ctNodes newTopo)) `shouldBe` Just Replica
       fmap nsRole (Map.lookup replicaId (ctNodes newTopo)) `shouldBe` Just Source
@@ -287,9 +287,9 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
   -- E2E scenario: chain events to simulate full failover lifecycle
   describe "Failover E2E scenario" $ do
     it "promoted SOURCE shows Healthy immediately after failover and through recovery" $ do
-      let db1 = NodeId "db1" 3306
-          db2 = NodeId "db2" 3306
-          db3 = NodeId "db3" 3306
+      let db1 = unsafeNodeId "db1" 3306
+          db2 = unsafeNodeId "db2" 3306
+          db3 = unsafeNodeId "db3" 3306
           -- Use threshold=1 so probe failures trigger immediately
           fdc1 = testFdc { fdcConsecutiveFailuresForDead = AtLeastOne 1 }
 
@@ -302,9 +302,9 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
                 , nsHealth              = ReplicaIOConnecting
                 , nsProbeResult         = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOConnecting "uuid1:1-100")) emptyGtidSet
                 , nsErrantGtids         = emptyGtidSet
-                , nsPaused              = False
+                , nsPaused              = Running
                 , nsConsecutiveFailures = 0
-                , nsFenced              = False
+                , nsFenced              = Unfenced
                 })
             , (db3, mkNodeState db3 Replica (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) Healthy)
             ]

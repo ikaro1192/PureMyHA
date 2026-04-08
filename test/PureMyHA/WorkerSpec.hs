@@ -9,12 +9,12 @@ import Test.Hspec
 import Data.Time (addUTCTime)
 import Fixtures
 import Data.List.NonEmpty (NonEmpty ((:|)))
-import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), Port (..), PositiveDuration (..), AtLeastOne (..))
+import PureMyHA.Config (ClusterConfig (..), NodeConfig (..), Credentials (..), FailoverConfig (..), MonitoringConfig (..), FailureDetectionConfig (..), PositiveDuration (..), AtLeastOne (..), AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..))
 import PureMyHA.Env (runApp)
 import qualified Data.Set as Set
-import PureMyHA.Supervisor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv, mergeNodeState, detectTopologyDrift, mergeTopology, computeNewNodes, computeDriftConditions)
+import PureMyHA.Supervisor.Worker (suppressBelowThreshold, enrichErrantGtids, computeStaleNodes, pruneStaleWorkers, detectAndPruneStaleWorkers, probeTimeoutMicros, buildLagHookEnv, mergeNodeState, detectTopologyDrift, mergeTopology, computeNewNodes, computeDriftConditions, WorkerRegistry (..))
 import PureMyHA.Supervisor.Event (decideClusterActions)
-import PureMyHA.Hook (HookEnv (..))
+import PureMyHA.Hook (HookEnv (..), SourceChange (..))
 import PureMyHA.Topology.Discovery (buildClusterTopology)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
 import PureMyHA.Types
@@ -27,21 +27,21 @@ testCC = ClusterConfig
   , ccReplicationCredentials = Nothing
   , ccMonitoring             = MonitoringConfig (PositiveDuration 3) (PositiveDuration 5) 30 60 300 (AtLeastOne 1) 1
   , ccFailureDetection       = FailureDetectionConfig 3600 (AtLeastOne 3)
-  , ccFailover               = FailoverConfig True 1 [] 60 False Nothing [] False
+  , ccFailover               = FailoverConfig AutoFailoverOn 1 [] 60 FenceManual Nothing [] AllowUnobserved
   , ccHooks                  = Nothing
   , ccTLS                    = Nothing
   }
 
 testFC :: FailoverConfig
 testFC = FailoverConfig
-  { fcAutoFailover                   = True
+  { fcAutoFailover                   = AutoFailoverOn
   , fcMinReplicasForFailover         = 1
   , fcCandidatePriority              = []
   , fcWaitRelayLogTimeout            = 60
-  , fcAutoFence                      = False
+  , fcAutoFence                      = FenceManual
   , fcMaxReplicaLagForCandidate      = Nothing
   , fcNeverPromote                   = []
-  , fcFailoverWithoutObservedHealthy = False
+  , fcFailoverWithoutObservedHealthy = RequireObservedHealthy
   }
 
 spec :: Spec
@@ -63,7 +63,7 @@ spec = do
     it "returns ns unchanged when monitored node is unreachable (skips TCP connect)" $ do
       tvar <- newDaemonState
       let topo = (buildClusterTopology 1 "main" clusterWithDeadSource)
-                   { ctSourceNodeId = Just (NodeId "db1" 3306) }
+                   { ctSourceNodeId = Just (unsafeNodeId "db1" 3306) }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env (enrichErrantGtids unreachableReplica)
@@ -72,7 +72,7 @@ spec = do
     it "returns ns unchanged when source is unreachable (skips TCP connect)" $ do
       tvar <- newDaemonState
       let topo = (buildClusterTopology 1 "main" clusterWithDeadSource)
-                   { ctSourceNodeId = Just (NodeId "db1" 3306) }
+                   { ctSourceNodeId = Just (unsafeNodeId "db1" 3306) }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env (enrichErrantGtids healthyReplica)
@@ -132,10 +132,10 @@ spec = do
         `shouldBe` errNs { nsHealth = NodeUnreachable "prior err" }
 
   describe "computeStaleNodes" $ do
-    let db1 = NodeId "db1" 3306
-        db2 = NodeId "db2" 3306
-        db3 = NodeId "db3" 3306
-        db4 = NodeId "db4" 3306
+    let db1 = unsafeNodeId "db1" 3306
+        db2 = unsafeNodeId "db2" 3306
+        db3 = unsafeNodeId "db3" 3306
+        db4 = unsafeNodeId "db4" 3306
 
     it "returns empty when all known nodes are in discovered set" $
       computeStaleNodes (Set.fromList [db1, db2]) (Set.fromList [db1, db2]) Set.empty
@@ -166,16 +166,16 @@ spec = do
         `shouldBe` Set.fromList [db3, db4]
 
   describe "pruneStaleWorkers" $ do
-    let db1 = NodeId "db1" 3306
-        db2 = NodeId "db2" 3306
-        db3 = NodeId "db3" 3306
+    let db1 = unsafeNodeId "db1" 3306
+        db2 = unsafeNodeId "db2" 3306
+        db3 = unsafeNodeId "db3" 3306
 
     it "removes stale worker from registry and cancels its async" $ do
       a1 <- async (threadDelay maxBound)
       a2 <- async (threadDelay maxBound)
-      reg <- newTVarIO (Map.fromList [(db1, a1), (db2, a2)])
+      reg <- WorkerRegistry <$> newTVarIO (Map.fromList [(db1, a1), (db2, a2)])
       pruneStaleWorkers reg [db2]
-      registry <- readTVarIO reg
+      registry <- readTVarIO (unWorkerRegistry reg)
       Map.keys registry `shouldBe` [db1]
       result <- try @SomeException (wait a2)
       case result of
@@ -184,84 +184,83 @@ spec = do
 
     it "does nothing when staleNodes list is empty" $ do
       a1 <- async (threadDelay maxBound)
-      reg <- newTVarIO (Map.fromList [(db1, a1)])
+      reg <- WorkerRegistry <$> newTVarIO (Map.fromList [(db1, a1)])
       pruneStaleWorkers reg []
-      registry <- readTVarIO reg
+      registry <- readTVarIO (unWorkerRegistry reg)
       Map.size registry `shouldBe` 1
 
     it "handles NodeId not in registry without error" $ do
-      reg <- newTVarIO Map.empty
+      reg <- WorkerRegistry <$> newTVarIO Map.empty
       pruneStaleWorkers reg [db3]
-      registry <- readTVarIO reg
+      registry <- readTVarIO (unWorkerRegistry reg)
       Map.size registry `shouldBe` 0
 
     it "prunes multiple stale workers" $ do
       a1 <- async (threadDelay maxBound)
       a2 <- async (threadDelay maxBound)
       a3 <- async (threadDelay maxBound)
-      reg <- newTVarIO (Map.fromList [(db1, a1), (db2, a2), (db3, a3)])
+      reg <- WorkerRegistry <$> newTVarIO (Map.fromList [(db1, a1), (db2, a2), (db3, a3)])
       pruneStaleWorkers reg [db2, db3]
-      registry <- readTVarIO reg
+      registry <- readTVarIO (unWorkerRegistry reg)
       Map.keys registry `shouldBe` [db1]
 
   describe "detectAndPruneStaleWorkers" $ do
-    let db1 = NodeId "db1" 3306
-        db2 = NodeId "db2" 3306
-        db3 = NodeId "db3" 3306
+    let db1 = unsafeNodeId "db1" 3306
+        db2 = unsafeNodeId "db2" 3306
+        db3 = unsafeNodeId "db3" 3306
         ccWith nodes = testCC { ccNodes = nodes }
 
     it "detects and prunes stale nodes not in discovered or configured sets" $ do
       a1 <- async (threadDelay maxBound)
       a2 <- async (threadDelay maxBound)
       a3 <- async (threadDelay maxBound)
-      reg <- newTVarIO (Map.fromList [(db1, a1), (db2, a2), (db3, a3)])
+      reg <- WorkerRegistry <$> newTVarIO (Map.fromList [(db1, a1), (db2, a2), (db3, a3)])
       let discovered = Set.singleton db1
           cc = ccWith (NodeConfig "db2" (Port 3306) :| [])
       stale <- detectAndPruneStaleWorkers reg cc discovered
       stale `shouldBe` [db3]
-      registry <- readTVarIO reg
+      registry <- readTVarIO (unWorkerRegistry reg)
       Map.keys registry `shouldMatchList` [db1, db2]
 
     it "returns empty list when no nodes are stale" $ do
       a1 <- async (threadDelay maxBound)
       a2 <- async (threadDelay maxBound)
-      reg <- newTVarIO (Map.fromList [(db1, a1), (db2, a2)])
+      reg <- WorkerRegistry <$> newTVarIO (Map.fromList [(db1, a1), (db2, a2)])
       let discovered = Set.fromList [db1, db2]
       stale <- detectAndPruneStaleWorkers reg testCC discovered
       stale `shouldBe` []
-      registry <- readTVarIO reg
+      registry <- readTVarIO (unWorkerRegistry reg)
       Map.size registry `shouldBe` 2
 
     it "preserves configured seed nodes even if not discovered" $ do
       a1 <- async (threadDelay maxBound)
       a2 <- async (threadDelay maxBound)
-      reg <- newTVarIO (Map.fromList [(db1, a1), (db2, a2)])
+      reg <- WorkerRegistry <$> newTVarIO (Map.fromList [(db1, a1), (db2, a2)])
       let discovered = Set.singleton db1
           cc = ccWith (NodeConfig "db2" (Port 3306) :| [])
       stale <- detectAndPruneStaleWorkers reg cc discovered
       stale `shouldBe` []
-      registry <- readTVarIO reg
+      registry <- readTVarIO (unWorkerRegistry reg)
       Map.size registry `shouldBe` 2
 
   describe "buildLagHookEnv" $ do
 
     it "sets hookNode to the node's host" $
-      hookNode (buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z")
+      hookNode (buildLagHookEnv "main" (unsafeNodeId "db2" 3306) "2026-01-01T00:00:00Z")
         `shouldBe` Just "db2"
 
-    it "does not set hookNewSource, hookOldSource, hookFailureType, or hookLagSeconds" $ do
-      let e = buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z"
-      hookNewSource   e `shouldBe` Nothing
-      hookOldSource   e `shouldBe` Nothing
-      hookFailureType e `shouldBe` Nothing
-      hookLagSeconds  e `shouldBe` Nothing
+    it "leaves hookSourceChange as NoSourceChange and clears hookFailureType / hookLagSeconds" $ do
+      let e = buildLagHookEnv "main" (unsafeNodeId "db2" 3306) "2026-01-01T00:00:00Z"
+      hookSourceChange e `shouldBe` NoSourceChange
+      hookFailureType  e `shouldBe` Nothing
+      hookLagSeconds   e `shouldBe` Nothing
 
     it "sets hookClusterName correctly" $
-      hookClusterName (buildLagHookEnv "main" (NodeId "db2" 3306) "ts")
+      hookClusterName (buildLagHookEnv "main" (unsafeNodeId "db2" 3306) "ts")
         `shouldBe` "main"
 
     it "sets hookTimestamp correctly" $
-      hookTimestamp (buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z")
+      hookTimestamp (buildLagHookEnv "main" (unsafeNodeId "db2" 3306) "2026-01-01T00:00:00Z")
         `shouldBe` "2026-01-01T00:00:00Z"
 
   describe "detectTopologyDrift" $ do
@@ -302,7 +301,7 @@ spec = do
 
     it "preserves Source role from old when new has ProbeFailure (Replica)" $ do
       -- Simulates topology refresh discovering the dead source as Replica
-      let new = (unreachableNode (NodeId (mkHostInfoFromName "db1") 3306))
+      let new = (unreachableNode (unsafeNodeId (mkHostInfoFromName "db1") 3306))
                   { nsRole = Replica }
           old = healthySource
       nsRole (mergeNodeState new old) `shouldBe` Source
@@ -319,7 +318,7 @@ spec = do
       nsRole (mergeNodeState new old) `shouldBe` Replica
 
   describe "decideClusterActions" $ do
-    let mkTopo :: NodeHealth -> Bool -> ClusterTopology
+    let mkTopo :: NodeHealth -> ObservationState -> ClusterTopology
         mkTopo health obs = ClusterTopology
           { ctClusterName          = "test"
           , ctNodes                = Map.empty
@@ -328,79 +327,79 @@ spec = do
           , ctObservedHealthy      = obs
           , ctRecoveryBlockedUntil = Nothing
           , ctLastFailoverAt       = Nothing
-          , ctPaused               = False
-          , ctTopologyDrift        = False
+          , ctPaused               = Running
+          , ctTopologyDrift        = NoDrift
           , ctLastEmergencyCheckAt = Nothing
           }
-        fcWithFence = testFC { fcAutoFence = True }
+        fcWithFence = testFC { fcAutoFence = FenceAuto }
 
     -- FireHook tests (transition only)
     it "fires OnFailureDetection hook on transition to DeadSource" $
-      decideClusterActions testFC (mkTopo Healthy True) DeadSource (Just fixedTime) 3
+      decideClusterActions testFC (mkTopo Healthy HasBeenObservedHealthy) DeadSource (Just fixedTime) 3
         `shouldContain` [FireHook (OnFailureDetection "DeadSource")]
 
     it "fires OnFailureDetection hook on transition to InsufficientQuorum" $
-      decideClusterActions testFC (mkTopo Healthy True) InsufficientQuorum (Just fixedTime) 3
+      decideClusterActions testFC (mkTopo Healthy HasBeenObservedHealthy) InsufficientQuorum (Just fixedTime) 3
         `shouldContain` [FireHook (OnFailureDetection "InsufficientQuorum")]
 
     it "fires OnFailureDetection hook on transition to DeadSourceAndAllReplicas" $
-      decideClusterActions testFC (mkTopo Healthy True) DeadSourceAndAllReplicas (Just fixedTime) 3
+      decideClusterActions testFC (mkTopo Healthy HasBeenObservedHealthy) DeadSourceAndAllReplicas (Just fixedTime) 3
         `shouldContain` [FireHook (OnFailureDetection "DeadSourceAndAllReplicas")]
 
     it "does not fire hook when health has not transitioned" $
-      filter isFireHook (decideClusterActions testFC (mkTopo DeadSource True) DeadSource (Just fixedTime) 3)
+      filter isFireHook (decideClusterActions testFC (mkTopo DeadSource HasBeenObservedHealthy) DeadSource (Just fixedTime) 3)
         `shouldBe` []
 
     -- TriggerAutoFailover tests
     it "triggers auto-failover on transition to DeadSource when enabled and observed healthy" $
-      decideClusterActions testFC (mkTopo Healthy True) DeadSource (Just fixedTime) 3
+      decideClusterActions testFC (mkTopo Healthy HasBeenObservedHealthy) DeadSource (Just fixedTime) 3
         `shouldContain` [TriggerAutoFailover]
 
     it "triggers auto-failover even without transition (resume-failover)" $
-      decideClusterActions testFC (mkTopo DeadSource True) DeadSource (Just fixedTime) 3
+      decideClusterActions testFC (mkTopo DeadSource HasBeenObservedHealthy) DeadSource (Just fixedTime) 3
         `shouldContain` [TriggerAutoFailover]
 
     it "does not trigger auto-failover when disabled" $
-      decideClusterActions (testFC { fcAutoFailover = False }) (mkTopo Healthy True) DeadSource (Just fixedTime) 3
+      decideClusterActions (testFC { fcAutoFailover = AutoFailoverOff }) (mkTopo Healthy HasBeenObservedHealthy) DeadSource (Just fixedTime) 3
         `shouldNotContain` [TriggerAutoFailover]
 
     it "does not trigger auto-failover when not observed healthy" $
-      decideClusterActions testFC (mkTopo (NodeUnreachable "err") False) DeadSource (Just fixedTime) 3
+      decideClusterActions testFC (mkTopo (NodeUnreachable "err") NeverObservedHealthy) DeadSource (Just fixedTime) 3
         `shouldNotContain` [TriggerAutoFailover]
 
     it "triggers auto-failover without observed healthy when failover_without_observed_healthy is true" $
-      decideClusterActions (testFC { fcFailoverWithoutObservedHealthy = True })
-        (mkTopo (NodeUnreachable "err") False) DeadSource (Just fixedTime) 3
+      decideClusterActions (testFC { fcFailoverWithoutObservedHealthy = AllowUnobserved })
+        (mkTopo (NodeUnreachable "err") NeverObservedHealthy) DeadSource (Just fixedTime) 3
         `shouldContain` [TriggerAutoFailover]
 
     -- TriggerAutoFence tests
     it "triggers auto-fence on transition to SplitBrainSuspected when enabled and observed healthy" $
-      decideClusterActions fcWithFence (mkTopo Healthy True) SplitBrainSuspected (Just fixedTime) 3
+      decideClusterActions fcWithFence (mkTopo Healthy HasBeenObservedHealthy) SplitBrainSuspected (Just fixedTime) 3
         `shouldContain` [TriggerAutoFence]
 
     it "does not trigger auto-fence without transition" $
-      decideClusterActions fcWithFence (mkTopo SplitBrainSuspected True) SplitBrainSuspected (Just fixedTime) 3
+      decideClusterActions fcWithFence (mkTopo SplitBrainSuspected HasBeenObservedHealthy) SplitBrainSuspected (Just fixedTime) 3
         `shouldNotContain` [TriggerAutoFence]
 
     -- TriggerEmergencyReplicaCheck tests
     it "triggers emergency replica check on first detection (no prior check)" $
-      decideClusterActions testFC (mkTopo Healthy True) UnreachableSource (Just fixedTime) 3
+      decideClusterActions testFC (mkTopo Healthy HasBeenObservedHealthy) UnreachableSource (Just fixedTime) 3
         `shouldContain` [TriggerEmergencyReplicaCheck]
 
     it "does not trigger emergency replica check when cooldown has not elapsed" $ do
-      let topo = (mkTopo UnreachableSource True) { ctLastEmergencyCheckAt = Just fixedTime }
+      let topo = (mkTopo UnreachableSource HasBeenObservedHealthy) { ctLastEmergencyCheckAt = Just fixedTime }
       decideClusterActions testFC topo UnreachableSource (Just fixedTime) 3
         `shouldNotContain` [TriggerEmergencyReplicaCheck]
 
     it "triggers emergency replica check when cooldown has elapsed" $ do
-      let topo = (mkTopo UnreachableSource True) { ctLastEmergencyCheckAt = Just fixedTime }
+      let topo = (mkTopo UnreachableSource HasBeenObservedHealthy) { ctLastEmergencyCheckAt = Just fixedTime }
           laterTime = addUTCTime 5 fixedTime  -- 5s > 3s interval
       decideClusterActions testFC topo UnreachableSource (Just laterTime) 3
         `shouldContain` [TriggerEmergencyReplicaCheck]
 
     -- Empty actions
     it "returns empty list when health stays Healthy" $
-      decideClusterActions testFC (mkTopo Healthy True) Healthy (Just fixedTime) 3
+      decideClusterActions testFC (mkTopo Healthy HasBeenObservedHealthy) Healthy (Just fixedTime) 3
         `shouldBe` []
 
   describe "mergeTopology" $ do
@@ -409,11 +408,11 @@ spec = do
           , ctNodes                = nodes
           , ctSourceNodeId         = Nothing
           , ctHealth               = Healthy
-          , ctObservedHealthy      = False
+          , ctObservedHealthy      = NeverObservedHealthy
           , ctRecoveryBlockedUntil = Nothing
           , ctLastFailoverAt       = Nothing
-          , ctPaused               = False
-          , ctTopologyDrift        = False
+          , ctPaused               = Running
+          , ctTopologyDrift        = NoDrift
           , ctLastEmergencyCheckAt = Nothing
           }
 
@@ -441,9 +440,9 @@ spec = do
       Map.size (ctNodes merged) `shouldBe` 2
 
   describe "computeNewNodes" $ do
-    let db1 = NodeId "db1" 3306
-        db2 = NodeId "db2" 3306
-        db3 = NodeId "db3" 3306
+    let db1 = unsafeNodeId "db1" 3306
+        db2 = unsafeNodeId "db2" 3306
+        db3 = unsafeNodeId "db3" 3306
 
     it "returns nodes in discovered but not in known" $
       computeNewNodes (Set.fromList [db1, db2, db3]) (Set.fromList [db1])
@@ -463,11 +462,11 @@ spec = do
           , ctNodes                = nodes
           , ctSourceNodeId         = Nothing
           , ctHealth               = Healthy
-          , ctObservedHealthy      = True
+          , ctObservedHealthy      = HasBeenObservedHealthy
           , ctRecoveryBlockedUntil = Nothing
           , ctLastFailoverAt       = Nothing
-          , ctPaused               = False
-          , ctTopologyDrift        = False
+          , ctPaused               = Running
+          , ctTopologyDrift        = NoDrift
           , ctLastEmergencyCheckAt = Nothing
           }
         ccWith nodes fc = testCC { ccNodes = nodes, ccFailover = fc }
@@ -488,7 +487,7 @@ spec = do
       computeDriftConditions cc topo `shouldContain` [ReplicaCountBelowThreshold 0 1]
 
     it "excludes unreachable nodes from discovered hosts" $ do
-      let db2id = NodeId (mkHostInfoFromName "db2") 3306
+      let db2id = unsafeNodeId (mkHostInfoFromName "db2") 3306
           cc = ccWith (NodeConfig "db1" (Port 3306) :| [NodeConfig "db2" (Port 3306)]) (testFC { fcMinReplicasForFailover = 0 })
           topo = mkTopo (Map.fromList [(nsNodeId healthySource, healthySource), (db2id, unreachableNode db2id)])
       -- db2 is in the topology but unreachable, so it should be missing from discovered hosts

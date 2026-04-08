@@ -13,6 +13,7 @@ module PureMyHA.Logger
   ) where
 
 import Control.Concurrent.STM (TVar, atomically, newTVarIO, readTVarIO, writeTVar)
+import Control.Monad (void, when)
 import Data.Text (Text)
 import Katip
 import PureMyHA.Config (LogLevel (..))
@@ -37,9 +38,7 @@ initLogger logFile level = do
   pure (Logger le' sevVar)
 
 closeLogger :: Logger -> IO ()
-closeLogger (Logger le _) = do
-  _ <- closeScribes le
-  pure ()
+closeLogger (Logger le _) = void (closeScribes le)
 
 -- | Reopen the log file (e.g. after log rotation via SIGUSR1).
 -- Reuses the existing severity TVar so any runtime log level override is preserved.
@@ -62,9 +61,8 @@ setLogLevel (Logger _ sevVar) level =
 logAt :: Logger -> Severity -> Text -> IO ()
 logAt (Logger le sevVar) sev msg = do
   minSev <- readTVarIO sevVar
-  if sev >= minSev
-    then runKatipT le $ logMsg "puremyha" sev (logStr msg)
-    else pure ()
+  when (sev >= minSev) $
+    runKatipT le $ logMsg "puremyha" sev (logStr msg)
 
 logDebug :: Logger -> Text -> IO ()
 logDebug l = logAt l DebugS
