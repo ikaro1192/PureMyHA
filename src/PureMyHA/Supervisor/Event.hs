@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE StrictData #-}
 module PureMyHA.Supervisor.Event
   ( MonitorEvent (..)
@@ -109,7 +110,7 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
 
       -- 2. Consecutive failure counting (reducer owns this)
       prevFailures = maybe 0 nsConsecutiveFailures mOldNs
-      newFailures = case probeResult of
+      !newFailures = case probeResult of
         ProbeFailure{} -> prevFailures + 1
         ProbeSuccess{} -> 0
 
@@ -157,7 +158,7 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
         }
 
       -- 8. Update node map
-      newNodes = Map.insert nid finalNs (ctNodes ct)
+      !newNodes = Map.insert nid finalNs (ctNodes ct)
 
       -- 9. Below-threshold failure log
       belowThresholdLog
@@ -190,8 +191,8 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
 
       -- 12. Cluster-level health recomputation
       minReplicas = fcMinReplicasForFailover fc
-      newClusterHealth = detectClusterHealth minReplicas newNodes
-      newSrcId = identifySource (Map.elems newNodes)
+      !newClusterHealth = detectClusterHealth minReplicas newNodes
+      !newSrcId = identifySource (Map.elems newNodes)
       observedHealthy = case ctObservedHealthy ct of
         HasBeenObservedHealthy -> HasBeenObservedHealthy
         NeverObservedHealthy
@@ -215,7 +216,7 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
         ++ [TriggerActionEffect a | a <- clusterActions, isNotHook a]
 
       -- 15. Assemble new topology
-      newCt = ct
+      !newCt = ct
         { ctNodes           = newNodes
         , ctHealth          = newClusterHealth
         , ctSourceNodeId    = newSrcId
@@ -226,8 +227,8 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
               else ctLastEmergencyCheckAt ct
         }
 
-      allEffects = belowThresholdLog ++ nodeHealthLog ++ lagEffects
-                   ++ clusterHealthLog ++ clusterEffects
+      !allEffects = concat
+        [belowThresholdLog, nodeHealthLog, lagEffects, clusterHealthLog, clusterEffects]
 
   in (newCt, allEffects)
 
@@ -237,7 +238,7 @@ applyEvent _ _ _ ct (TopologyRefreshed newTopo) =
         (HasBeenObservedHealthy, _) -> HasBeenObservedHealthy
         (_, HasBeenObservedHealthy) -> HasBeenObservedHealthy
         _                           -> NeverObservedHealthy
-      merged = newTopo
+      !merged = newTopo
         { ctObservedHealthy      = mergedObserved
         , ctPaused               = ctPaused ct
         , ctTopologyDrift        = ctTopologyDrift ct
