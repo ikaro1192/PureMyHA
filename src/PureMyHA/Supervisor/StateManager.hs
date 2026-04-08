@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 module PureMyHA.Supervisor.StateManager
   ( newEventQueue
   , submitEvent
@@ -46,9 +47,10 @@ stateManager queue ctVar env emergencyCheck = forever $ do
     let fdc = envDetection env
         fc  = envFailover env
     mc <- readTVar (envMonitoring env)
-    let (new, effs) = applyEvent fdc fc mc old event
-    writeTVar ctVar new
-    pure effs
+    case applyEvent fdc fc mc old event of
+      (!new, !effs) -> do
+        writeTVar ctVar new
+        pure effs
   -- Dispatch ALL effects asynchronously — never block the event loop
   forM_ effects $ \eff -> case eff of
     FireHookEffect hookEvent mNodeId ->
@@ -61,13 +63,15 @@ stateManager queue ctVar env emergencyCheck = forever $ do
         TriggerAutoFence             -> runApp env runAutoFence
         TriggerEmergencyReplicaCheck -> emergencyCheck
         FireHook _                   -> pure ()  -- already handled by FireHookEffect
-    LogHealthTransition _clusterName msg ->
+    LogHealthTransition _clusterName msg -> do
+      let !prefix = "[" <> unClusterName (ccName (envCluster env)) <> "] "
+          !line   = prefix <> msg
+          !warn   = isWarnMessage msg
       void $ async $ do
         logger <- readTVarIO (envLogger env)
-        let prefix = "[" <> unClusterName (ccName (envCluster env)) <> "] "
-        if isWarnMessage msg
-          then logWarn logger (prefix <> msg)
-          else logInfo logger (prefix <> msg)
+        if warn
+          then logWarn logger line
+          else logInfo logger line
 
 -- | Execute a single hook action by dispatching to the appropriate hook script.
 executeHookAction :: Maybe HooksConfig -> ClusterName -> Maybe NodeId -> HookEvent -> IO ()
