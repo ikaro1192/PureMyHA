@@ -63,7 +63,7 @@ spec = do
     it "returns ns unchanged when monitored node is unreachable (skips TCP connect)" $ do
       tvar <- newDaemonState
       let topo = (buildClusterTopology 1 "main" clusterWithDeadSource)
-                   { ctSourceNodeId = Just (NodeId "db1" 3306) }
+                   { ctSourceNodeId = Just (unsafeNodeId "db1" 3306) }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env (enrichErrantGtids unreachableReplica)
@@ -72,7 +72,7 @@ spec = do
     it "returns ns unchanged when source is unreachable (skips TCP connect)" $ do
       tvar <- newDaemonState
       let topo = (buildClusterTopology 1 "main" clusterWithDeadSource)
-                   { ctSourceNodeId = Just (NodeId "db1" 3306) }
+                   { ctSourceNodeId = Just (unsafeNodeId "db1" 3306) }
       atomically $ updateClusterTopology tvar topo
       env <- mkTestEnv tvar testCC testFC
       result <- runApp env (enrichErrantGtids healthyReplica)
@@ -132,10 +132,10 @@ spec = do
         `shouldBe` errNs { nsHealth = NodeUnreachable "prior err" }
 
   describe "computeStaleNodes" $ do
-    let db1 = NodeId "db1" 3306
-        db2 = NodeId "db2" 3306
-        db3 = NodeId "db3" 3306
-        db4 = NodeId "db4" 3306
+    let db1 = unsafeNodeId "db1" 3306
+        db2 = unsafeNodeId "db2" 3306
+        db3 = unsafeNodeId "db3" 3306
+        db4 = unsafeNodeId "db4" 3306
 
     it "returns empty when all known nodes are in discovered set" $
       computeStaleNodes (Set.fromList [db1, db2]) (Set.fromList [db1, db2]) Set.empty
@@ -166,9 +166,9 @@ spec = do
         `shouldBe` Set.fromList [db3, db4]
 
   describe "pruneStaleWorkers" $ do
-    let db1 = NodeId "db1" 3306
-        db2 = NodeId "db2" 3306
-        db3 = NodeId "db3" 3306
+    let db1 = unsafeNodeId "db1" 3306
+        db2 = unsafeNodeId "db2" 3306
+        db3 = unsafeNodeId "db3" 3306
 
     it "removes stale worker from registry and cancels its async" $ do
       a1 <- async (threadDelay maxBound)
@@ -205,9 +205,9 @@ spec = do
       Map.keys registry `shouldBe` [db1]
 
   describe "detectAndPruneStaleWorkers" $ do
-    let db1 = NodeId "db1" 3306
-        db2 = NodeId "db2" 3306
-        db3 = NodeId "db3" 3306
+    let db1 = unsafeNodeId "db1" 3306
+        db2 = unsafeNodeId "db2" 3306
+        db3 = unsafeNodeId "db3" 3306
         ccWith nodes = testCC { ccNodes = nodes }
 
     it "detects and prunes stale nodes not in discovered or configured sets" $ do
@@ -246,21 +246,21 @@ spec = do
   describe "buildLagHookEnv" $ do
 
     it "sets hookNode to the node's host" $
-      hookNode (buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z")
+      hookNode (buildLagHookEnv "main" (unsafeNodeId "db2" 3306) "2026-01-01T00:00:00Z")
         `shouldBe` Just "db2"
 
     it "leaves hookSourceChange as NoSourceChange and clears hookFailureType / hookLagSeconds" $ do
-      let e = buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z"
+      let e = buildLagHookEnv "main" (unsafeNodeId "db2" 3306) "2026-01-01T00:00:00Z"
       hookSourceChange e `shouldBe` NoSourceChange
       hookFailureType  e `shouldBe` Nothing
       hookLagSeconds   e `shouldBe` Nothing
 
     it "sets hookClusterName correctly" $
-      hookClusterName (buildLagHookEnv "main" (NodeId "db2" 3306) "ts")
+      hookClusterName (buildLagHookEnv "main" (unsafeNodeId "db2" 3306) "ts")
         `shouldBe` "main"
 
     it "sets hookTimestamp correctly" $
-      hookTimestamp (buildLagHookEnv "main" (NodeId "db2" 3306) "2026-01-01T00:00:00Z")
+      hookTimestamp (buildLagHookEnv "main" (unsafeNodeId "db2" 3306) "2026-01-01T00:00:00Z")
         `shouldBe` "2026-01-01T00:00:00Z"
 
   describe "detectTopologyDrift" $ do
@@ -301,7 +301,7 @@ spec = do
 
     it "preserves Source role from old when new has ProbeFailure (Replica)" $ do
       -- Simulates topology refresh discovering the dead source as Replica
-      let new = (unreachableNode (NodeId (mkHostInfoFromName "db1") 3306))
+      let new = (unreachableNode (unsafeNodeId (mkHostInfoFromName "db1") 3306))
                   { nsRole = Replica }
           old = healthySource
       nsRole (mergeNodeState new old) `shouldBe` Source
@@ -440,9 +440,9 @@ spec = do
       Map.size (ctNodes merged) `shouldBe` 2
 
   describe "computeNewNodes" $ do
-    let db1 = NodeId "db1" 3306
-        db2 = NodeId "db2" 3306
-        db3 = NodeId "db3" 3306
+    let db1 = unsafeNodeId "db1" 3306
+        db2 = unsafeNodeId "db2" 3306
+        db3 = unsafeNodeId "db3" 3306
 
     it "returns nodes in discovered but not in known" $
       computeNewNodes (Set.fromList [db1, db2, db3]) (Set.fromList [db1])
@@ -487,7 +487,7 @@ spec = do
       computeDriftConditions cc topo `shouldContain` [ReplicaCountBelowThreshold 0 1]
 
     it "excludes unreachable nodes from discovered hosts" $ do
-      let db2id = NodeId (mkHostInfoFromName "db2") 3306
+      let db2id = unsafeNodeId (mkHostInfoFromName "db2") 3306
           cc = ccWith (NodeConfig "db1" (Port 3306) :| [NodeConfig "db2" (Port 3306)]) (testFC { fcMinReplicasForFailover = 0 })
           topo = mkTopo (Map.fromList [(nsNodeId healthySource, healthySource), (db2id, unreachableNode db2id)])
       -- db2 is in the topology but unreachable, so it should be missing from discovered hosts

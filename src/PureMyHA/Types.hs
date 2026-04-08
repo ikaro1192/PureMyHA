@@ -1,6 +1,11 @@
 {-# LANGUAGE StrictData #-}
 module PureMyHA.Types
-  ( NodeId (..)
+  ( NodeId
+  , nodeHostInfo
+  , nodePort
+  , mkNodeId
+  , unsafeNodeId
+  , NodeIdError (..)
   , nodeHost
   , nodeIPAddr
   , ClusterName (..)
@@ -102,10 +107,26 @@ instance IsString HostInfo where
 mkHostInfoFromName :: HostName -> HostInfo
 mkHostInfoFromName h = HostInfo h (IPAddr (unHostName h))
 
-data NodeId = NodeId
+data NodeId = UnsafeNodeId
   { nodeHostInfo :: HostInfo
   , nodePort     :: Int
   } deriving (Show, Generic)
+
+-- | Errors when constructing a 'NodeId'.
+data NodeIdError
+  = NodeIdPortOutOfRange Int
+  deriving (Eq, Show)
+
+-- | Smart constructor: validates that the TCP port is in 1..65535.
+mkNodeId :: HostInfo -> Int -> Either NodeIdError NodeId
+mkNodeId hi p
+  | p >= 1 && p <= 65535 = Right (UnsafeNodeId hi p)
+  | otherwise            = Left (NodeIdPortOutOfRange p)
+
+-- | Escape hatch that skips port validation. Should only be used in
+-- tests / fixtures where the port is a known-good literal.
+unsafeNodeId :: HostInfo -> Int -> NodeId
+unsafeNodeId = UnsafeNodeId
 
 instance Eq NodeId where
   a == b = hiIPAddr (nodeHostInfo a) == hiIPAddr (nodeHostInfo b) && nodePort a == nodePort b

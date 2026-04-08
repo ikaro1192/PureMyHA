@@ -24,7 +24,7 @@ import PureMyHA.Env (ClusterEnv (..))
 import PureMyHA.Logger (nullLogger)
 import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet, parseGtidSet)
 import PureMyHA.Topology.State (TVarDaemonState, newFailoverLock)
-import PureMyHA.Types
+import PureMyHA.Types hiding (mkNodeId)
 
 -- | Parse a GTID set from text, throwing an error on invalid input.
 -- Only for use in tests.
@@ -37,7 +37,7 @@ fixedTime :: UTCTime
 fixedTime = UTCTime (fromGregorian 2024 1 1) 0
 
 mkNodeId :: Text -> Int -> NodeId
-mkNodeId h p = NodeId (mkHostInfoFromName (HostName h)) p
+mkNodeId h p = unsafeNodeId (mkHostInfoFromName (HostName h)) p
 
 mkReplicaStatus :: Text -> Int -> IORunning -> Text -> ReplicaStatus
 mkReplicaStatus srcHost srcPort ioRunning execGtid = ReplicaStatus
@@ -121,7 +121,7 @@ unreachableNode nid = NodeState
   }
 
 unreachableReplica :: NodeState
-unreachableReplica = unreachableNode (NodeId (mkHostInfoFromName "db5") 3306)
+unreachableReplica = unreachableNode (unsafeNodeId (mkHostInfoFromName "db5") 3306)
 
 -- | Cluster where source is unreachable, replicas show IO=No
 clusterWithDeadSource :: Map NodeId NodeState

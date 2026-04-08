@@ -50,11 +50,11 @@ spec = do
       collectErrantGtids [] `shouldBe` []
 
     it "collects GTIDs from a single entry" $
-      collectErrantGtids [GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]]]
+      collectErrantGtids [unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]]]
         `shouldBe` [mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 1)]
 
     it "expands range across single replica" $
-      collectErrantGtids [GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 3)]]]
+      collectErrantGtids [unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 3)]]]
         `shouldBe` [ mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 1)
                     , mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 2)
                     , mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 3)
@@ -62,15 +62,15 @@ spec = do
 
     it "deduplicates identical GTIDs from two replicas" $
       collectErrantGtids
-        [ GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]]
-        , GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]]
+        [ unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]]
+        , unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]]
         ]
         `shouldBe` [mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 1)]
 
     it "collects GTIDs from multiple UUIDs" $
       collectErrantGtids
-        [ GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]]
-        , GtidSet [GtidEntry (GtidUUID "uuid2") Nothing [GtidInterval (TransactionId 2) (TransactionId 2)]]
+        [ unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]]
+        , unsafeGtidSet [GtidEntry (GtidUUID "uuid2") Nothing [GtidInterval (TransactionId 2) (TransactionId 2)]]
         ]
         `shouldBe` [ mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 1)
                     , mkSingleGtid (GtidUUID "uuid2") Nothing (TransactionId 2)
@@ -78,8 +78,8 @@ spec = do
 
     it "deduplicates partial overlap across replicas" $
       collectErrantGtids
-        [ GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 2)]]
-        , GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 2) (TransactionId 3)]]
+        [ unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 2)]]
+        , unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 2) (TransactionId 3)]]
         ]
         `shouldBe` [ mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 1)
                     , mkSingleGtid (GtidUUID "uuid1") Nothing (TransactionId 2)
@@ -88,7 +88,7 @@ spec = do
 
     it "handles one replica with multiple UUIDs" $
       collectErrantGtids
-        [ GtidSet
+        [ unsafeGtidSet
           [ GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]
           , GtidEntry (GtidUUID "uuid2") Nothing [GtidInterval (TransactionId 1) (TransactionId 1)]
           ]
@@ -118,8 +118,8 @@ spec = do
     it "returns count and source host when errant GTIDs exist" $ do
       tvar <- newDaemonState
       let nodes = Map.fromList
-            [ (NodeId "db1" 3306, healthySource)
-            , (NodeId "db3" 3306, replicaWithErrantGtid)
+            [ (unsafeNodeId "db1" 3306, healthySource)
+            , (unsafeNodeId "db3" 3306, replicaWithErrantGtid)
             ]
           topo = buildClusterTopology 1 "main" nodes
       atomically $ updateClusterTopology tvar topo

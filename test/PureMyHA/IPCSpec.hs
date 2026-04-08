@@ -86,7 +86,7 @@ spec = do
         `shouldBe` Just (RespOperation (OperationFailure "error"))
 
     it "round-trips RespErrantGtids" $ do
-      let info = ErrantGtidInfo (NodeId "db3" 3306) (unsafeParseGtidSet' "uuid3:1")
+      let info = ErrantGtidInfo (unsafeNodeId "db3" 3306) (unsafeParseGtidSet' "uuid3:1")
       roundTripResp (RespErrantGtids [info])
         `shouldBe` Just (RespErrantGtids [info])
 

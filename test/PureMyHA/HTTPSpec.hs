@@ -33,7 +33,7 @@ spec = do
     let ct = ClusterTopology
                 { ctClusterName          = "test"
                 , ctNodes                = clusterHealthy
-                , ctSourceNodeId         = Just (NodeId "db1" 3306)
+                , ctSourceNodeId         = Just (unsafeNodeId "db1" 3306)
                 , ctHealth               = Healthy
                 , ctObservedHealthy      = HasBeenObservedHealthy
                 , ctRecoveryBlockedUntil = Nothing
@@ -128,7 +128,7 @@ spec = do
       tvar <- newDaemonState
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterHealthy
-                , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
+                , ctSourceNodeId = Just (unsafeNodeId "db1" 3306), ctHealth = Healthy
                 , ctObservedHealthy = HasBeenObservedHealthy, ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing, ctPaused = Running
                 , ctTopologyDrift = NoDrift
@@ -148,7 +148,7 @@ spec = do
       tvar <- newDaemonState
       let ct = ClusterTopology
                 { ctClusterName = "test", ctNodes = clusterHealthy
-                , ctSourceNodeId = Just (NodeId "db1" 3306), ctHealth = Healthy
+                , ctSourceNodeId = Just (unsafeNodeId "db1" 3306), ctHealth = Healthy
                 , ctObservedHealthy = HasBeenObservedHealthy, ctRecoveryBlockedUntil = Nothing
                 , ctLastFailoverAt = Nothing, ctPaused = Running
                 , ctTopologyDrift = NoDrift
@@ -173,10 +173,10 @@ spec = do
   describe "lagVal edge case" $
     it "reports replication lag=-1 when rsSecondsBehindSource is Nothing" $ do
       let rs = (mkReplicaStatus "db1" 3306 IOYes "uuid1:1") { rsSecondsBehindSource = Nothing }
-          ns = mkNodeState (NodeId "db2" 3306) Replica (Just rs) Healthy
+          ns = mkNodeState (unsafeNodeId "db2" 3306) Replica (Just rs) Healthy
           ct = ClusterTopology
                 { ctClusterName = "test"
-                , ctNodes = Map.singleton (NodeId "db2" 3306) ns
+                , ctNodes = Map.singleton (unsafeNodeId "db2" 3306) ns
                 , ctSourceNodeId = Nothing
                 , ctHealth = Healthy
                 , ctObservedHealthy = HasBeenObservedHealthy

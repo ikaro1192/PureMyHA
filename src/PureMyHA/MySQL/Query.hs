@@ -122,7 +122,7 @@ showReplicas conn defaultPort = do
   let allHosts = srHosts ++ plHosts
   nodes <- mapM (\h -> do
     hi <- resolveHostInfo (HostName h)
-    pure (NodeId hi defaultPort)) allHosts
+    pure (unsafeNodeId hi defaultPort)) allHosts
   let deduped = nubBy (\a b -> a == b) nodes
   pure (deduped, expectedCount, allHosts)
 

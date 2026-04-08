@@ -27,8 +27,8 @@ emptyTopo = ClusterTopology
 
 healthyTopo :: ClusterTopology
 healthyTopo = emptyTopo
-  { ctNodes          = Map.fromList [(NodeId "db1" 3306, healthySource), (NodeId "db2" 3306, healthyReplica)]
-  , ctSourceNodeId   = Just (NodeId "db1" 3306)
+  { ctNodes          = Map.fromList [(unsafeNodeId "db1" 3306, healthySource), (unsafeNodeId "db2" 3306, healthyReplica)]
+  , ctSourceNodeId   = Just (unsafeNodeId "db1" 3306)
   , ctHealth         = Healthy
   , ctObservedHealthy = HasBeenObservedHealthy
   }
@@ -78,10 +78,10 @@ spec = do
 
     it "preserves ctSourceNodeId from previous topology" $ do
       tvar <- newDaemonState
-      seedCluster tvar healthyTopo  -- ctSourceNodeId = Just (NodeId "db1" 3306)
+      seedCluster tvar healthyTopo  -- ctSourceNodeId = Just (unsafeNodeId "db1" 3306)
       atomically $ updateClusterTopology tvar emptyTopo  -- ctSourceNodeId = Nothing
       mct <- getClusterTopology tvar "test"
-      fmap ctSourceNodeId mct `shouldBe` Just (Just (NodeId "db1" 3306))
+      fmap ctSourceNodeId mct `shouldBe` Just (Just (unsafeNodeId "db1" 3306))
 
   describe "readDaemonState" $
     it "reads multiple clusters" $ do

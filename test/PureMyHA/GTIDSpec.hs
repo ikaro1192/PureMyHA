@@ -60,14 +60,14 @@ spec = do
   describe "parseGtidSet (tagged)" $ do
     it "parses a tagged GTID entry" $ do
       let result = parseGtidSet "3e11fa47-71ca-11e1-9e33-c80aa9429562:my_tag:1-5"
-      result `shouldBe` Right (GtidSet
+      result `shouldBe` Right (unsafeGtidSet
         [ GtidEntry (GtidUUID "3e11fa47-71ca-11e1-9e33-c80aa9429562") (Just (GtidTag "my_tag"))
             [GtidInterval (TransactionId 1) (TransactionId 5)]
         ])
 
     it "parses tagged and untagged entries together" $ do
       let result = parseGtidSet "uuid1:tag1:1-5,uuid2:1-3"
-      result `shouldBe` Right (GtidSet
+      result `shouldBe` Right (unsafeGtidSet
         [ GtidEntry (GtidUUID "uuid1") (Just (GtidTag "tag1"))
             [GtidInterval (TransactionId 1) (TransactionId 5)]
         , GtidEntry (GtidUUID "uuid2") Nothing
@@ -76,7 +76,7 @@ spec = do
 
     it "parses tagged entry with single transaction" $ do
       let result = parseGtidSet "uuid1:_tag:42"
-      result `shouldBe` Right (GtidSet
+      result `shouldBe` Right (unsafeGtidSet
         [ GtidEntry (GtidUUID "uuid1") (Just (GtidTag "_tag"))
             [GtidInterval (TransactionId 42) (TransactionId 42)]
         ])
@@ -105,17 +105,17 @@ spec = do
       gtidTransactionCount emptyGtidSet `shouldBe` 0
 
     it "returns 1 for single transaction" $
-      gtidTransactionCount (GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 5) (TransactionId 5)]]) `shouldBe` 1
+      gtidTransactionCount (unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 5) (TransactionId 5)]]) `shouldBe` 1
 
     it "returns 5 for range 1-5" $
-      gtidTransactionCount (GtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 5)]]) `shouldBe` 5
+      gtidTransactionCount (unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 5)]]) `shouldBe` 5
 
     it "sums multiple intervals for same UUID" $
-      gtidTransactionCount (GtidSet [GtidEntry (GtidUUID "uuid1") Nothing
+      gtidTransactionCount (unsafeGtidSet [GtidEntry (GtidUUID "uuid1") Nothing
         [GtidInterval (TransactionId 1) (TransactionId 5), GtidInterval (TransactionId 7) (TransactionId 10)]]) `shouldBe` 9
 
     it "sums across multiple UUIDs" $
-      gtidTransactionCount (GtidSet
+      gtidTransactionCount (unsafeGtidSet
         [ GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 100)]
         , GtidEntry (GtidUUID "uuid2") Nothing [GtidInterval (TransactionId 1) (TransactionId 3)]
         ]) `shouldBe` 103
@@ -163,7 +163,7 @@ spec = do
       renderGtidSet emptyGtidSet `shouldBe` ""
 
     it "renders multiple entries" $
-      renderGtidSet (GtidSet
+      renderGtidSet (unsafeGtidSet
         [ GtidEntry (GtidUUID "u1") Nothing [GtidInterval (TransactionId 1) (TransactionId 5)]
         , GtidEntry (GtidUUID "u2") Nothing [GtidInterval (TransactionId 1) (TransactionId 3)]
         ])
@@ -189,7 +189,7 @@ spec = do
 
   describe "JSON roundtrip" $ do
     it "GtidSet ToJSON/FromJSON roundtrips" $ do
-      let gs = GtidSet
+      let gs = unsafeGtidSet
             [ GtidEntry (GtidUUID "uuid1") Nothing [GtidInterval (TransactionId 1) (TransactionId 5)]
             , GtidEntry (GtidUUID "uuid2") (Just (GtidTag "tag1")) [GtidInterval (TransactionId 1) (TransactionId 3)]
             ]
@@ -199,7 +199,7 @@ spec = do
   describe "roundtrip" $ do
     it "parse . renderGtidSet == Right for arbitrary entries" $
       property $ \entries ->
-        parseGtidSet (renderGtidSet (GtidSet entries)) === Right (GtidSet entries)
+        parseGtidSet (renderGtidSet (unsafeGtidSet entries)) === Right (unsafeGtidSet entries)
 
 instance Arbitrary TransactionId where
   arbitrary = TransactionId . getPositive <$> arbitrary

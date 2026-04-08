@@ -53,7 +53,7 @@ startMonitorWorkers = do
   env <- ask
   nodes <- liftIO $ mapM (\nc -> do
         hi <- resolveHostInfo (HostName (ncHost nc))
-        pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes (envCluster env)))
+        pure (unsafeNodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes (envCluster env)))
   liftIO $ do
     regTVar <- newTVarIO Map.empty
     let reg = WorkerRegistry regTVar
@@ -155,7 +155,7 @@ detectAndPruneStaleWorkers reg@(WorkerRegistry regTVar) cc discovered = do
   configuredNodes <- Set.fromList <$>
         mapM (\nc -> do
           hi <- resolveHostInfo (HostName (ncHost nc))
-          pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
+          pure (unsafeNodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
   let staleNodes = Set.toList (computeStaleNodes knownNodes discovered configuredNodes)
   pruneStaleWorkers reg staleNodes
   pure staleNodes

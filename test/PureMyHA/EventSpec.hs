@@ -287,9 +287,9 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
   -- E2E scenario: chain events to simulate full failover lifecycle
   describe "Failover E2E scenario" $ do
     it "promoted SOURCE shows Healthy immediately after failover and through recovery" $ do
-      let db1 = NodeId "db1" 3306
-          db2 = NodeId "db2" 3306
-          db3 = NodeId "db3" 3306
+      let db1 = unsafeNodeId "db1" 3306
+          db2 = unsafeNodeId "db2" 3306
+          db3 = unsafeNodeId "db3" 3306
           -- Use threshold=1 so probe failures trigger immediately
           fdc1 = testFdc { fdcConsecutiveFailuresForDead = AtLeastOne 1 }
 

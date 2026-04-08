@@ -27,7 +27,9 @@ import PureMyHA.Types
   , NodeStateView (..)
   , OperationResult (..)
   , ErrantGtidInfo (..)
-  , NodeId (..)
+  , NodeId
+  , mkNodeId
+  , NodeIdError (..)
   , mkHostInfoFromName
   , nodeHost
   , nodePort
@@ -88,8 +90,13 @@ instance ToJSON NodeId where
   toJSON nid = object ["host" .= nodeHost nid, "port" .= nodePort nid]
 
 instance FromJSON NodeId where
-  parseJSON = withObject "NodeId" $ \o ->
-    NodeId <$> (mkHostInfoFromName <$> o .: "host") <*> o .: "port"
+  parseJSON = withObject "NodeId" $ \o -> do
+    hi <- mkHostInfoFromName <$> o .: "host"
+    p  <- o .: "port"
+    case mkNodeId hi p of
+      Right nid -> pure nid
+      Left (NodeIdPortOutOfRange n) ->
+        fail $ "NodeId port out of range (1-65535): " <> show n
 
 instance ToJSON NodeHealth where
   toJSON Healthy                    = String "Healthy"

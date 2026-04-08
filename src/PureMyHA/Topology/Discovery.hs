@@ -67,7 +67,7 @@ discoverTopology = do
       denv = DiscoveryEnv mTls creds tMicros logger
   seedNodes <- liftIO $ mapM (\nc -> do
     hi <- resolveHostInfo (HostName (ncHost nc))
-    pure (NodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
+    pure (unsafeNodeId hi (unPort (ncPort nc)))) (NE.toList (ccNodes cc))
   fc         <- asks envFailover
   nodeStates <- liftIO $ runReaderT (discoverAll (Set.fromList seedNodes) Set.empty Map.empty) denv
   pure (buildClusterTopology (fcMinReplicasForFailover fc) (ccName cc) nodeStates)
@@ -209,7 +209,7 @@ nextDiscoveryTargets
 nextDiscoveryTargets ns visited rest =
   case nsProbeResult ns of
     ProbeSuccess{prReplicaStatus = Just rs} ->
-      let srcId = NodeId (mkHostInfoFromName (rsSourceHost rs)) (rsSourcePort rs)
+      let srcId = unsafeNodeId (mkHostInfoFromName (rsSourceHost rs)) (rsSourcePort rs)
       in if Set.notMember srcId visited && unHostName (rsSourceHost rs) /= ""
            then Set.insert srcId rest
            else rest
@@ -219,7 +219,7 @@ nextDiscoveryTargets ns visited rest =
 resolveQueueEntry :: NodeId -> IO NodeId
 resolveQueueEntry nid = do
   hi <- resolveHostInfo (nodeHost nid)
-  pure (NodeId hi (nodePort nid))
+  pure (unsafeNodeId hi (nodePort nid))
 
 -- | Remove duplicate nodes that represent the same hostname:port with different
 -- IP representations. Prefers the entry with a resolved IP (IP text differs

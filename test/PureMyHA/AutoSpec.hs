@@ -28,7 +28,7 @@ deadSourceTopo :: ClusterTopology
 deadSourceTopo = ClusterTopology
   { ctClusterName          = "test"
   , ctNodes                = clusterWithDeadSource
-  , ctSourceNodeId         = Just (NodeId "db1" 3306)
+  , ctSourceNodeId         = Just (unsafeNodeId "db1" 3306)
   , ctHealth               = DeadSource
   , ctObservedHealthy      = HasBeenObservedHealthy
   , ctRecoveryBlockedUntil = Nothing
@@ -51,10 +51,10 @@ spec = do
 
     it "selects the node with the higher GTID count" $ do
       let sources = [splitBrainSource1, splitBrainSource2]
-      selectSurvivor [] [] sources `shouldBe` Just (NodeId "db2" 3306)
+      selectSurvivor [] [] sources `shouldBe` Just (unsafeNodeId "db2" 3306)
 
     it "selects the only node when given a single source" $ do
-      selectSurvivor [] [] [splitBrainSource1] `shouldBe` Just (NodeId "db1" 3306)
+      selectSurvivor [] [] [splitBrainSource1] `shouldBe` Just (unsafeNodeId "db1" 3306)
 
     it "returns Nothing for empty list" $
       selectSurvivor [] [] [] `shouldBe` Nothing
@@ -84,8 +84,8 @@ spec = do
     it "returns Left when replica count is below minReplicas" $ do
       let noReplicaTopo = deadSourceTopo
             { ctNodes = Map.fromList
-                [ (NodeId "db1" 3306
-                  , (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
+                [ (unsafeNodeId "db1" 3306
+                  , (unreachableNode (unsafeNodeId "db1" 3306)) { nsRole = Source })
                 ]
             }
       checkAutoFailoverPreconditions now noReplicaTopo 1
@@ -133,11 +133,11 @@ spec = do
 
     it "reports all eligible candidates" $ do
       tvar <- newDaemonState
-      let replica2 = healthyReplica { nsNodeId = NodeId "db3" 3306 }
+      let replica2 = healthyReplica { nsNodeId = unsafeNodeId "db3" 3306 }
           nodes = Map.fromList
-            [ (NodeId "db1" 3306, (unreachableNode (NodeId "db1" 3306)) { nsRole = Source })
-            , (NodeId "db2" 3306, healthyReplica)
-            , (NodeId "db3" 3306, replica2)
+            [ (unsafeNodeId "db1" 3306, (unreachableNode (unsafeNodeId "db1" 3306)) { nsRole = Source })
+            , (unsafeNodeId "db2" 3306, healthyReplica)
+            , (unsafeNodeId "db3" 3306, replica2)
             ]
           topo = deadSourceTopo { ctClusterName = "main", ctNodes = nodes }
       atomically $ updateClusterTopology tvar topo
@@ -188,12 +188,12 @@ testFC = FailoverConfig
 -- | Two source nodes simulating a split-brain scenario
 splitBrainSource1 :: NodeState
 splitBrainSource1 = healthySource
-  { nsNodeId    = NodeId "db1" 3306
+  { nsNodeId    = unsafeNodeId "db1" 3306
   , nsProbeResult = ProbeSuccess fixedTime Nothing (unsafeParseGtidSet "uuid1:1-50")
   }
 
 splitBrainSource2 :: NodeState
 splitBrainSource2 = healthySource
-  { nsNodeId    = NodeId "db2" 3306
+  { nsNodeId    = unsafeNodeId "db2" 3306
   , nsProbeResult = ProbeSuccess fixedTime Nothing (unsafeParseGtidSet "uuid1:1-100")
   }

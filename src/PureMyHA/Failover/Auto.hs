@@ -13,6 +13,7 @@ import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Trans.Class (lift)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -56,24 +57,25 @@ simulateFailover = do
           precondResult = checkAutoFailoverPreconditions now
                             (topo { ctPaused = Running, ctHealth = DeadSource })
                             (fcMinReplicasForFailover fc)
-          candidates    = rankCandidates (fcNeverPromote fc)
+          mCandidates   = rankCandidates (fcNeverPromote fc)
                             (fmap unPositiveInt (fcMaxReplicaLagForCandidate fc))
                             (Map.elems (ctNodes topo))
                             (fcCandidatePriority fc)
-          candLines     = map (\ci -> "  - " <> unHostName (nodeHost (ciNodeId ci))) candidates
       case precondResult of
         Left err -> pure . Right . T.unlines $
           [healthDesc] ++ pauseNote ++ ["Preconditions: FAIL \x2014 " <> err]
         Right () ->
-          case candidates of
-            []    -> pure . Right . T.unlines $
+          case mCandidates of
+            Nothing -> pure . Right . T.unlines $
               [healthDesc] ++ pauseNote ++ ["Preconditions: OK", "No suitable failover candidate found"]
-            (c:_) -> pure . Right . T.unlines $
-              [ healthDesc] ++ pauseNote ++
-              [ "Preconditions: OK"
-              , "Would promote: " <> unHostName (nodeHost (ciNodeId c))
-              , "All eligible candidates (ranked):"
-              ] ++ candLines
+            Just cs ->
+              let candLines = map (\ci -> "  - " <> unHostName (nodeHost (ciNodeId ci))) (NE.toList cs)
+              in pure . Right . T.unlines $
+                [ healthDesc] ++ pauseNote ++
+                [ "Preconditions: OK"
+                , "Would promote: " <> unHostName (nodeHost (ciNodeId (NE.head cs)))
+                , "All eligible candidates (ranked):"
+                ] ++ candLines
 
 -- | Execute automatic failover for a cluster
 runAutoFailover :: App (Either Text ())

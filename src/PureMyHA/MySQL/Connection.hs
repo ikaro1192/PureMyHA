@@ -15,7 +15,7 @@ import Data.Time (NominalDiffTime)
 import Database.MySQL.Base (ConnectInfo (..), defaultConnectInfo, close, MySQLConn)
 import PureMyHA.Config (DbCredentials (..), TLSConfig)
 import PureMyHA.MySQL.Auth (connectWithAuth)
-import PureMyHA.Types (NodeId (..), IPAddr (..), nodeIPAddr)
+import PureMyHA.Types (NodeId, nodePort, IPAddr (..), nodeIPAddr)
 
 -- | Build ConnectInfo from NodeId and credentials
 makeConnectInfo :: NodeId -> DbCredentials -> ConnectInfo
