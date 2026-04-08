@@ -278,6 +278,30 @@ wait_for_source() {
   return 1
 }
 
+# Wait until the daemon reports zero errant GTIDs across all replicas.
+# Used after reset_cluster: even though `RESET BINARY LOGS AND GTIDS` clears
+# errant GTIDs at the MySQL level, the daemon's cached nsErrantGtids is only
+# refreshed by the next monitor probe + enrichErrantGtids cycle. Tests that
+# immediately attempt a switchover can otherwise see a stale non-empty set
+# (the candidate selector then refuses to promote). This race is more visible
+# on aarch64 where probe scheduling differs.
+wait_for_no_errant_gtids() {
+  local max_wait="${1:-30}"
+  echo "  Waiting for errant GTIDs to clear..."
+  for i in $(seq 1 "$max_wait"); do
+    local count
+    count=$(cli_errant_gtid 2>/dev/null | jq -r 'length // 0')
+    if [ "$count" = "0" ]; then
+      echo "  No errant GTIDs (${i}s)"
+      return 0
+    fi
+    sleep 1
+  done
+  echo "  TIMEOUT: errant GTIDs still present after ${max_wait}s" >&2
+  cli_errant_gtid >&2 || true
+  return 1
+}
+
 # Wait for health to NOT be a given value (transition away)
 wait_for_health_not() {
   local unexpected="$1"
@@ -401,6 +425,10 @@ reset_cluster() {
   # detect the reconfigured topology (mysql-source = actual source).
   wait_for_health "Healthy" 60
   wait_for_source "mysql-source" 30 || true
+  # Ensure the daemon has re-probed replicas after the GTID reset so that
+  # cached errant-GTID state from the previous test does not leak into the
+  # next switchover/failover attempt.
+  wait_for_no_errant_gtids 30 || true
 
   echo "Cluster reset complete."
 }
