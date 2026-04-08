@@ -1,5 +1,9 @@
 # PureMyHA
 
+<p align="center">
+  <img src="/docs/PureMyHA.png" />
+</p>
+
 [![CI](https://github.com/ikaro1192/PureMyHA/actions/workflows/ci.yml/badge.svg)](https://github.com/ikaro1192/PureMyHA/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/ikaro1192/PureMyHA/graph/badge.svg?token=9G8GHTASEX)](https://codecov.io/github/ikaro1192/PureMyHA)
 [![Release](https://img.shields.io/github/v/release/ikaro1192/PureMyHA)](https://github.com/ikaro1192/PureMyHA/releases/latest)
