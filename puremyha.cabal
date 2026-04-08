@@ -17,6 +17,9 @@ common common-options
     RecordWildCards
     LambdaCase
   ghc-options:        -Wall -Wno-orphans -Werror
+                      -Wincomplete-uni-patterns
+                      -Wredundant-constraints
+                      -Widentities
   build-depends:
     base             >= 4.14 && < 5,
     text             >= 1.2,

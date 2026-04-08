@@ -33,7 +33,7 @@ module PureMyHA.Config
 
 import Control.Applicative ((<|>))
 import Data.Aeson (FromJSON (..), withObject, withText, (.:), (.:?), (.!=))
-import Data.List (group, sort)
+import Data.List (sort)
 import Data.List.NonEmpty (NonEmpty)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
@@ -510,4 +510,4 @@ validateConfig cfg = clusterErrors
 
 -- | Return elements that appear more than once in the list.
 duplicates :: Ord a => [a] -> [a]
-duplicates = map head . filter ((> 1) . length) . group . sort
+duplicates = map NE.head . filter ((> 1) . length) . NE.group . sort

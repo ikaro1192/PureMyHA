@@ -8,7 +8,7 @@ import Control.Monad.Except (ExceptT (..), MonadError, runExceptT, throwError)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad.Reader (asks)
 import Control.Monad.Trans.Class (lift)
-import Data.List (maximumBy)
+import qualified Data.List.NonEmpty as NE
 import Data.Map.Strict (Map)
 import qualified Data.Map.Strict as Map
 import Data.Ord (comparing)
@@ -48,9 +48,9 @@ selectDonorAuto nodes recipientId =
                    , nsIsReachable ns
                    , nsNodeId ns /= recipientId
                    ]
-  in case candidates of
-    [] -> Left "No suitable donor found (no reachable replicas other than recipient)"
-    _  -> Right . nsNodeId . maximumBy (comparing nodeGtidScore) $ candidates
+  in case NE.nonEmpty candidates of
+    Nothing  -> Left "No suitable donor found (no reachable replicas other than recipient)"
+    Just nec -> Right . nsNodeId $ NE.last (NE.sortBy (comparing nodeGtidScore) nec)
   where
     nodeGtidScore ns = case nsProbeResult ns of
       ProbeSuccess{prGtidExecuted = g} -> gtidTransactionCount g
