@@ -9,6 +9,7 @@ module PureMyHA.IPC.Server
 import Control.Concurrent.Async (async)
 import Control.Concurrent.STM (TVar, atomically, readTVarIO, writeTBQueue)
 import Control.Exception (bracket, try, catch, SomeException, finally)
+import Control.Monad (void)
 import Data.Aeson (encode, eitherDecode)
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy as BL
@@ -68,7 +69,7 @@ openListenSocket path = do
 acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> TVar Logger -> IO ()
 acceptLoop listenSock tvar clusterMap discoveryMap loggerVar = do
   (clientSock, _) <- accept listenSock
-  _ <- async $ handleClient clientSock tvar clusterMap discoveryMap loggerVar `finally` close clientSock
+  void $ async $ handleClient clientSock tvar clusterMap discoveryMap loggerVar `finally` close clientSock
   acceptLoop listenSock tvar clusterMap discoveryMap loggerVar
 
 handleClient :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> TVar Logger -> IO ()

@@ -1,6 +1,7 @@
 module PureMyHA.HTTPSpec (spec) where
 
 import Control.Concurrent.STM (atomically)
+import Control.Monad (void)
 import qualified Data.ByteString.Lazy.Char8 as BSL8
 import Data.IORef
 import qualified Data.Map.Strict as Map
@@ -19,7 +20,7 @@ runApp :: (Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived)
        -> Request -> IO Response
 runApp app req = do
   ref <- newIORef (error "no response")
-  _ <- app req (\resp -> writeIORef ref resp >> pure ResponseReceived)
+  void $ app req (\resp -> writeIORef ref resp >> pure ResponseReceived)
   readIORef ref
 
 postReq :: Request

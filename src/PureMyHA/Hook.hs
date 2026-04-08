@@ -9,6 +9,7 @@ module PureMyHA.Hook
 
 import Control.Concurrent.Async (async)
 import Control.Exception (try, SomeException)
+import Control.Monad (void)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Time (getCurrentTime, formatTime, defaultTimeLocale)
@@ -68,9 +69,7 @@ runHookFireForget Nothing _ _ = pure ()
 runHookFireForget (Just hc) getter hookEnv =
   case getter hc of
     Nothing   -> pure ()
-    Just path -> do
-      _ <- async (runHook path hookEnv)
-      pure ()
+    Just path -> void $ async (runHook path hookEnv)
 
 -- | Blocking: run hook and return Left if it fails, aborting the operation
 runHookOrAbort

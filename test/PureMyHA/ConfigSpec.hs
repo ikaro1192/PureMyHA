@@ -3,8 +3,10 @@ module PureMyHA.ConfigSpec (spec) where
 import Data.Aeson (eitherDecode)
 import qualified Data.ByteString.Char8 as BC
 import qualified Data.ByteString.Lazy.Char8 as BLC
+import Data.Either (isLeft, isRight)
 import Data.List.NonEmpty (NonEmpty ((:|)))
 import qualified Data.List.NonEmpty as NE
+import Data.Maybe (isNothing)
 import qualified Data.Yaml as Yaml
 import Test.Hspec
 import PureMyHA.Config
@@ -994,17 +996,6 @@ globalBlock = unlines
 decodeConfig :: BC.ByteString -> Either String Config
 decodeConfig = either (Left . Yaml.prettyPrintParseException) Right . Yaml.decodeEither'
 
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft _        = False
-
-isRight :: Either a b -> Bool
-isRight (Right _) = True
-isRight _         = False
-
-isNothing :: Maybe a -> Bool
-isNothing Nothing = True
-isNothing _       = False
 
 isInfixOf :: String -> String -> Bool
 isInfixOf needle haystack = any (needle `isPrefixOf`) (tails haystack)

@@ -1,6 +1,7 @@
 module PureMyHA.GTIDSpec (spec) where
 
 import Data.Aeson (encode, eitherDecode)
+import Data.Either (isLeft)
 import Test.Hspec
 import Test.QuickCheck
 import PureMyHA.MySQL.GTID
@@ -218,6 +219,3 @@ instance Arbitrary GtidInterval where
 instance Arbitrary GtidEntry where
   arbitrary = GtidEntry <$> arbitrary <*> arbitrary <*> listOf1 arbitrary
 
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft _        = False

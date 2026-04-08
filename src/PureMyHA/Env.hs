@@ -68,4 +68,8 @@ appLogWarn  = withLogger logWarn
 appLogError = withLogger logError
 
 withLogger :: (MonadReader ClusterEnv m, MonadIO m) => (Logger -> Text -> IO ()) -> Text -> m ()
-withLogger logFn msg = asks envLogger >>= liftIO . readTVarIO >>= \l -> liftIO (logFn l msg)
+withLogger logFn msg = do
+  loggerVar <- asks envLogger
+  liftIO $ do
+    l <- readTVarIO loggerVar
+    logFn l msg

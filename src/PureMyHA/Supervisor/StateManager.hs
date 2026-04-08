@@ -7,7 +7,7 @@ module PureMyHA.Supervisor.StateManager
 
 import Control.Concurrent.Async (async)
 import Control.Concurrent.STM
-import Control.Monad (forever, forM_)
+import Control.Monad (forever, forM_, void)
 import qualified Data.Text as T
 import PureMyHA.Config
 import PureMyHA.Env (ClusterEnv (..), runApp)
@@ -51,26 +51,23 @@ stateManager queue ctVar env emergencyCheck = forever $ do
     pure effs
   -- Dispatch ALL effects asynchronously — never block the event loop
   forM_ effects $ \eff -> case eff of
-    FireHookEffect hookEvent mNodeId -> do
-      _ <- async $ do
+    FireHookEffect hookEvent mNodeId ->
+      void $ async $ do
         mHooks <- readTVarIO (envHooks env)
         executeHookAction mHooks (ccName (envCluster env)) mNodeId hookEvent
-      pure ()
-    TriggerActionEffect action -> do
-      _ <- async $ case action of
-        TriggerAutoFailover          -> do { _ <- runApp env runAutoFailover; pure () }
+    TriggerActionEffect action ->
+      void $ async $ case action of
+        TriggerAutoFailover          -> void $ runApp env runAutoFailover
         TriggerAutoFence             -> runApp env runAutoFence
         TriggerEmergencyReplicaCheck -> emergencyCheck
         FireHook _                   -> pure ()  -- already handled by FireHookEffect
-      pure ()
-    LogHealthTransition _clusterName msg -> do
-      _ <- async $ do
+    LogHealthTransition _clusterName msg ->
+      void $ async $ do
         logger <- readTVarIO (envLogger env)
         let prefix = "[" <> unClusterName (ccName (envCluster env)) <> "] "
         if isWarnMessage msg
           then logWarn logger (prefix <> msg)
           else logInfo logger (prefix <> msg)
-      pure ()
 
 -- | Execute a single hook action by dispatching to the appropriate hook script.
 executeHookAction :: Maybe HooksConfig -> ClusterName -> Maybe NodeId -> HookEvent -> IO ()

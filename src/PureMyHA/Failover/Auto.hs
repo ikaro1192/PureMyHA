@@ -8,7 +8,7 @@ module PureMyHA.Failover.Auto
 
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM
-import Control.Monad (forM_, when)
+import Control.Monad (forM_, void, when)
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -242,13 +242,11 @@ reconnectReplica newSourceId ns = do
   replCreds <- getReplCredentials
   mTls      <- getTLSConfig
   let ci = makeConnectInfo (nsNodeId ns) monCreds
-  liftIO $ do
-    _ <- withNodeConn mTls ci $ \conn -> do
-      stopReplica conn
-      changeReplicationSourceTo conn (unHostName (nodeHost newSourceId)) (nodePort newSourceId) replCreds mTls
-      setReadOnly conn
-      startReplica conn
-    pure ()
+  liftIO $ void $ withNodeConn mTls ci $ \conn -> do
+    stopReplica conn
+    changeReplicationSourceTo conn (unHostName (nodeHost newSourceId)) (nodePort newSourceId) replCreds mTls
+    setReadOnly conn
+    startReplica conn
 
 -- | Entry point for auto-fence on SplitBrainSuspected.
 -- Reuses envLock to prevent concurrent fence/failover operations.
@@ -273,7 +271,8 @@ doAutoFence = do
   clusterName <- getClusterName
   fc          <- asks envFailover
   let prefix = "[" <> unClusterName clusterName <> "] "
-  mTopo <- asks envDaemonState >>= \tv -> liftIO (getClusterTopology tv clusterName)
+  tv    <- asks envDaemonState
+  mTopo <- liftIO (getClusterTopology tv clusterName)
   case mTopo of
     Nothing -> appLogError $ prefix <> "Auto-fence: cluster not found"
     Just topo -> do

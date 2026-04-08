@@ -1,5 +1,6 @@
 module PureMyHA.CandidateSpec (spec) where
 
+import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
 import Test.Hspec
 import Fixtures
@@ -312,6 +313,3 @@ spec = do
     it "sums transactions across multiple UUIDs" $
       gtidScore (CandidateInfo (NodeId "db2" 3306) (unsafeParseGtidSet "uuid1:1-100,uuid2:1-3") 0) `shouldBe` 103
 
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft _        = False

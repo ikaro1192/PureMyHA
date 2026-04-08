@@ -7,6 +7,7 @@ module PureMyHA.Failover.Switchover
 import Control.Concurrent (threadDelay)
 import Control.Concurrent.STM (atomically, writeTBQueue)
 import Control.Exception (try, SomeException)
+import Control.Monad (void)
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad.Reader (asks)
@@ -213,13 +214,11 @@ reconnectToNew newSourceId ns = do
   replCreds <- getReplCredentials
   mTls      <- getTLSConfig
   let ci = makeConnectInfo (nsNodeId ns) monCreds
-  liftIO $ do
-    _ <- withNodeConn mTls ci $ \conn -> do
-      _ <- try @SomeException (stopReplica conn)
-      changeReplicationSourceTo conn (unHostName (nodeHost newSourceId)) (nodePort newSourceId) replCreds mTls
-      setReadOnly conn
-      startReplica conn
-    pure ()
+  liftIO $ void $ withNodeConn mTls ci $ \conn -> do
+    void $ try @SomeException (stopReplica conn)
+    changeReplicationSourceTo conn (unHostName (nodeHost newSourceId)) (nodePort newSourceId) replCreds mTls
+    setReadOnly conn
+    startReplica conn
 
 -- | Wait up to timeoutSecs for user connections to close, then KILL remaining ones.
 -- Polls performance_schema.processlist every second. If connection to old source is lost, proceeds silently.

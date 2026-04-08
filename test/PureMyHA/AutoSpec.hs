@@ -1,6 +1,7 @@
 module PureMyHA.AutoSpec (spec) where
 
 import Control.Concurrent.STM (atomically)
+import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Data.Time (UTCTime (..), fromGregorian, addUTCTime)
@@ -182,9 +183,6 @@ testFC = FailoverConfig
   , fcFailoverWithoutObservedHealthy = False
   }
 
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft _        = False
 
 -- | Two source nodes simulating a split-brain scenario
 splitBrainSource1 :: NodeState

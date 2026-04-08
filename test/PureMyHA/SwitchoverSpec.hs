@@ -1,6 +1,7 @@
 module PureMyHA.SwitchoverSpec (spec) where
 
 import Control.Concurrent.STM (atomically)
+import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
 import Test.Hspec
@@ -95,6 +96,3 @@ testFC = FailoverConfig
   , fcFailoverWithoutObservedHealthy = False
   }
 
-isLeft :: Either a b -> Bool
-isLeft (Left _) = True
-isLeft _        = False

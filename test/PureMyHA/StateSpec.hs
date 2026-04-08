@@ -1,6 +1,7 @@
 module PureMyHA.StateSpec (spec) where
 
 import Control.Concurrent.STM
+import Control.Monad (void)
 import Data.Maybe (isNothing)
 import qualified Data.Map.Strict as Map
 import Test.Hspec
@@ -110,6 +111,6 @@ spec = do
 
     it "second acquire returns False (already locked)" $ do
       lock <- newFailoverLock
-      _ <- atomically $ acquireFailoverLock lock
+      void $ atomically $ acquireFailoverLock lock
       result <- atomically $ acquireFailoverLock lock
       result `shouldBe` False

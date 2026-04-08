@@ -8,6 +8,7 @@ module PureMyHA.Supervisor.Event
   , emergencyCheckDue
   ) where
 
+import Data.List (foldl')
 import Data.Maybe (isJust)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -247,7 +248,7 @@ applyEvent _ _ _ ct (TopologyDriftUpdated hasDrift driftConditions) =
 applyEvent _ _ _ ct (FailoverCommitted newSrcId oldSrcIds failoverAt recoveryBlockUntil) =
   let -- Demote old sources to Replica
       demoteNode nodes srcId = Map.adjust (\ns -> ns { nsRole = Replica }) srcId nodes
-      demotedNodes = foldl demoteNode (ctNodes ct) oldSrcIds
+      demotedNodes = foldl' demoteNode (ctNodes ct) oldSrcIds
       -- Promote new source and reset stale health
       promotedNodes = Map.adjust (\ns -> ns { nsRole = Source, nsHealth = Healthy }) newSrcId demotedNodes
       newCt = ct
