@@ -73,7 +73,7 @@ rankCandidates :: [HostInfo] -> Maybe Int -> [NodeState] -> [CandidatePriority] 
 rankCandidates neverPromote mMaxLag nodes priorities =
   let eligible = filter (isEligibleCandidate neverPromote mMaxLag) nodes
       infos    = map (toCandidateInfo priorities) eligible
-      ranked   = sortBy (comparing ciPriorityRank <> comparing (Down . gtidScore)) infos
+      ranked   = sortBy (comparing (Down . gtidScore) <> comparing ciPriorityRank) infos
   in nonEmpty ranked
 
 isEligibleCandidate :: [HostInfo] -> Maybe Int -> NodeState -> Bool

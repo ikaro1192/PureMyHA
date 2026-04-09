@@ -175,15 +175,24 @@ spec = do
       let result = rankCandidates [] Nothing [healthyReplica, replicaLongGtid] []
       fmap (ciNodeId . NE.head) result `shouldBe` Just (unsafeNodeId "db3" 3306)
 
-    it "priority order takes precedence over GTID score" $ do
+    it "GTID score takes precedence over candidate_priority" $ do
       let replicaLongGtid = healthyReplica
             { nsNodeId = unsafeNodeId "db3" 3306
             , nsProbeResult = ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-1,uuid2:1-200,uuid3:1-50")) emptyGtidSet
             }
-          -- db2 has lower GTID but appears first in priority
+          -- db2 appears first in priority but db3 has higher GTID score
           priorities = [CandidatePriority "db2"]
       let result = rankCandidates [] Nothing [healthyReplica, replicaLongGtid] priorities
-      fmap (ciNodeId . NE.head) result `shouldBe` Just (unsafeNodeId "db2" 3306)
+      fmap (ciNodeId . NE.head) result `shouldBe` Just (unsafeNodeId "db3" 3306)
+
+    it "candidate_priority breaks ties when GTID scores are equal" $ do
+      let replica3 = healthyReplica
+            { nsNodeId = unsafeNodeId "db3" 3306
+            }
+          -- db3 and db2 have same GTID score, db3 is prioritized
+          priorities = [CandidatePriority "db3"]
+      let result = rankCandidates [] Nothing [healthyReplica, replica3] priorities
+      fmap (ciNodeId . NE.head) result `shouldBe` Just (unsafeNodeId "db3" 3306)
 
     it "excludes Lagging nodes from candidates" $ do
       let laggingReplica = healthyReplica
