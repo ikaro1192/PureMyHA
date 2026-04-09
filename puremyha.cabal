@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               puremyha
-version:            0.7.0.2
+version:            0.7.1.0
 synopsis:           MySQL 8.4 HA Manager tool in Haskell
 description:        PureMyHA is a simple HA Manager tool for MySQL 8.4 replication topologies.
 license:            MIT
