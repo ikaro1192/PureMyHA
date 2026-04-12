@@ -229,7 +229,7 @@ See [docs/cli.md](docs/cli.md) for the full CLI reference including all commands
 
 | Purpose | Library |
 |---------|---------|
-| MySQL connectivity | `mysql-haskell` (pure Haskell, no C library dependency) + custom `caching_sha2_password` auth + optional TLS (1.2 / 1.3) |
+| MySQL connectivity | `mysql-haskell` (pure Haskell, no C library dependency) + optional TLS (1.2 / 1.3) |
 | Configuration | `yaml` + `optparse-applicative` |
 | Concurrency | `async` + `STM` (each node monitored in an independent thread) |
 | Logging | `katip` (structured logging with JSON output) |
