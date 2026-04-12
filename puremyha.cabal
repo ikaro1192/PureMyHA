@@ -44,7 +44,6 @@ library
     PureMyHA.Env
     PureMyHA.Hook
     PureMyHA.MySQL.Clone
-    PureMyHA.MySQL.Auth
     PureMyHA.MySQL.Connection
     PureMyHA.MySQL.Query
     PureMyHA.MySQL.GTID
@@ -67,7 +66,7 @@ library
     PureMyHA.IPC.Client
     PureMyHA.HTTP.Server
   build-depends:
-    mysql-haskell    >= 0.8.4,
+    mysql-haskell    >= 1.2.0,
     io-streams       >= 1.5,
     yaml             >= 0.11,
     optparse-applicative >= 0.16,
@@ -75,11 +74,6 @@ library
     katip            >= 0.8,
     unix             >= 2.7,
     binary           >= 0.8,
-    crypton          >= 0.31 && < 1.1,
-    memory           >= 0.14,
-    pem              >= 0.2,
-    asn1-encoding    >= 0.9,
-    asn1-types       >= 0.3,
     warp             >= 3.3,
     wai              >= 3.2,
     http-types       >= 0.12,
@@ -147,7 +141,7 @@ test-suite puremyha-test
     time             >= 1.9,
     wai              >= 3.2,
     http-types       >= 0.12,
-    mysql-haskell    >= 0.8.4,
+    mysql-haskell    >= 1.2.0,
     network          >= 3.1
   build-tool-depends:
     hspec-discover:hspec-discover

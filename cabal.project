@@ -1,3 +1,11 @@
 packages: .
 
 optimization: 2
+
+-- Use forked mysql-haskell with RSA full-auth support for
+-- caching_sha2_password over non-TLS connections.
+-- Upstream PR: https://github.com/winterland1989/mysql-haskell/pull/XXX
+source-repository-package
+  type: git
+  location: https://github.com/ikaro1192/mysql-haskell.git
+  tag: 830cf3010ae22759af9745d819f199b6c5811eb3

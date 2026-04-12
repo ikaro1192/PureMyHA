@@ -12,9 +12,11 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
 import Data.Time (NominalDiffTime)
+import qualified Database.MySQL.Base as MySQL
 import Database.MySQL.Base (ConnectInfo (..), defaultConnectInfo, close, MySQLConn)
-import PureMyHA.Config (DbCredentials (..), TLSConfig)
-import PureMyHA.MySQL.Auth (connectWithAuth)
+import qualified Database.MySQL.TLS as MySQLTLS
+import PureMyHA.Config (DbCredentials (..), TLSConfig (..), TLSMode (..))
+import PureMyHA.MySQL.TLS (buildClientParams)
 import PureMyHA.Types (NodeId, nodePort, unPort, IPAddr (..), nodeIPAddr)
 
 -- | Build ConnectInfo from NodeId and credentials
@@ -35,7 +37,11 @@ withNodeConn
   -> IO (Either Text a)
 withNodeConn mTls ci action = do
   result <- try @SomeException $ do
-    conn <- connectWithAuth mTls ci
+    conn <- case mTls of
+      Just tlsCfg | tlsMode tlsCfg /= TLSDisabled -> do
+        params <- buildClientParams tlsCfg (ciHost ci)
+        MySQLTLS.connect ci (params, ciHost ci)
+      _ -> MySQL.connect ci
     action conn `finally` void (try @SomeException (close conn))
   pure $ case result of
     Left err -> Left (T.pack (show err))
