@@ -67,10 +67,12 @@ withTargetNodeNoMySQL actionName targetHost mkEvent = do
     Just topo ->
       case findNodeByHost targetHost (ctNodes topo) of
         Nothing -> pure (Left $ "Node not found: " <> unHostName targetHost)
-        Just targetNs -> do
-          liftIO $ atomically $ writeTBQueue queue (mkEvent (nsNodeId targetNs))
-          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replica " <> unHostName targetHost
-          pure (Right ())
+        Just targetNs
+          | isSource targetNs -> pure (Left $ sourceRejectionMsg actionName targetHost)
+          | otherwise -> do
+              liftIO $ atomically $ writeTBQueue queue (mkEvent (nsNodeId targetNs))
+              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replica " <> unHostName targetHost
+              pure (Right ())
 
 -- | Common logic for stop/start-replication: find node, connect, run MySQL action, emit event.
 withTargetNode
@@ -91,20 +93,34 @@ withTargetNode actionName targetHost mysqlAction mkEvent = do
     Just topo ->
       case findNodeByHost targetHost (ctNodes topo) of
         Nothing -> pure (Left $ "Node not found: " <> unHostName targetHost)
-        Just targetNs -> do
-          let ci = makeConnectInfo (nsNodeId targetNs) creds
-          appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replication on " <> unHostName targetHost
-          result <- liftIO $ withNodeConn mTls ci $ \conn -> mysqlAction conn
-          case result of
-            Left err -> do
-              appLogError $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " failed: " <> err
-              pure (Left err)
-            Right () -> do
-              liftIO $ atomically $ writeTBQueue queue (mkEvent (nsNodeId targetNs))
-              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Replication " <> actionResult <> " on " <> unHostName targetHost
-              pure (Right ())
+        Just targetNs
+          | isSource targetNs -> pure (Left $ sourceRejectionMsg actionName targetHost)
+          | otherwise -> do
+              let ci = makeConnectInfo (nsNodeId targetNs) creds
+              appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replication on " <> unHostName targetHost
+              result <- liftIO $ withNodeConn mTls ci $ \conn -> mysqlAction conn
+              case result of
+                Left err -> do
+                  appLogError $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " failed: " <> err
+                  pure (Left err)
+                Right () -> do
+                  liftIO $ atomically $ writeTBQueue queue (mkEvent (nsNodeId targetNs))
+                  appLogInfo $ "[" <> unClusterName (ccName cc) <> "] Replication " <> actionResult <> " on " <> unHostName targetHost
+                  pure (Right ())
   where
     actionResult = case actionName of
       "Stopping" -> "stopped"
       "Starting" -> "started"
+      other      -> other
+
+-- | Build a rejection message for source nodes.
+sourceRejectionMsg :: Text -> HostName -> Text
+sourceRejectionMsg actionName host =
+  "Cannot " <> verb <> " source node: " <> unHostName host
+  where
+    verb = case actionName of
+      "Pausing"  -> "pause"
+      "Resuming" -> "resume"
+      "Stopping" -> "stop replication on"
+      "Starting" -> "start replication on"
       other      -> other
