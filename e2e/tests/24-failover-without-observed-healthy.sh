@@ -21,17 +21,17 @@ orig_source=$(get_source_host)
 echo "  Original source: $orig_source"
 assert_eq "Original source is mysql-source" "mysql-source" "$orig_source"
 
-# 1. Stop the source before restarting puremyhad — simulates AZ failure where
-#    both puremyhad and the source go down simultaneously.
-echo "  Stopping mysql-source (simulating AZ failure)..."
-$COMPOSE stop mysql-source
+# 1. Stop puremyhad and the source simultaneously — prevents the old daemon
+#    from detecting the dead source and triggering a spurious auto-failover.
+echo "  Stopping puremyhad and mysql-source (simulating AZ failure)..."
+$COMPOSE stop puremyhad mysql-source
 
 # 2. Restart puremyhad with failover_without_observed_healthy=true.
 #    This simulates puremyhad being restarted by Pacemaker in a different AZ
 #    while the source is still down — it starts fresh with ctObservedHealthy=false.
 echo "  Restarting puremyhad with failover_without_observed_healthy=true..."
 docker compose -f "${E2E_DIR}/docker-compose.yml" -f "$COMPOSE_OVERRIDE" \
-  up -d --no-deps --force-recreate puremyhad
+  up -d --no-deps puremyhad
 
 # 3. Wait for puremyhad to detect DeadSource and trigger auto-failover.
 #    With failover_without_observed_healthy=true, it should promote a replica
