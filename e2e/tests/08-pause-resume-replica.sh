@@ -8,6 +8,18 @@ echo "=== Test 08: Pause / Resume Replica ==="
 
 wait_for_health "Healthy" 60
 
+# --- Reject pause-replica on source node ---
+echo "  Verifying pause-replica rejects source node..."
+source_pause=$(cli_pause_replica "mysql-source")
+source_pause_err=$(echo "$source_pause" | jq -r '.failure // empty')
+assert_not_empty "pause-replica on source returns error" "$source_pause_err"
+
+# --- Reject resume-replica on source node ---
+echo "  Verifying resume-replica rejects source node..."
+source_resume=$(cli_resume_replica "mysql-source")
+source_resume_err=$(echo "$source_resume" | jq -r '.failure // empty')
+assert_not_empty "resume-replica on source returns error" "$source_resume_err"
+
 # --- Pause replica (exclude from failover candidates) ---
 echo "  Pausing replica mysql-replica1 (exclude from failover)..."
 pause_result=$(cli_pause_replica "mysql-replica1")
