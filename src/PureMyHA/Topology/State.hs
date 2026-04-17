@@ -9,9 +9,11 @@ module PureMyHA.Topology.State
   , FailoverLock (..)
   , newFailoverLock
   , acquireFailoverLock
+  , withFailoverLock
   ) where
 
 import Control.Concurrent.STM
+import qualified Control.Exception as E
 import qualified Data.Map.Strict as Map
 import PureMyHA.Types
 
@@ -81,3 +83,19 @@ acquireFailoverLock :: FailoverLock -> STM Bool
 acquireFailoverLock (FailoverLock lock) = do
   mt <- tryTakeTMVar lock
   pure (mt /= Nothing)
+
+-- | Run an action while holding the failover lock. Returns @Nothing@ if the
+-- lock is already held by another thread (the action is not run). Otherwise
+-- runs the action and guarantees the lock is released on every exit path,
+-- including synchronous exceptions from the action and asynchronous
+-- exceptions delivered while the action is running.
+withFailoverLock :: FailoverLock -> IO a -> IO (Maybe a)
+withFailoverLock (FailoverLock lock) action =
+  E.mask $ \restore -> do
+    acquired <- atomically (tryTakeTMVar lock)
+    case acquired of
+      Nothing -> pure Nothing
+      Just () -> do
+        r <- restore action `E.onException` atomically (putTMVar lock ())
+        atomically (putTMVar lock ())
+        pure (Just r)
