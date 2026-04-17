@@ -1,6 +1,7 @@
 module PureMyHA.AutoSpec (spec) where
 
 import Control.Concurrent.STM (atomically)
+import Control.Monad (void)
 import Data.Either (isLeft)
 import qualified Data.Map.Strict as Map
 import qualified Data.Text as T
@@ -13,11 +14,11 @@ import PureMyHA.Config
   , PositiveDuration (..), AtLeastOne (..)
   , AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..)
   )
-import PureMyHA.Env (runApp)
-import PureMyHA.Failover.Auto (checkAutoFailoverPreconditions, simulateFailover)
+import PureMyHA.Env (ClusterEnv (..), runApp)
+import PureMyHA.Failover.Auto (checkAutoFailoverPreconditions, runAutoFailover, simulateFailover)
 import PureMyHA.Failover.Candidate (selectSurvivor)
 import PureMyHA.Topology.Discovery (buildClusterTopology)
-import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
+import PureMyHA.Topology.State (acquireFailoverLock, newDaemonState, updateClusterTopology)
 import PureMyHA.Types
 import Data.List.NonEmpty (NonEmpty ((:|)))
 
@@ -158,6 +159,26 @@ spec = do
           msg `shouldSatisfy` T.isInfixOf "Would promote"
           msg `shouldSatisfy` T.isInfixOf "paused"
         Left err -> expectationFailure (show err)
+
+  describe "runAutoFailover lock handling" $ do
+
+    it "releases the failover lock after doFailover returns Left (cluster not found)" $ do
+      tvar <- newDaemonState
+      env  <- mkTestEnv tvar testCC testFC
+      -- doFailover returns Left "Cluster not found" because nothing was seeded
+      result <- runApp env runAutoFailover
+      result `shouldBe` Left "Cluster not found"
+      -- Lock must be free again after the inner action has returned
+      acquiredAfter <- atomically $ acquireFailoverLock (envLock env)
+      acquiredAfter `shouldBe` True
+
+    it "rejects concurrent invocations while the lock is held" $ do
+      tvar <- newDaemonState
+      env  <- mkTestEnv tvar testCC testFC
+      -- Simulate another operation currently holding the lock
+      void $ atomically $ acquireFailoverLock (envLock env)
+      result <- runApp env runAutoFailover
+      result `shouldBe` Left "Failover already in progress"
 
 testCC :: ClusterConfig
 testCC = ClusterConfig

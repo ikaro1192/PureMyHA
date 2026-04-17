@@ -11,7 +11,7 @@ import Control.Concurrent.STM
 import Control.Monad (forM_, void)
 import Control.Monad.Except (ExceptT (..), runExceptT)
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad.Reader (asks)
+import Control.Monad.Reader (ask, asks, runReaderT)
 import Control.Monad.Trans.Class (lift)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as Map
@@ -77,17 +77,17 @@ simulateFailover = do
                 , "All eligible candidates (ranked):"
                 ] ++ candLines
 
--- | Execute automatic failover for a cluster
+-- | Execute automatic failover for a cluster. The failover lock is released
+-- on every exit path from 'doFailover' (including synchronous and asynchronous
+-- exceptions) via 'withFailoverLock'.
 runAutoFailover :: App (Either Text ())
 runAutoFailover = do
-  FailoverLock lock <- asks envLock
-  acquired <- liftIO $ atomically $ tryTakeTMVar lock
-  case acquired of
-    Nothing -> pure (Left "Failover already in progress")
-    Just () -> do
-      result <- doFailover
-      liftIO $ atomically $ putTMVar lock ()
-      pure result
+  env  <- ask
+  lock <- asks envLock
+  mResult <- liftIO $ withFailoverLock lock (runReaderT doFailover env)
+  pure $ case mResult of
+    Nothing -> Left "Failover already in progress"
+    Just r  -> r
 
 -- | Check preconditions for auto failover (pure)
 checkAutoFailoverPreconditions
@@ -256,16 +256,16 @@ reconnectReplica newSourceId ns = do
     startReplica conn
 
 -- | Entry point for auto-fence on SplitBrainSuspected.
--- Reuses envLock to prevent concurrent fence/failover operations.
+-- Reuses envLock to prevent concurrent fence/failover operations. The lock is
+-- released on every exit path from 'doAutoFence' via 'withFailoverLock'.
 runAutoFence :: App ()
 runAutoFence = do
-  FailoverLock lock <- asks envLock
-  acquired <- liftIO $ atomically $ tryTakeTMVar lock
-  case acquired of
+  env  <- ask
+  lock <- asks envLock
+  mResult <- liftIO $ withFailoverLock lock (runReaderT doAutoFence env)
+  case mResult of
     Nothing -> appLogInfo "Auto-fence skipped: failover/fence operation already in progress"
-    Just () -> do
-      doAutoFence
-      liftIO $ atomically $ putTMVar lock ()
+    Just () -> pure ()
 
 -- | Fence all source-role nodes except the one with the highest GTID count.
 doAutoFence :: App ()
