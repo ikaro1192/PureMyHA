@@ -7,6 +7,10 @@ source "$(dirname "$0")/../lib/helpers.sh"
 echo "=== Test 08: Pause / Resume Replica ==="
 
 wait_for_health "Healthy" 60
+# Health alone can be satisfied by a stale cached value; wait until the
+# daemon has actually classified mysql-source as Source before asserting
+# that pause/resume-replica reject it.
+wait_for_source "mysql-source" 60
 
 # --- Reject pause-replica on source node ---
 echo "  Verifying pause-replica rejects source node..."
