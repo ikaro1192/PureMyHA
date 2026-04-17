@@ -47,6 +47,7 @@ library
     PureMyHA.MySQL.Connection
     PureMyHA.MySQL.Query
     PureMyHA.MySQL.GTID
+    PureMyHA.MySQL.SqlEscape
     PureMyHA.MySQL.TLS
     PureMyHA.Topology.Discovery
     PureMyHA.Topology.State
@@ -124,6 +125,7 @@ test-suite puremyha-test
     PureMyHA.HTTPSpec
     PureMyHA.StateSpec
     PureMyHA.QuerySpec
+    PureMyHA.SqlEscapeSpec
     PureMyHA.CloneSpec
     PureMyHA.DemoteSpec
     PureMyHA.PauseReplicaSpec

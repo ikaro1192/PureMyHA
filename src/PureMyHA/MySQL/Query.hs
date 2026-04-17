@@ -23,6 +23,13 @@ module PureMyHA.MySQL.Query
   , isUserProcess
   , killConnection
   , resolveHostInfo
+    -- * Pure SQL builders (exported for testing)
+  , buildChangeReplicationSourceSql
+  , buildCloneInstanceSql
+  , buildSetCloneValidDonorListSql
+  , buildGtidSubtractSql
+  , buildGtidSubsetSql
+  , buildSetGtidNextSql
   ) where
 
 import Data.Text (Text)
@@ -42,6 +49,11 @@ import Database.MySQL.Protocol.Packet (ERR (..))
 import qualified System.IO.Streams as S
 import PureMyHA.Config (DbCredentials (..), TLSConfig (..), TLSMode (..))
 import PureMyHA.MySQL.GTID (GtidSet, GtidEntry, emptyGtidSet, isEmptyGtidSet, parseGtidSet, renderGtidSet, renderGtidEntry)
+import PureMyHA.MySQL.SqlEscape
+  ( quoteSqlString
+  , validateIdentifierLike
+  , validateGtidRendering
+  )
 import PureMyHA.Types
 
 -- | Convert a lazy ByteString SQL to a Query
@@ -148,20 +160,31 @@ needsPublicKeyRetrieval :: Maybe TLSConfig -> Bool
 needsPublicKeyRetrieval Nothing   = True
 needsPublicKeyRetrieval (Just tc) = tlsMode tc == TLSDisabled
 
+-- | Pure builder for @CHANGE REPLICATION SOURCE TO@ SQL.
+-- Host and user name are whitelist-validated; the password is escaped so any
+-- single quotes inside it are doubled.
+buildChangeReplicationSourceSql
+  :: Text -> Int -> DbCredentials -> Bool -> Either Text Text
+buildChangeReplicationSourceSql host port DbCredentials{..} wantPubKey = do
+  validHost <- validateIdentifierLike host
+  validUser <- validateIdentifierLike dbUser
+  let pubKeyOpt = if wantPubKey then ", GET_SOURCE_PUBLIC_KEY=1" else ""
+  pure $
+    "CHANGE REPLICATION SOURCE TO SOURCE_HOST=" <> quoteSqlString validHost
+      <> ", SOURCE_PORT=" <> T.pack (show port)
+      <> ", SOURCE_USER=" <> quoteSqlString validUser
+      <> ", SOURCE_PASSWORD=" <> quoteSqlString dbPassword
+      <> ", SOURCE_AUTO_POSITION=1"
+      <> pubKeyOpt
+
 -- | CHANGE REPLICATION SOURCE TO ... SOURCE_AUTO_POSITION=1
 changeReplicationSourceTo :: MySQLConn -> Text -> Int -> DbCredentials -> Maybe TLSConfig -> IO ()
-changeReplicationSourceTo conn host port DbCredentials{..} mTls = do
-  let pubKeyOpt = if needsPublicKeyRetrieval mTls
-                    then ", GET_SOURCE_PUBLIC_KEY=1"
-                    else ""
-      sql = "CHANGE REPLICATION SOURCE TO SOURCE_HOST='" <> host
-            <> "', SOURCE_PORT=" <> T.pack (show port)
-            <> ", SOURCE_USER='" <> dbUser <> "'"
-            <> ", SOURCE_PASSWORD='" <> dbPassword <> "'"
-            <> ", SOURCE_AUTO_POSITION=1"
-            <> pubKeyOpt
-  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
-  pure ()
+changeReplicationSourceTo conn host port creds mTls =
+  case buildChangeReplicationSourceSql host port creds (needsPublicKeyRetrieval mTls) of
+    Left err  -> throwIO (userError (T.unpack err))
+    Right sql -> do
+      _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+      pure ()
 
 -- | START REPLICA
 startReplica :: MySQLConn -> IO ()
@@ -210,37 +233,65 @@ clearSuperReadOnly conn = do
   _ <- execute_ conn "SET GLOBAL read_only = OFF"
   pure ()
 
+-- | Pure builder for the @GTID_SUBTRACT@ probe.
+-- Defence-in-depth: the rendering is validated against the GTID character set
+-- even though 'renderGtidSet' already produces only safe characters.
+buildGtidSubtractSql :: GtidSet -> Either Text Text
+buildGtidSubtractSql replicaGtid = do
+  rendered <- validateGtidRendering (renderGtidSet replicaGtid)
+  pure ("SELECT GTID_SUBTRACT(" <> quoteSqlString rendered <> ", @@GLOBAL.gtid_executed)")
+
 -- | Use MySQL GTID_SUBTRACT to find errant GTIDs.
 -- The source side uses @@GLOBAL.gtid_executed queried live from the source
 -- connection, so the result is always fresh regardless of the cached topology.
 gtidSubtract :: MySQLConn -> GtidSet -> IO GtidSet
-gtidSubtract conn replicaGtid = do
-  let sql = "SELECT GTID_SUBTRACT('" <> renderGtidSet replicaGtid <> "', @@GLOBAL.gtid_executed)"
-  (_, stream) <- query_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
-  rows <- consumeRows stream
-  case rows of
-    [[v]] -> pure (parseGtidOrEmpty (textVal v))
-    _     -> pure emptyGtidSet
+gtidSubtract conn replicaGtid =
+  case buildGtidSubtractSql replicaGtid of
+    Left err  -> throwIO (userError (T.unpack err))
+    Right sql -> do
+      (_, stream) <- query_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+      rows <- consumeRows stream
+      case rows of
+        [[v]] -> pure (parseGtidOrEmpty (textVal v))
+        _     -> pure emptyGtidSet
 
+
+-- | Pure builder for the @GTID_SUBSET@ probe.
+buildGtidSubsetSql :: GtidSet -> GtidSet -> Either Text Text
+buildGtidSubsetSql replicaGtid sourceGtid = do
+  rReplica <- validateGtidRendering (renderGtidSet replicaGtid)
+  rSource  <- validateGtidRendering (renderGtidSet sourceGtid)
+  pure ("SELECT GTID_SUBSET(" <> quoteSqlString rReplica <> ", " <> quoteSqlString rSource <> ")")
 
 -- | Use MySQL GTID_SUBSET to check if replicaGtid is a subset of sourceGtid
 gtidSubset :: MySQLConn -> GtidSet -> GtidSet -> IO Bool
-gtidSubset conn replicaGtid sourceGtid = do
-  let sql = "SELECT GTID_SUBSET('" <> renderGtidSet replicaGtid <> "', '" <> renderGtidSet sourceGtid <> "')"
-  (_, stream) <- query_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
-  rows <- consumeRows stream
-  case rows of
-    [[v]] -> pure (intVal v == 1)
-    _     -> pure False
+gtidSubset conn replicaGtid sourceGtid =
+  case buildGtidSubsetSql replicaGtid sourceGtid of
+    Left err  -> throwIO (userError (T.unpack err))
+    Right sql -> do
+      (_, stream) <- query_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+      rows <- consumeRows stream
+      case rows of
+        [[v]] -> pure (intVal v == 1)
+        _     -> pure False
+
+-- | Pure builder for @SET GTID_NEXT=\'<gtid>\'@.
+buildSetGtidNextSql :: GtidEntry -> Either Text Text
+buildSetGtidNextSql gtid = do
+  rendered <- validateGtidRendering (renderGtidEntry gtid)
+  pure ("SET GTID_NEXT=" <> quoteSqlString rendered)
 
 -- | Inject an empty transaction for a given GTID (for errant GTID repair)
 injectEmptyTransaction :: MySQLConn -> GtidEntry -> IO ()
-injectEmptyTransaction conn gtid = do
-  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 ("SET GTID_NEXT='" <> renderGtidEntry gtid <> "'"))))
-  _ <- execute_ conn "BEGIN"
-  _ <- execute_ conn "COMMIT"
-  _ <- execute_ conn "SET GTID_NEXT='AUTOMATIC'"
-  pure ()
+injectEmptyTransaction conn gtid =
+  case buildSetGtidNextSql gtid of
+    Left err  -> throwIO (userError (T.unpack err))
+    Right sql -> do
+      _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+      _ <- execute_ conn "BEGIN"
+      _ <- execute_ conn "COMMIT"
+      _ <- execute_ conn "SET GTID_NEXT='AUTOMATIC'"
+      pure ()
 
 -- | Wait until all GTIDs in Retrieved_Gtid_Set are applied (appear in Executed_Gtid_Set).
 -- Polls SHOW REPLICA STATUS at 1-second intervals.
@@ -323,35 +374,55 @@ checkClonePlugin conn = do
   rows <- consumeRows stream
   pure (not (null rows))
 
+-- | Pure builder for @SET GLOBAL clone_valid_donor_list = \'host:port\'@.
+buildSetCloneValidDonorListSql :: Text -> Int -> Either Text Text
+buildSetCloneValidDonorListSql donorHost donorPort = do
+  validHost <- validateIdentifierLike donorHost
+  let donor = validHost <> ":" <> T.pack (show donorPort)
+  pure ("SET GLOBAL clone_valid_donor_list = " <> quoteSqlString donor)
+
 -- | Set the clone_valid_donor_list system variable on the recipient.
 -- MySQL requires the donor host:port to be in this list before CLONE will proceed.
 setCloneValidDonorList :: MySQLConn -> Text -> Int -> IO ()
-setCloneValidDonorList conn donorHost donorPort = do
-  let sql = "SET GLOBAL clone_valid_donor_list = '"
-            <> donorHost <> ":" <> T.pack (show donorPort) <> "'"
-  _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
-  pure ()
+setCloneValidDonorList conn donorHost donorPort =
+  case buildSetCloneValidDonorListSql donorHost donorPort of
+    Left err  -> throwIO (userError (T.unpack err))
+    Right sql -> do
+      _ <- execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+      pure ()
+
+-- | Pure builder for @CLONE INSTANCE FROM \'user\'@\'host\':port IDENTIFIED BY \'password\'@.
+buildCloneInstanceSql :: Text -> Int -> DbCredentials -> Either Text Text
+buildCloneInstanceSql donorHost donorPort DbCredentials{..} = do
+  validHost <- validateIdentifierLike donorHost
+  validUser <- validateIdentifierLike dbUser
+  pure $
+    "CLONE INSTANCE FROM " <> quoteSqlString validUser
+      <> "@" <> quoteSqlString validHost
+      <> ":" <> T.pack (show donorPort)
+      <> " IDENTIFIED BY " <> quoteSqlString dbPassword
 
 -- | Execute CLONE INSTANCE FROM on a recipient node connection.
 -- The recipient MySQL instance clones data from the specified donor.
 -- NOTE: The MySQL process restarts after cloning; the connection will be dropped.
 cloneInstanceFrom :: MySQLConn -> Text -> Int -> DbCredentials -> IO ()
-cloneInstanceFrom conn donorHost donorPort DbCredentials{..} = do
-  let sql = "CLONE INSTANCE FROM '" <> dbUser <> "'@'" <> donorHost <> "':"
-            <> T.pack (show donorPort) <> " IDENTIFIED BY '" <> dbPassword <> "'"
-  -- After a successful CLONE, MySQL restarts and closes the TCP connection.
-  -- mysql-haskell throws NetworkException (not IOException) on EOF (io-streams
-  -- returns Nothing). MySQL may also send ER_SERVER_SHUTDOWN (code 1053) as an
-  -- ERRException before restarting. Both indicate success. Re-throw any other
-  -- ERRException (wrong credentials, donor unreachable, etc.).
-  result <- try @SomeException $ execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
-  case result of
-    Right _ -> pure ()
-    Left e  ->
-      case fromException @ERRException e of
-        Just (ERRException err) | errCode err `elem` [1053, 3707] -> pure ()
-        Just _  -> throwIO e
-        Nothing -> pure ()
+cloneInstanceFrom conn donorHost donorPort creds =
+  case buildCloneInstanceSql donorHost donorPort creds of
+    Left err  -> throwIO (userError (T.unpack err))
+    Right sql -> do
+      -- After a successful CLONE, MySQL restarts and closes the TCP connection.
+      -- mysql-haskell throws NetworkException (not IOException) on EOF (io-streams
+      -- returns Nothing). MySQL may also send ER_SERVER_SHUTDOWN (code 1053) as an
+      -- ERRException before restarting. Both indicate success. Re-throw any other
+      -- ERRException (wrong credentials, donor unreachable, etc.).
+      result <- try @SomeException $ execute_ conn (toQuery (BL.fromStrict (TE.encodeUtf8 sql)))
+      case result of
+        Right _ -> pure ()
+        Left e  ->
+          case fromException @ERRException e of
+            Just (ERRException err) | errCode err `elem` [1053, 3707] -> pure ()
+            Just _  -> throwIO e
+            Nothing -> pure ()
 
 -- | A row from performance_schema.processlist
 data ProcessInfo = ProcessInfo
