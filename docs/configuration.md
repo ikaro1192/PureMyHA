@@ -56,6 +56,38 @@ See [`config/config.yaml.example`](../config/config.yaml.example) for the comple
 
 The `logging` section is optional and global (defaults to `/var/log/puremyha.log` and `log_level: info` when omitted).
 
+## Hooks
+
+Shell scripts invoked at key lifecycle events. See [docs/features.md](features.md#hooks) for the full list of hooks.
+
+### Security requirements
+
+`puremyhad` typically runs as root, so every configured hook script is validated each time it is about to be executed. A hook is refused if any of these checks fail:
+
+- **Absolute path** — relative paths are rejected.
+- **Regular file** — symlinks, directories, and device files are rejected. Symlinks are explicitly disallowed to prevent TOCTOU swaps after config load.
+- **Trusted owner** — the file's owner UID must be 0 (root) or the UID running `puremyhad`.
+- **Not world-writable** — `mode & 0o002` must be zero.
+
+The recommended install is `chown root:root` and `chmod 0755` for every hook script, living in a directory that is itself not world-writable.
+
+A rejected `pre_failover` or `pre_switchover` hook aborts the operation (because the operator explicitly opted into a pre-check that cannot be trusted). A rejected fire-and-forget hook is logged and skipped; the surrounding operation continues.
+
+### `hook_timeout`
+
+```yaml
+hooks:
+  hook_timeout: 30s   # default: 30s
+```
+
+Maximum wall-clock time for any single hook invocation. On overrun the daemon:
+
+1. sends `SIGTERM` to the hook's process group (the child is started as a new group leader so any subprocesses it forked are included),
+2. waits up to 2 seconds for the group to exit,
+3. sends `SIGKILL` to the group, reaps the child, and returns an error.
+
+This prevents a stuck pre-hook from indefinitely blocking failover and prevents fire-and-forget hooks from leaking processes.
+
 ## TLS
 
 PureMyHA supports optional TLS for MySQL connections on a per-cluster basis via the `tls:` key.

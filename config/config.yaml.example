@@ -62,6 +62,12 @@ global:
                                                # same AZ and can fail simultaneously (e.g. AZ outage).
                                                # Default: false. See docs/failover.md for tradeoffs.
   hooks:
+    # Each configured hook script must, at invocation time, be an absolute
+    # path, a regular file (not a symlink or directory), owned by root or the
+    # user running puremyhad, and must NOT have the world-writable bit set
+    # (mode & 0o002 == 0). Hooks failing any check are refused; for pre-hooks
+    # this aborts the failover/switchover. Recommended: chown root:root and
+    # chmod 0755 on every hook script.
     pre_failover: /etc/puremyha/hooks/pre_failover.sh
     post_failover: /etc/puremyha/hooks/post_failover.sh
     pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
@@ -77,6 +83,7 @@ global:
     on_topology_drift: /etc/puremyha/hooks/on_topology_drift.sh                    # optional; fired on transition to topology drift state (False→True only)
                                                                                     # Env: PUREMYHA_CLUSTER, PUREMYHA_DRIFT_TYPE (missing_node|unexpected_node|replica_count_below_threshold),
                                                                                     #      PUREMYHA_DRIFT_DETAILS, PUREMYHA_TIMESTAMP
+    hook_timeout: 30s                                                              # max wall-clock time per hook; process group is SIGTERM'd then SIGKILL'd on overrun. Default: 30s
 
 logging:                               # optional logging configuration
   log_file: /var/log/puremyha.log    # default: /var/log/puremyha.log
