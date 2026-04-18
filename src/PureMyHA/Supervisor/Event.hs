@@ -191,8 +191,14 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
 
       -- 12. Cluster-level health recomputation
       minReplicas = fcMinReplicasForFailover fc
-      !newClusterHealth = detectClusterHealth minReplicas newNodes
       !newSrcId = identifySource (Map.elems newNodes)
+      -- Keep nsRole in sync with ctSourceNodeId so a node identified via
+      -- identifySource's fallback branch isn't left with a stale Replica
+      -- role (same invariant enforced by buildClusterTopology).
+      !syncedNodes = case newSrcId of
+        Nothing  -> newNodes
+        Just sid -> Map.adjust (\ns -> ns { nsRole = Source }) sid newNodes
+      !newClusterHealth = detectClusterHealth minReplicas syncedNodes
       observedHealthy = case ctObservedHealthy ct of
         HasBeenObservedHealthy -> HasBeenObservedHealthy
         NeverObservedHealthy
@@ -217,7 +223,7 @@ applyEvent fdc fc mc ct (NodeProbed nid probeResult errantGtids probeTime) =
 
       -- 15. Assemble new topology
       !newCt = ct
-        { ctNodes           = newNodes
+        { ctNodes           = syncedNodes
         , ctHealth          = newClusterHealth
         , ctSourceNodeId    = newSrcId
         , ctObservedHealthy = observedHealthy

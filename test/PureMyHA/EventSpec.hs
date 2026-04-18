@@ -167,6 +167,42 @@ spec = describe "PureMyHA.Supervisor.Event" $ do
           (newTopo, _) = applyEvent fdc3 testFc testMc topo event
       ctHealth newTopo `shouldNotBe` Healthy
 
+    it "syncs nsRole to Source when identifySource falls back via replica-reported source" $ do
+      let -- db1 was previously demoted to Replica but its probe result no
+          -- longer carries replica status (stale state after a prior
+          -- FailoverCommitted / NodeDemoted). db2 is still a Replica and
+          -- points to db1 as its source, so identifySource's fallback
+          -- branch should identify db1.
+          staleDemoted = healthySource { nsRole = Replica }
+          nodes = Map.fromList
+            [ (nsNodeId staleDemoted, staleDemoted)
+            , (nsNodeId healthyReplica, healthyReplica)
+            ]
+          topo = (mkTopo nodes) { ctSourceNodeId = Nothing }
+          event = NodeProbed replicaId
+            (ProbeSuccess fixedTime (Just (mkReplicaStatus "db1" 3306 IOYes "uuid1:1-100")) emptyGtidSet)
+            emptyGtidSet fixedTime
+          (newTopo, _) = applyEvent testFdc testFc testMc topo event
+      ctSourceNodeId newTopo `shouldBe` Just sourceId
+      fmap nsRole (Map.lookup sourceId (ctNodes newTopo)) `shouldBe` Just Source
+
+    it "leaves node roles unchanged when identifySource returns Nothing" $ do
+      let -- Two replicas that reference a host which is not part of the
+          -- cluster. identifySource's fallback cannot match, so newSrcId
+          -- must be Nothing and nsRole must not be forced to Source.
+          ghostRs = mkReplicaStatus "ghost-host" 9999 IOYes "uuid1:1-1"
+          n1 = mkNodeState (unsafeNodeId "dbx" 3306) Replica (Just ghostRs) Healthy
+          n2 = mkNodeState (unsafeNodeId "dby" 3306) Replica (Just ghostRs) Healthy
+          nodes = Map.fromList [(nsNodeId n1, n1), (nsNodeId n2, n2)]
+          topo = (mkTopo nodes) { ctSourceNodeId = Nothing }
+          event = NodeProbed (nsNodeId n1)
+            (ProbeSuccess fixedTime (Just ghostRs) emptyGtidSet)
+            emptyGtidSet fixedTime
+          (newTopo, _) = applyEvent testFdc testFc testMc topo event
+      ctSourceNodeId newTopo `shouldBe` Nothing
+      fmap nsRole (Map.lookup (nsNodeId n1) (ctNodes newTopo)) `shouldBe` Just Replica
+      fmap nsRole (Map.lookup (nsNodeId n2) (ctNodes newTopo)) `shouldBe` Just Replica
+
   describe "applyEvent FailoverCommitted" $ do
     it "demotes old sources and promotes new source" $ do
       let topo = mkTopo clusterHealthy
