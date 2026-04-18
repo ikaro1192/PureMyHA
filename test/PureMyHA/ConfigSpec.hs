@@ -306,6 +306,60 @@ spec = do
             Nothing -> expectationFailure "expected hooks to be set"
             Just h  -> hcOnTopologyDrift h `shouldSatisfy` isNothing
 
+    it "hook_timeout defaults to 30s when absent" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    hooks:"
+            , "      pre_failover: /etc/puremyha/hooks/pre_failover.sh"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg ->
+          case ccHooks (NE.head (cfgClusters cfg)) of
+            Nothing -> expectationFailure "expected hooks to be set"
+            Just h  -> unPositiveDuration (hcTimeout h) `shouldBe` 30
+
+    it "parses explicit hook_timeout" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    hooks:"
+            , "      pre_failover: /etc/puremyha/hooks/pre_failover.sh"
+            , "      hook_timeout: 5s"
+            , globalBlock
+            ]
+      case decodeConfig yaml of
+        Left err -> expectationFailure err
+        Right cfg ->
+          case ccHooks (NE.head (cfgClusters cfg)) of
+            Nothing -> expectationFailure "expected hooks to be set"
+            Just h  -> unPositiveDuration (hcTimeout h) `shouldBe` 5
+
+    it "rejects zero hook_timeout" $ do
+      let yaml = BC.pack $ unlines
+            [ "clusters:"
+            , "  - name: test"
+            , "    nodes: [{host: db1}]"
+            , "    credentials:"
+            , "      user: u"
+            , "      password_file: /dev/null"
+            , "    hooks:"
+            , "      pre_failover: /etc/puremyha/hooks/pre_failover.sh"
+            , "      hook_timeout: 0s"
+            , globalBlock
+            ]
+      decodeConfig yaml `shouldSatisfy` isLeft
+
     it "fails when monitoring is absent from both cluster and global" $ do
       let yaml = BC.pack $ unlines
             [ "clusters:"

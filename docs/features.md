@@ -138,6 +138,15 @@ Shell hooks are called at key lifecycle events. All hooks receive cluster and no
 | `on_lag_threshold_exceeded` | Replica crosses `replication_lag_critical` — provides `PUREMYHA_NODE` (replica hostname) and `PUREMYHA_LAG_SECONDS` |
 | `on_lag_threshold_recovered` | Replica recovers below `replication_lag_critical` — provides `PUREMYHA_NODE` (replica hostname) |
 
+**Security requirements.** Because `puremyhad` typically runs as root, every configured hook script is validated immediately before execution. A hook is refused unless all of the following hold:
+
+- the configured path is absolute,
+- the path resolves to a regular file (symlinks and directories are rejected, to prevent TOCTOU swap),
+- the file is owned by root or by the user running `puremyhad`,
+- the file is not world-writable (`mode & 0o002 == 0`).
+
+A rejected `pre_failover` or `pre_switchover` hook aborts the operation; a rejected fire-and-forget hook is skipped. Every hook invocation is also bounded by `hook_timeout` (default 30s): on overrun the process group is sent `SIGTERM`, and `SIGKILL` after a short grace period, so a stuck hook cannot indefinitely block a failover.
+
 See [docs/configuration.md](configuration.md) for hook configuration syntax.
 
 ### Optional TLS

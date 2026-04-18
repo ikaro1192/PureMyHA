@@ -34,4 +34,11 @@ RUN apt-get update && \
 COPY --from=selected /staging/puremyhad /usr/sbin/puremyhad
 COPY --from=selected /staging/puremyha  /usr/bin/puremyha
 
+# Hook scripts are baked into the image with root ownership so that the
+# daemon's runtime validator (which rejects files not owned by root or the
+# daemon user) accepts them. Bind-mounting hooks from the host would expose
+# them with the host user's UID, which the validator would reject.
+COPY --chown=root:root e2e/config/hooks /opt/puremyha/hooks
+RUN chmod 0755 /opt/puremyha/hooks/*.sh
+
 CMD ["puremyhad"]

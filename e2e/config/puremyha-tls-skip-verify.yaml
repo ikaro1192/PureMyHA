@@ -19,10 +19,10 @@ clusters:
       candidate_priority:
         - host: mysql-replica1
     hooks:
-      pre_failover: /etc/puremyha/hooks/pre_failover.sh
-      post_failover: /etc/puremyha/hooks/post_failover.sh
-      pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
-      post_switchover: /etc/puremyha/hooks/post_switchover.sh
+      pre_failover: /opt/puremyha/hooks/pre_failover.sh
+      post_failover: /opt/puremyha/hooks/post_failover.sh
+      pre_switchover: /opt/puremyha/hooks/pre_switchover.sh
+      post_switchover: /opt/puremyha/hooks/post_switchover.sh
 
 http:
   enabled: true

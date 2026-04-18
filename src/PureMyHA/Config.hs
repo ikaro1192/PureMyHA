@@ -248,6 +248,7 @@ data HooksConfig = HooksConfig
   , hcOnLagThresholdExceeded      :: Maybe FilePath  -- ^ Fired when a replica transitions to Lagging health
   , hcOnLagThresholdRecovered     :: Maybe FilePath  -- ^ Fired when a replica recovers from Lagging health
   , hcOnTopologyDrift             :: Maybe FilePath  -- ^ Fired on transition to topology drift state
+  , hcTimeout                     :: PositiveDuration  -- ^ Max execution time per hook; the process group is killed on overrun (default 30s)
   } deriving (Show, Generic)
 
 -- | A strictly positive duration (> 0).
@@ -486,6 +487,7 @@ instance FromJSON HooksConfig where
       <*> o .:? "on_lag_threshold_exceeded"
       <*> o .:? "on_lag_threshold_recovered"
       <*> o .:? "on_topology_drift"
+      <*> o .:? "hook_timeout" .!= PositiveDuration 30
 
 loadConfig :: FilePath -> IO (Either String Config)
 loadConfig path = do

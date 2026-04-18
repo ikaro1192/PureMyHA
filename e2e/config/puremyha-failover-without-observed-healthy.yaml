@@ -18,13 +18,13 @@ clusters:
         - host: mysql-replica1
       failover_without_observed_healthy: true
     hooks:
-      pre_failover: /etc/puremyha/hooks/pre_failover.sh
-      post_failover: /etc/puremyha/hooks/post_failover.sh
-      pre_switchover: /etc/puremyha/hooks/pre_switchover.sh
-      post_switchover: /etc/puremyha/hooks/post_switchover.sh
-      on_lag_threshold_exceeded: /etc/puremyha/hooks/on_lag_threshold_exceeded.sh
-      on_lag_threshold_recovered: /etc/puremyha/hooks/on_lag_threshold_recovered.sh
-      on_topology_drift: /etc/puremyha/hooks/on_topology_drift.sh
+      pre_failover: /opt/puremyha/hooks/pre_failover.sh
+      post_failover: /opt/puremyha/hooks/post_failover.sh
+      pre_switchover: /opt/puremyha/hooks/pre_switchover.sh
+      post_switchover: /opt/puremyha/hooks/post_switchover.sh
+      on_lag_threshold_exceeded: /opt/puremyha/hooks/on_lag_threshold_exceeded.sh
+      on_lag_threshold_recovered: /opt/puremyha/hooks/on_lag_threshold_recovered.sh
+      on_topology_drift: /opt/puremyha/hooks/on_topology_drift.sh
 
 http:
   enabled: true
