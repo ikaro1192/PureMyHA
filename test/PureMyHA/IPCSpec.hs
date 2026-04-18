@@ -1,14 +1,21 @@
 module PureMyHA.IPCSpec (spec) where
 
 import Control.Concurrent.Async (async, wait)
+import Control.Exception (bracket)
 import Data.Aeson (encode, decode)
+import Data.Bits ((.&.))
 import qualified Data.ByteString as BS
 import qualified Data.ByteString.Char8 as BSC
 import qualified Data.ByteString.Lazy.Char8 as BLC
 import Network.Socket (socketPair, Family (..), SocketType (..), close)
 import qualified Network.Socket.ByteString as NSB
+import System.Directory (getTemporaryDirectory)
+import System.FilePath ((</>))
+import System.Posix.Files (fileMode, getFileStatus, removeLink)
+import System.Posix.Process (getProcessID)
 import Test.Hspec
 import PureMyHA.IPC.Protocol
+import PureMyHA.IPC.Server (openListenSocket)
 import PureMyHA.IPC.Socket (recvLine, maxLineLength)
 import Data.Text (Text)
 import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet, parseGtidSet)
@@ -276,6 +283,15 @@ spec = do
       case result of
         Left msg -> msg `shouldBe` "Line too long (exceeds 1 MiB)"
         Right _  -> expectationFailure "expected Left but got Right"
+
+  describe "openListenSocket" $
+    it "creates the socket file with mode 0o600" $ do
+      tmp <- getTemporaryDirectory
+      pid <- getProcessID
+      let path = tmp </> ("puremyha-test-" <> show pid <> ".sock")
+      bracket (openListenSocket path) (\sock -> close sock >> removeLink path) $ \_ -> do
+        st <- getFileStatus path
+        (fromIntegral (fileMode st) .&. (0o777 :: Int)) `shouldBe` 0o600
 
 roundTrip :: Request -> Maybe Request
 roundTrip = decode . encode

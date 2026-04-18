@@ -239,6 +239,16 @@ echo "show stat" | socat stdio /run/haproxy/admin.sock
 pcs resource reload puremyhad
 ```
 
+### IPC socket security model
+
+`puremyhad` creates its control socket (`/run/puremyhad.sock` by default, or the path passed to `--socket`) with file mode **`0600`**. Only the UID that runs the daemon can issue IPC control requests (status, switchover, failover acknowledgement, clone, pause/resume, set-log-level, etc.).
+
+Operational implications:
+
+- The `puremyha` CLI must be executed as the **same UID** as the daemon, or as `root`. On a default systemd deployment the daemon runs as `root`, so `sudo puremyha ...` is the expected invocation pattern.
+- If you configure a dedicated service user (e.g. `User=puremyha` in the systemd unit), make sure that user owns the directory containing the socket and that operators invoking `puremyha` can `sudo -u puremyha ...`.
+- Sharing the socket across users via group permissions is **not** supported. If you need remote or multi-user access, front the daemon with an external authenticated control plane rather than relaxing the socket mode.
+
 ### MySQL operations (Docker Compose demo)
 
 The demo Makefile provides targets for MySQL-level operations via the `puremyha` CLI. These commands are automatically routed to the Pacemaker node currently running `puremyhad`.
