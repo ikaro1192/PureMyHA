@@ -9,10 +9,10 @@ clusters:
         port: 3306
     credentials:
       user: puremyha
-      password_file: /etc/puremyha/mysql.pass
+      password_file: /etc/puremyha-secrets/mysql.pass
     replication_credentials:
       user: repl
-      password_file: /etc/puremyha/repl.pass
+      password_file: /etc/puremyha-secrets/repl.pass
     tls:
       mode: verify-ca
       ca_cert: /etc/puremyha/tls/ca-cert.pem

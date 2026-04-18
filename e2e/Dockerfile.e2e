@@ -41,4 +41,12 @@ COPY --from=selected /staging/puremyha  /usr/bin/puremyha
 COPY --chown=root:root e2e/config/hooks /opt/puremyha/hooks
 RUN chmod 0755 /opt/puremyha/hooks/*.sh
 
+# Password files are baked into the image rather than bind-mounted from the
+# host: the daemon's startup validator rejects password files that are not
+# owned by root/daemon or whose mode allows group/other access, which a host
+# bind-mount would otherwise violate (host UID + 0644 umask).
+COPY --chown=root:root e2e/config/mysql.pass /etc/puremyha-secrets/mysql.pass
+COPY --chown=root:root e2e/config/repl.pass /etc/puremyha-secrets/repl.pass
+RUN chmod 0600 /etc/puremyha-secrets/mysql.pass /etc/puremyha-secrets/repl.pass
+
 CMD ["puremyhad"]

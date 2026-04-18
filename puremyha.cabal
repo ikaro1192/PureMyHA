@@ -44,6 +44,7 @@ library
     PureMyHA.Logger
     PureMyHA.Env
     PureMyHA.Hook
+    PureMyHA.PasswordFile
     PureMyHA.MySQL.Clone
     PureMyHA.MySQL.Connection
     PureMyHA.MySQL.Query
@@ -131,6 +132,7 @@ test-suite puremyha-test
     PureMyHA.DemoteSpec
     PureMyHA.PauseReplicaSpec
     PureMyHA.HookSpec
+    PureMyHA.PasswordFileSpec
   build-depends:
     puremyha,
     async            >= 2.2,
