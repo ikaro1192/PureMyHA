@@ -59,8 +59,10 @@ else
   ((FAIL_COUNT++)) || true
 fi
 
-# Daemon logs should mention the rejection reason
-daemon_log=$($COMPOSE logs puremyhad 2>&1 || echo "")
+# Daemon logs should mention the rejection reason. The daemon writes its
+# structured log to the file configured in puremyha.yaml (not container
+# stdout), so we cat that file from inside the container.
+daemon_log=$($COMPOSE exec -T puremyhad cat /var/log/puremyha.log 2>/dev/null || echo "")
 assert_contains "Daemon log mentions world-writable rejection" "world-writable" "$daemon_log"
 
 test_summary
