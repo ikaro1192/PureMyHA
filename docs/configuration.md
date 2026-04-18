@@ -46,6 +46,16 @@ GRANT REPLICATION SLAVE ON *.* TO 'repl'@'%';
 
 > **Note:** If you use the same account for both monitoring and replication, omit `replication_credentials` from the config. PureMyHA will fall back to `credentials` automatically.
 
+### Password file security requirements
+
+Each `password_file` is validated at startup. `puremyhad` refuses to start if any of these checks fail:
+
+- **Regular file** — symlinks, directories, and device files are rejected (symlinks are explicitly disallowed to prevent TOCTOU swaps after config load).
+- **Trusted owner** — the file's owner UID must be 0 (root) or the UID running `puremyhad`.
+- **Owner-only access** — `mode & 0o077` must be zero, i.e. no group- or other-permission bit is set. Acceptable modes are `0600` (owner read/write) or `0400` (owner read-only).
+
+Recommended install: `chown root:root /etc/puremyha/*.pass && chmod 0600 /etc/puremyha/*.pass`.
+
 ## Full Configuration Reference
 
 See [`config/config.yaml.example`](../config/config.yaml.example) for the complete annotated configuration file.

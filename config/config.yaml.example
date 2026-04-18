@@ -7,6 +7,9 @@ clusters:
         port: 3306
     credentials:
       user: puremyha
+      # password_file must be a regular file (not a symlink), owned by root or
+      # the user running puremyhad, and readable only by its owner (mode 0600
+      # or 0400). The daemon refuses to start otherwise.
       password_file: /etc/puremyha/mysql.pass
     replication_credentials:           # optional; falls back to credentials if omitted
       user: repl

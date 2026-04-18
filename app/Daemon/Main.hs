@@ -23,6 +23,7 @@ import PureMyHA.Env (ClusterEnv (..), runApp)
 import PureMyHA.HTTP.Server (startHTTPServer)
 import PureMyHA.IPC.Server (startIPCServer, defaultSocketPath, DiscoveryAction (..), ClusterMap (..), DiscoveryMap (..))
 import PureMyHA.Logger (Logger, initLogger, closeLogger, reopenLogger, setLogLevel, logInfo, logWarn)
+import qualified PureMyHA.PasswordFile as PasswordFile
 import PureMyHA.Supervisor.StateManager (newEventQueue, stateManager)
 import PureMyHA.Supervisor.Worker (startMonitorWorkers, startTopologyRefreshWorker, WorkerRegistry (..), runWorker, emergencyReplicaCheck)
 import PureMyHA.Topology.Discovery (discoverTopology, buildInitialTopology)
@@ -263,9 +264,9 @@ loadClusterPasswords cc = do
 
 loadPassword :: Credentials -> IO Text
 loadPassword creds = do
-  result <- try @SomeException $ T.strip . T.pack <$> readFile (credPasswordFile creds)
+  result <- PasswordFile.loadPassword (credPasswordFile creds)
   case result of
-    Left err  -> die $ "Failed to read password file: " <> show err
+    Left err  -> die $ T.unpack err
     Right pwd -> pure pwd
 
 makeDiscoveryAction :: ClusterEnv -> WorkerRegistry -> DiscoveryAction
