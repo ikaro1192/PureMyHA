@@ -19,6 +19,7 @@ import PureMyHA.Config
   , defaultLoggingConfig, defaultHttpConfig
   , TLSMode (..), TLSMinVersion (..), TLSConfig (..)
   , NodeConfig (..), Credentials (..)
+  , DbCredentials (..), ClusterPasswords (..)
   , Port (..), PositiveDuration (..), AtLeastOne (..)
   , AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..)
   )
@@ -962,6 +963,26 @@ spec = do
     it "returns Left for a non-existent file" $ do
       result <- loadConfig "/nonexistent/path/puremyha-test.yaml"
       result `shouldSatisfy` isLeft
+
+  describe "DbCredentials Show instance (no password leak)" $ do
+    let creds = DbCredentials "alice" "s3cret!"
+    it "does not include the plaintext password" $
+      show creds `shouldNotContain` "s3cret!"
+    it "displays the user name" $
+      show creds `shouldContain` "alice"
+    it "includes a redaction marker" $
+      show creds `shouldContain` "<redacted>"
+
+  describe "ClusterPasswords Show instance (no password leak)" $ do
+    let cp = ClusterPasswords
+              (DbCredentials "mon"  "monPass123")
+              (DbCredentials "repl" "replPass456")
+    it "does not leak monitoring password" $
+      show cp `shouldNotContain` "monPass123"
+    it "does not leak replication password" $
+      show cp `shouldNotContain` "replPass456"
+    it "still shows structure for debugging" $
+      show cp `shouldContain` "ClusterPasswords"
 
 -- | A minimal valid ClusterConfig for direct validateConfig testing
 minimalCluster :: ClusterConfig

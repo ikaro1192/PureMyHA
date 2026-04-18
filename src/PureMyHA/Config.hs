@@ -166,12 +166,22 @@ data RawClusterConfig = RawClusterConfig
 data DbCredentials = DbCredentials
   { dbUser     :: Text
   , dbPassword :: Text
-  } deriving (Show)
+  }
+
+-- | Hand-written 'Show' instance that redacts 'dbPassword'. Prevents
+-- accidental leakage of cleartext DB passwords via logs or exception messages.
+instance Show DbCredentials where
+  show c = "DbCredentials {dbUser = " ++ show (dbUser c)
+        ++ ", dbPassword = <redacted>}"
 
 data ClusterPasswords = ClusterPasswords
   { cpMonCredentials  :: DbCredentials  -- ^ monitoring/management credentials
   , cpReplCredentials :: DbCredentials  -- ^ replication credentials
-  } deriving (Show)
+  }
+
+instance Show ClusterPasswords where
+  show cp = "ClusterPasswords {cpMonCredentials = " ++ show (cpMonCredentials cp)
+         ++ ", cpReplCredentials = " ++ show (cpReplCredentials cp) ++ "}"
 
 data NodeConfig = NodeConfig
   { ncHost :: Text
