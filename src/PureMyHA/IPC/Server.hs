@@ -1,5 +1,6 @@
 module PureMyHA.IPC.Server
   ( startIPCServer
+  , openListenSocket
   , defaultSocketPath
   , DiscoveryAction (..)
   , ClusterMap (..)
@@ -32,7 +33,7 @@ import PureMyHA.Failover.Demote (runDemote, dryRunDemote)
 import PureMyHA.Failover.PauseReplica (runPauseReplica, runResumeReplica, runStopReplication, runStartReplication)
 import PureMyHA.Failover.ErrantGtid (runFixErrantGtid, dryRunFixErrantGtid)
 import PureMyHA.Failover.Switchover (runSwitchover, dryRunSwitchover)
-import System.Posix.Files (removeLink)
+import System.Posix.Files (removeLink, setFileMode)
 import PureMyHA.IPC.Protocol
 import PureMyHA.MySQL.GTID (isEmptyGtidSet)
 import qualified PureMyHA.IPC.Socket as IPCSocket
@@ -66,6 +67,9 @@ openListenSocket path = do
   sock <- socket AF_UNIX Stream defaultProtocol
   removeLink path `catch` \(_ :: SomeException) -> pure ()  -- remove stale socket file
   bind sock (SockAddrUnix path)
+  -- Restrict IPC socket to owner-only: any local user who could connect
+  -- would otherwise be able to issue privileged control-plane operations.
+  setFileMode path 0o600
   pure sock
 
 acceptLoop :: Socket -> TVarDaemonState -> ClusterMap -> DiscoveryMap -> TVar Logger -> IO ()
