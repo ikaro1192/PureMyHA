@@ -68,7 +68,8 @@ withTargetNodeNoMySQL actionName targetHost mkEvent = do
       case findNodeByHost targetHost (ctNodes topo) of
         Nothing -> pure (Left $ "Node not found: " <> unHostName targetHost)
         Just targetNs
-          | isSource targetNs -> pure (Left $ sourceRejectionMsg actionName targetHost)
+          | isClusterSource topo targetNs ->
+              pure (Left $ sourceRejectionMsg actionName targetHost)
           | otherwise -> do
               liftIO $ atomically $ writeTBQueue queue (mkEvent (nsNodeId targetNs))
               appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replica " <> unHostName targetHost
@@ -94,7 +95,8 @@ withTargetNode actionName targetHost mysqlAction mkEvent = do
       case findNodeByHost targetHost (ctNodes topo) of
         Nothing -> pure (Left $ "Node not found: " <> unHostName targetHost)
         Just targetNs
-          | isSource targetNs -> pure (Left $ sourceRejectionMsg actionName targetHost)
+          | isClusterSource topo targetNs ->
+              pure (Left $ sourceRejectionMsg actionName targetHost)
           | otherwise -> do
               let ci = makeConnectInfo (nsNodeId targetNs) creds
               appLogInfo $ "[" <> unClusterName (ccName cc) <> "] " <> actionName <> " replication on " <> unHostName targetHost
@@ -112,6 +114,18 @@ withTargetNode actionName targetHost mysqlAction mkEvent = do
       "Stopping" -> "stopped"
       "Starting" -> "started"
       other      -> other
+
+-- | Cluster-source check that reconciles per-node and cluster-level views.
+-- Treats a node as source if either its own nsRole is Source or the
+-- cluster-level ctSourceNodeId points at it. During the window after a
+-- failover + cluster reset, identifySource's fallback can restore
+-- ctSourceNodeId to the pre-failover source before that node's own
+-- NodeProbed event refreshes its nsRole from stale Replica to Source.
+-- Checking ctSourceNodeId in addition to nsRole makes pause/resume
+-- rejection agree with what CLI status reports as sourceHost.
+isClusterSource :: ClusterTopology -> NodeState -> Bool
+isClusterSource topo ns =
+  isSource ns || ctSourceNodeId topo == Just (nsNodeId ns)
 
 -- | Build a rejection message for source nodes.
 sourceRejectionMsg :: Text -> HostName -> Text
