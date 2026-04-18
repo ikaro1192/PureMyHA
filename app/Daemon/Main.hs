@@ -1,10 +1,11 @@
 module Main (main) where
 
 import Control.Concurrent.Async (Async, async, waitAnyCancel, race_, cancel)
+import Control.Concurrent.MVar  (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM   (TMVar, TVar, atomically, newTVarIO, newEmptyTMVarIO,
                                   putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
-import Control.Monad (void, forM_)
+import Control.Monad (forever, void, forM_)
 import Data.Foldable (find)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
@@ -62,10 +63,13 @@ main = do
   clusterEnvs      <- mapM (initCluster tvar loggerVar) clusterPasswords
 
   httpAsyncVar <- newTVarIO Nothing
-  installHUPHandler (optConfigPath opts) clusterEnvs loggerVar httpAsyncVar tvar
+  hupVar <- installHUPSignaller
   installUSR1Handler (lcLogFile (cfgLogging cfg)) loggerVar
 
-  allWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar loggerVar
+  baseWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar loggerVar
+  reloadAsync <- async
+    (configReloadWorker hupVar (optConfigPath opts) clusterEnvs loggerVar httpAsyncVar tvar)
+  let allWorkers = reloadAsync : baseWorkers
   case hcEnabled (cfgHttp cfg) of
     HttpEnabled -> do
       a <- async (startHTTPServer (cfgHttp cfg) tvar)
@@ -91,32 +95,60 @@ installShutdownHandlers = do
   _ <- installHandler sigINT  h Nothing
   pure shutdownVar
 
-installHUPHandler :: FilePath -> [ClusterEnv] -> TVar Logger -> TVar (Maybe (Async ())) -> TVarDaemonState -> IO ()
-installHUPHandler configPath clusterEnvs loggerVar httpAsyncVar tvar = do
-  _ <- installHandler sigHUP (Catch $ do
-    logger <- readTVarIO loggerVar
-    eCfg' <- loadConfig configPath
-    case eCfg' of
-      Left err   -> logWarn logger $ "SIGHUP: config reload failed: " <> T.pack err
-      Right cfg' -> do
-        forM_ clusterEnvs $ \env -> do
-          let name = ccName (envCluster env)
-          case find (\cc -> ccName cc == name) (NE.toList (cfgClusters cfg')) of
-            Nothing -> logWarn logger $ "SIGHUP: cluster " <> unClusterName name <> " not found in new config"
-            Just cc -> atomically $ do
-              writeTVar (envMonitoring env) (ccMonitoring cc)
-              writeTVar (envHooks env)      (ccHooks cc)
-        mOld <- readTVarIO httpAsyncVar
-        forM_ mOld cancel
-        case hcEnabled (cfgHttp cfg') of
-          HttpEnabled -> do
-            a <- async (startHTTPServer (cfgHttp cfg') tvar)
-            atomically $ writeTVar httpAsyncVar (Just a)
-          HttpDisabled -> atomically $ writeTVar httpAsyncVar Nothing
-        setLogLevel logger (lcLogLevel (cfgLogging cfg'))
-        logInfo logger "SIGHUP: config reloaded"
-        ) Nothing
-  pure ()
+-- | Minimal async-signal-safe SIGHUP handler: only flips an MVar flag.
+-- The actual reload runs on a normal worker thread (see 'configReloadWorker').
+installHUPSignaller :: IO (MVar ())
+installHUPSignaller = do
+  hupVar <- newEmptyMVar
+  _ <- installHandler sigHUP (Catch (void (tryPutMVar hupVar ()))) Nothing
+  pure hupVar
+
+reloadConfigOnce
+  :: FilePath
+  -> [ClusterEnv]
+  -> TVar Logger
+  -> TVar (Maybe (Async ()))
+  -> TVarDaemonState
+  -> IO ()
+reloadConfigOnce configPath clusterEnvs loggerVar httpAsyncVar tvar = do
+  logger <- readTVarIO loggerVar
+  eCfg' <- loadConfig configPath
+  case eCfg' of
+    Left err   -> logWarn logger $ "SIGHUP: config reload failed: " <> T.pack err
+    Right cfg' -> do
+      forM_ clusterEnvs $ \env -> do
+        let name = ccName (envCluster env)
+        case find (\cc -> ccName cc == name) (NE.toList (cfgClusters cfg')) of
+          Nothing -> logWarn logger $ "SIGHUP: cluster " <> unClusterName name <> " not found in new config"
+          Just cc -> atomically $ do
+            writeTVar (envMonitoring env) (ccMonitoring cc)
+            writeTVar (envHooks env)      (ccHooks cc)
+      mOld <- readTVarIO httpAsyncVar
+      forM_ mOld cancel
+      case hcEnabled (cfgHttp cfg') of
+        HttpEnabled -> do
+          a <- async (startHTTPServer (cfgHttp cfg') tvar)
+          atomically $ writeTVar httpAsyncVar (Just a)
+        HttpDisabled -> atomically $ writeTVar httpAsyncVar Nothing
+      setLogLevel logger (lcLogLevel (cfgLogging cfg'))
+      logInfo logger "SIGHUP: config reloaded"
+
+configReloadWorker
+  :: MVar ()
+  -> FilePath
+  -> [ClusterEnv]
+  -> TVar Logger
+  -> TVar (Maybe (Async ()))
+  -> TVarDaemonState
+  -> IO ()
+configReloadWorker hupVar configPath clusterEnvs loggerVar httpAsyncVar tvar = forever $ do
+  takeMVar hupVar
+  r <- try @SomeException (reloadConfigOnce configPath clusterEnvs loggerVar httpAsyncVar tvar)
+  case r of
+    Right () -> pure ()
+    Left e -> do
+      logger <- readTVarIO loggerVar
+      logWarn logger $ "SIGHUP: reload worker caught exception: " <> T.pack (show e)
 
 installUSR1Handler :: FilePath -> TVar Logger -> IO ()
 installUSR1Handler logFile loggerVar = do
