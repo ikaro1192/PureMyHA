@@ -63,13 +63,14 @@ main = do
   clusterEnvs      <- mapM (initCluster tvar loggerVar) clusterPasswords
 
   httpAsyncVar <- newTVarIO Nothing
-  hupVar <- installHUPSignaller
-  installUSR1Handler (lcLogFile (cfgLogging cfg)) loggerVar
+  hupVar  <- installHUPSignaller
+  usr1Var <- installUSR1Signaller
 
-  baseWorkers <- startAllWorkers clusterEnvs (optSocketPath opts) tvar loggerVar
-  reloadAsync <- async
+  baseWorkers    <- startAllWorkers clusterEnvs (optSocketPath opts) tvar loggerVar
+  reloadAsync    <- async
     (configReloadWorker hupVar (optConfigPath opts) clusterEnvs loggerVar httpAsyncVar tvar)
-  let allWorkers = reloadAsync : baseWorkers
+  logReopenAsync <- async (logReopenWorker usr1Var (lcLogFile logCfg) loggerVar)
+  let allWorkers = reloadAsync : logReopenAsync : baseWorkers
   case hcEnabled (cfgHttp cfg) of
     HttpEnabled -> do
       a <- async (startHTTPServer (cfgHttp cfg) tvar)
@@ -150,14 +151,25 @@ configReloadWorker hupVar configPath clusterEnvs loggerVar httpAsyncVar tvar = f
       logger <- readTVarIO loggerVar
       logWarn logger $ "SIGHUP: reload worker caught exception: " <> T.pack (show e)
 
-installUSR1Handler :: FilePath -> TVar Logger -> IO ()
-installUSR1Handler logFile loggerVar = do
-  _ <- installHandler sigUSR1 (Catch $ do
+installUSR1Signaller :: IO (MVar ())
+installUSR1Signaller = do
+  usr1Var <- newEmptyMVar
+  _ <- installHandler sigUSR1 (Catch (void (tryPutMVar usr1Var ()))) Nothing
+  pure usr1Var
+
+logReopenWorker :: MVar () -> FilePath -> TVar Logger -> IO ()
+logReopenWorker usr1Var logFile loggerVar = forever $ do
+  takeMVar usr1Var
+  r <- try @SomeException $ do
     old <- readTVarIO loggerVar
     new <- reopenLogger logFile old
     atomically $ writeTVar loggerVar new
-    logInfo new "SIGUSR1: log file reopened") Nothing
-  pure ()
+    logInfo new "SIGUSR1: log file reopened"
+  case r of
+    Right () -> pure ()
+    Left e -> do
+      logger <- readTVarIO loggerVar
+      logWarn logger $ "SIGUSR1: log reopen worker caught exception: " <> T.pack (show e)
 
 startAllWorkers :: [ClusterEnv] -> FilePath -> TVarDaemonState -> TVar Logger -> IO [Async ()]
 startAllWorkers clusterEnvs socketPath tvar loggerVar = do
