@@ -46,7 +46,7 @@ Inspired by the design of Orchestrator, PureMyHA provides topology discovery, fa
 - **HTTP Endpoints** — Optional read-only HTTP listener: `/health`, `/cluster/:name/status`, `/cluster/:name/topology` for load balancers and Kubernetes probes
 - **Prometheus Metrics** — `GET /metrics` exposes cluster health, replication lag, consecutive failures, and node role
 - **Hooks** — Pre/post hooks for failover and switchover; `on_lag_threshold_exceeded` / `on_lag_threshold_recovered` for alerting
-- **Optional TLS** — Per-cluster TLS for MySQL connections with configurable verification mode and minimum TLS version
+- **Optional TLS** — Per-cluster TLS for MySQL connections with configurable verification mode and minimum TLS version (the daemon emits a startup/SIGHUP WARN when `skip-verify` is used, so development-only settings cannot silently ship to production)
 
 ### Operator Controls
 - **Config Hot-Reload** — Reloads `monitoring` and `hooks` config on SIGHUP without restart

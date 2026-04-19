@@ -34,6 +34,8 @@ module PureMyHA.Config
   , loadConfig
   , parseDuration
   , validateConfig
+  , isSkipVerify
+  , skipVerifyWarningMessage
   ) where
 
 import Control.Applicative ((<|>))
@@ -542,3 +544,12 @@ validateConfig cfg = clusterErrors
 duplicates :: Ord a => [a] -> [a]
 -- NE.head is total here: NE.group produces a [NonEmpty a].
 duplicates = map NE.head . filter ((> 1) . length) . NE.group . sort
+
+isSkipVerify :: Maybe TLSConfig -> Bool
+isSkipVerify = maybe False ((== TLSSkipVerify) . tlsMode)
+
+skipVerifyWarningMessage :: ClusterName -> Text
+skipVerifyWarningMessage name =
+  "[" <> unClusterName name <> "] WARNING: TLS mode 'skip-verify' disables"
+    <> " MySQL server certificate validation. This is insecure;"
+    <> " use 'verify-ca' or 'verify-full' in production."

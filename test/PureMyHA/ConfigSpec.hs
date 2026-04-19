@@ -9,6 +9,7 @@ import qualified Data.List.NonEmpty as NE
 import Data.Maybe (isNothing)
 import qualified Data.Yaml as Yaml
 import Test.Hspec
+import qualified Data.Text as T
 import PureMyHA.Config
   ( Config (..), ClusterConfig (..), MonitoringConfig (..)
   , FailureDetectionConfig (..), FailoverConfig (..)
@@ -22,7 +23,9 @@ import PureMyHA.Config
   , DbCredentials (..), ClusterPasswords (..)
   , Port (..), PositiveDuration (..), AtLeastOne (..)
   , AutoFailoverMode (..), FenceMode (..), ObservedHealthyRequirement (..)
+  , isSkipVerify, skipVerifyWarningMessage
   )
+import PureMyHA.Types (ClusterName (..))
 
 spec :: Spec
 spec = do
@@ -657,6 +660,32 @@ spec = do
             , globalBlock
             ]
       decodeConfig yaml `shouldSatisfy` isLeft
+
+  describe "isSkipVerify" $ do
+    let tls m = TLSConfig { tlsMode = m, tlsMinVersion = Nothing
+                          , tlsCACert = Nothing, tlsClientCert = Nothing
+                          , tlsClientKey = Nothing }
+    it "returns False when TLS is not configured" $
+      isSkipVerify Nothing `shouldBe` False
+    it "returns False for TLSDisabled" $
+      isSkipVerify (Just (tls TLSDisabled)) `shouldBe` False
+    it "returns True for TLSSkipVerify" $
+      isSkipVerify (Just (tls TLSSkipVerify)) `shouldBe` True
+    it "returns False for TLSVerifyCA" $
+      isSkipVerify (Just (tls TLSVerifyCA)) `shouldBe` False
+    it "returns False for TLSVerifyFull" $
+      isSkipVerify (Just (tls TLSVerifyFull)) `shouldBe` False
+
+  describe "skipVerifyWarningMessage" $ do
+    let msg = skipVerifyWarningMessage (ClusterName "prod-main")
+    it "includes the cluster name in brackets" $
+      T.isInfixOf "[prod-main]" msg `shouldBe` True
+    it "mentions skip-verify" $
+      T.isInfixOf "skip-verify" msg `shouldBe` True
+    it "mentions that it is insecure" $
+      T.isInfixOf "insecure" msg `shouldBe` True
+    it "starts with a WARNING marker" $
+      T.isInfixOf "WARNING" msg `shouldBe` True
 
   describe "validateConfig" $ do
     it "returns no errors for a valid config" $ do

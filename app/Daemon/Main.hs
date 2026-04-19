@@ -5,7 +5,7 @@ import Control.Concurrent.MVar  (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.Concurrent.STM   (TMVar, TVar, atomically, newTVarIO, newEmptyTMVarIO,
                                   putTMVar, takeTMVar, writeTVar, readTVarIO, modifyTVar')
 import Control.Exception (try, SomeException)
-import Control.Monad (forever, void, forM_)
+import Control.Monad (forever, void, forM_, when)
 import Data.Foldable (find)
 import qualified Data.List.NonEmpty as NE
 import Data.Maybe (fromMaybe)
@@ -122,9 +122,12 @@ reloadConfigOnce configPath clusterEnvs loggerVar httpAsyncVar tvar = do
         let name = ccName (envCluster env)
         case find (\cc -> ccName cc == name) (NE.toList (cfgClusters cfg')) of
           Nothing -> logWarn logger $ "SIGHUP: cluster " <> unClusterName name <> " not found in new config"
-          Just cc -> atomically $ do
-            writeTVar (envMonitoring env) (ccMonitoring cc)
-            writeTVar (envHooks env)      (ccHooks cc)
+          Just cc -> do
+            atomically $ do
+              writeTVar (envMonitoring env) (ccMonitoring cc)
+              writeTVar (envHooks env)      (ccHooks cc)
+            when (isSkipVerify (ccTLS cc)) $
+              logWarn logger (skipVerifyWarningMessage (ccName cc))
       mOld <- readTVarIO httpAsyncVar
       forM_ mOld cancel
       case hcEnabled (cfgHttp cfg') of
@@ -247,6 +250,8 @@ initCluster tvar loggerVar (cc, pws) = do
         }
   topo <- runApp env discoverTopology
   logger <- readTVarIO loggerVar
+  when (isSkipVerify (ccTLS cc)) $
+    logWarn logger (skipVerifyWarningMessage (ccName cc))
   logInfo logger $ "[" <> unClusterName (ccName cc) <> "] Initial discovery found "
     <> T.pack (show (Map.size (ctNodes topo))) <> " node(s)"
   atomically $ updateClusterTopology tvar topo
