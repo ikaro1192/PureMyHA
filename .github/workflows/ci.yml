@@ -227,6 +227,7 @@ jobs:
       - name: Run TLS E2E test
         env:
           STAGING: prebuilt
+          SKIP_TEARDOWN: "1"
         run: |
           cd e2e
           bash run-tls.sh
