@@ -28,6 +28,13 @@ openssl x509 -req -in client-req.pem -CA ca-cert.pem -CAkey ca-key.pem \
 # Clean up request files
 rm -f server-req.pem client-req.pem ca-cert.srl
 
+# openssl genrsa writes private keys with 0600 perms. On Linux bind mounts the
+# host UID is preserved inside the container, so mysqld (uid 999 in the
+# mysql:8.4 image) cannot read keys owned by the host user. These certs are
+# self-signed test material; relax to world-readable so the container mysql
+# user can read them via "other".
+chmod 0644 ca-key.pem server-key.pem client-key.pem
+
 echo "=== Certificate generation complete ==="
 echo "  ca-cert.pem      — CA certificate"
 echo "  server-cert.pem  — MySQL server certificate"
