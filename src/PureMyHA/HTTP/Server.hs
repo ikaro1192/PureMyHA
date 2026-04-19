@@ -2,6 +2,9 @@ module PureMyHA.HTTP.Server
   ( startHTTPServer
   , renderMetrics
   , httpApp
+  , securedHttpApp
+  , withSecurityHeaders
+  , securityHeaders
   ) where
 
 import qualified Data.ByteString.Lazy as BSL
@@ -11,8 +14,8 @@ import Data.String (fromString)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Network.HTTP.Types (status200, status404, status405, methodGet, Header)
-import Network.Wai (Application, Request (..), Response, responseLBS)
+import Network.HTTP.Types (status200, status404, status405, methodGet, Header, ResponseHeaders)
+import Network.Wai (Application, Middleware, Request (..), Response, mapResponseHeaders, responseLBS)
 import Network.Wai.Handler.Warp (defaultSettings, runSettings, setHost, setPort)
 
 import PureMyHA.Config (HttpConfig (..))
@@ -114,7 +117,24 @@ startHTTPServer cfg tvar = do
   let settings = setHost (fromString (hcListenAddress cfg))
                $ setPort (unPort (hcPort cfg))
                $ defaultSettings
-  runSettings settings (httpApp tvar)
+  runSettings settings (securedHttpApp tvar)
+
+-- | Defence-in-depth headers added to every HTTP response. The endpoints are
+-- intended for operators / load balancers, but a stray browser hit should not
+-- be MIME-sniffed, framed, or cached by an intermediary.
+securityHeaders :: ResponseHeaders
+securityHeaders =
+  [ ("X-Content-Type-Options", "nosniff")
+  , ("X-Frame-Options", "DENY")
+  , ("Cache-Control", "no-store")
+  ]
+
+withSecurityHeaders :: Middleware
+withSecurityHeaders app req respond =
+  app req (respond . mapResponseHeaders (securityHeaders ++))
+
+securedHttpApp :: TVarDaemonState -> Application
+securedHttpApp = withSecurityHeaders . httpApp
 
 httpApp :: TVarDaemonState -> Application
 httpApp tvar req respond

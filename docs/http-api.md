@@ -57,6 +57,18 @@ backend mysql_source
     server db2 db2:3306 check port 8080
 ```
 
+## Security headers
+
+Every response (including `404` and `405`) carries the following headers as defence in depth against accidental browser access:
+
+| Header | Value | Purpose |
+|--------|-------|---------|
+| `X-Content-Type-Options` | `nosniff` | Disable MIME sniffing |
+| `X-Frame-Options` | `DENY` | Block embedding in iframes (clickjacking) |
+| `Cache-Control` | `no-store` | Keep responses out of intermediate caches |
+
+These do not change the response body and are safe for `curl`, load balancers, Kubernetes probes, and Prometheus scrapers.
+
 ## Configuration
 
 ```yaml

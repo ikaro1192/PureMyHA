@@ -56,6 +56,13 @@ assert_eq "Unknown route returns 404" "404" "$status"
 status=$($COMPOSE exec -T puremyhad curl -s -o /dev/null -w "%{http_code}" -X POST "http://127.0.0.1:8080/health")
 assert_eq "POST /health returns 405" "405" "$status"
 
+# Security headers (defence-in-depth) — verify on representative endpoints
+for ep in "/health" "/cluster/e2e/status" "/metrics"; do
+  assert_eq "X-Content-Type-Options on ${ep}" "nosniff"   "$(http_get_header "${ep}" "X-Content-Type-Options")"
+  assert_eq "X-Frame-Options on ${ep}"        "DENY"      "$(http_get_header "${ep}" "X-Frame-Options")"
+  assert_eq "Cache-Control on ${ep}"          "no-store"  "$(http_get_header "${ep}" "Cache-Control")"
+done
+
 # GET /health returns 200 even when source is dead (liveness probe — daemon is still running)
 # Pause auto-failover so health stays degraded long enough to observe
 cli_pause_failover >/dev/null 2>&1
