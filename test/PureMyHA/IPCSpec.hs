@@ -18,6 +18,7 @@ import PureMyHA.IPC.Protocol
 import PureMyHA.IPC.Server (openListenSocket)
 import PureMyHA.IPC.Socket (recvLine, maxLineLength)
 import Data.Text (Text)
+import qualified Data.Text as T
 import PureMyHA.MySQL.GTID (GtidSet, emptyGtidSet, parseGtidSet)
 import PureMyHA.Types
 
@@ -272,16 +273,43 @@ spec = do
       -- Sender and receiver must run concurrently: sendAll blocks when
       -- the kernel buffer is full, and recvLine drains it.
       sender <- async $ do
-        let chunk = BS.replicate 65536 0x41  -- 64KB of 'A'
-            totalChunks = (maxLineLength `div` 65536) + 2
+        let chunkSize = 4096
+            chunk = BS.replicate chunkSize 0x41
+            totalChunks = (maxLineLength `div` chunkSize) + 2
         mapM_ (\_ -> NSB.sendAll s2 chunk) [1 :: Int .. totalChunks]
         close s2
       result <- recvLine s1
       -- Close receiver first so sender gets EPIPE and unblocks
       close s1
       _ <- async (wait sender) -- don't block on sender if it already errored
+      let expected = T.pack ("Line too long (exceeds " <> show maxLineLength <> " bytes)")
       case result of
-        Left msg -> msg `shouldBe` "Line too long (exceeds 1 MiB)"
+        Left msg -> msg `shouldBe` expected
+        Right _  -> expectationFailure "expected Left but got Right"
+
+    it "accepts payload exactly at maxLineLength (content + newline)" $ do
+      (s1, s2) <- socketPair AF_UNIX Stream 0
+      let contentLen = maxLineLength - 1
+          payload   = BS.replicate contentLen 0x42 <> BSC.singleton '\n'
+      sender <- async $ NSB.sendAll s2 payload >> close s2
+      result <- recvLine s1
+      close s1
+      _ <- async (wait sender)
+      case result of
+        Right bs -> BS.length bs `shouldBe` contentLen
+        Left msg -> expectationFailure ("expected Right but got Left: " <> show msg)
+
+    it "rejects payload one byte over maxLineLength" $ do
+      (s1, s2) <- socketPair AF_UNIX Stream 0
+      let contentLen = maxLineLength
+          payload   = BS.replicate contentLen 0x43 <> BSC.singleton '\n'
+      sender <- async $ NSB.sendAll s2 payload >> close s2
+      result <- recvLine s1
+      close s1
+      _ <- async (wait sender)
+      let expected = T.pack ("Line too long (exceeds " <> show maxLineLength <> " bytes)")
+      case result of
+        Left msg -> msg `shouldBe` expected
         Right _  -> expectationFailure "expected Left but got Right"
 
   describe "openListenSocket" $
