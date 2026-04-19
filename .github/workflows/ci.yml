@@ -191,3 +191,60 @@ jobs:
           else
             docker compose down -v --remove-orphans 2>/dev/null || true
           fi
+
+  e2e-tls:
+    name: E2E TLS Tests (${{ matrix.arch }})
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    runs-on: ${{ matrix.runner }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-22.04
+          - arch: aarch64
+            runner: ubuntu-22.04-arm
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: binaries-${{ matrix.arch }}
+          path: dist-bins/
+
+      - name: Make binaries executable
+        run: chmod +x dist-bins/puremyhad dist-bins/puremyha
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Run TLS E2E test
+        env:
+          STAGING: prebuilt
+          SKIP_TEARDOWN: "1"
+        run: |
+          cd e2e
+          bash run-tls.sh
+        timeout-minutes: 15
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          cd e2e
+          docker compose -f docker-compose.yml -f docker-compose.tls.yml logs puremyhad
+          docker compose -f docker-compose.yml -f docker-compose.tls.yml logs mysql-source
+          docker compose -f docker-compose.yml -f docker-compose.tls.yml logs mysql-replica1
+          docker compose -f docker-compose.yml -f docker-compose.tls.yml logs mysql-replica2
+
+      - name: Teardown TLS E2E environment
+        if: always()
+        run: |
+          cd e2e
+          docker compose -f docker-compose.yml -f docker-compose.tls.yml \
+            down -v --remove-orphans 2>/dev/null || true

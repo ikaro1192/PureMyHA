@@ -21,6 +21,11 @@ export COMPOSE="docker compose -f ${SCRIPT_DIR}/docker-compose.yml -f ${SCRIPT_D
 source lib/helpers.sh
 
 cleanup() {
+  if [ "${SKIP_TEARDOWN:-}" = "1" ]; then
+    echo ""
+    echo "=== Skipping teardown (SKIP_TEARDOWN=1) ==="
+    return
+  fi
   echo ""
   echo "=== Tearing down TLS E2E environment ==="
   $COMPOSE down -v --remove-orphans 2>/dev/null || true
