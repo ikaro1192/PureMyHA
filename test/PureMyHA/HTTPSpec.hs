@@ -6,12 +6,12 @@ import qualified Data.ByteString.Lazy.Char8 as BSL8
 import Data.IORef
 import qualified Data.Map.Strict as Map
 import Network.HTTP.Types (methodGet, methodPost, status200, status404, status405)
-import Network.Wai (defaultRequest, Request (..), Response, responseStatus)
+import Network.Wai (defaultRequest, Request (..), Response, responseHeaders, responseStatus)
 import Network.Wai.Internal (ResponseReceived (..))
 import Test.Hspec
 
 import Fixtures
-import PureMyHA.HTTP.Server (renderMetrics, httpApp)
+import PureMyHA.HTTP.Server (renderMetrics, httpApp, securedHttpApp, securityHeaders)
 import PureMyHA.Topology.State (newDaemonState, updateClusterTopology)
 import PureMyHA.Types
 
@@ -169,6 +169,80 @@ spec = do
       let req = defaultRequest { requestMethod = methodGet, pathInfo = ["metrics"] }
       resp <- runApp (httpApp tvar) req
       responseStatus resp `shouldBe` status200
+
+  describe "securityHeaders constant" $ do
+    it "contains exactly the three expected headers in order" $
+      securityHeaders `shouldBe`
+        [ ("X-Content-Type-Options", "nosniff")
+        , ("X-Frame-Options", "DENY")
+        , ("Cache-Control", "no-store")
+        ]
+
+  describe "securedHttpApp adds security headers" $ do
+    let expectAllSecurityHeaders resp = do
+          let hs = responseHeaders resp
+          lookup "X-Content-Type-Options" hs `shouldBe` Just "nosniff"
+          lookup "X-Frame-Options"        hs `shouldBe` Just "DENY"
+          lookup "Cache-Control"          hs `shouldBe` Just "no-store"
+
+    it "adds headers on /health (200)" $ do
+      tvar <- newDaemonState
+      let req = defaultRequest { requestMethod = methodGet, pathInfo = ["health"] }
+      resp <- runApp (securedHttpApp tvar) req
+      responseStatus resp `shouldBe` status200
+      expectAllSecurityHeaders resp
+
+    it "adds headers on unknown path (404)" $ do
+      tvar <- newDaemonState
+      let req = defaultRequest { requestMethod = methodGet, pathInfo = ["nope"] }
+      resp <- runApp (securedHttpApp tvar) req
+      responseStatus resp `shouldBe` status404
+      expectAllSecurityHeaders resp
+
+    it "adds headers on POST (405)" $ do
+      tvar <- newDaemonState
+      resp <- runApp (securedHttpApp tvar) postReq
+      responseStatus resp `shouldBe` status405
+      expectAllSecurityHeaders resp
+
+    it "adds headers on /metrics and preserves Prometheus Content-Type" $ do
+      tvar <- newDaemonState
+      let req = defaultRequest { requestMethod = methodGet, pathInfo = ["metrics"] }
+      resp <- runApp (securedHttpApp tvar) req
+      responseStatus resp `shouldBe` status200
+      expectAllSecurityHeaders resp
+      lookup "Content-Type" (responseHeaders resp)
+        `shouldBe` Just "text/plain; version=0.0.4; charset=utf-8"
+
+    it "adds headers on /cluster/<name>/status (200)" $ do
+      tvar <- newDaemonState
+      let ct = ClusterTopology
+                { ctClusterName = "test", ctNodes = clusterHealthy
+                , ctSourceNodeId = Just (unsafeNodeId "db1" 3306), ctHealth = Healthy
+                , ctObservedHealthy = HasBeenObservedHealthy, ctRecoveryBlockedUntil = Nothing
+                , ctLastFailoverAt = Nothing, ctPaused = Running
+                , ctTopologyDrift = NoDrift
+                , ctLastEmergencyCheckAt = Nothing }
+      atomically $ updateClusterTopology tvar ct
+      let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "status"] }
+      resp <- runApp (securedHttpApp tvar) req
+      responseStatus resp `shouldBe` status200
+      expectAllSecurityHeaders resp
+
+    it "adds headers on /cluster/<name>/topology (200)" $ do
+      tvar <- newDaemonState
+      let ct = ClusterTopology
+                { ctClusterName = "test", ctNodes = clusterHealthy
+                , ctSourceNodeId = Just (unsafeNodeId "db1" 3306), ctHealth = Healthy
+                , ctObservedHealthy = HasBeenObservedHealthy, ctRecoveryBlockedUntil = Nothing
+                , ctLastFailoverAt = Nothing, ctPaused = Running
+                , ctTopologyDrift = NoDrift
+                , ctLastEmergencyCheckAt = Nothing }
+      atomically $ updateClusterTopology tvar ct
+      let req = defaultRequest { requestMethod = methodGet, pathInfo = ["cluster", "test", "topology"] }
+      resp <- runApp (securedHttpApp tvar) req
+      responseStatus resp `shouldBe` status200
+      expectAllSecurityHeaders resp
 
   describe "lagVal edge case" $
     it "reports replication lag=-1 when rsSecondsBehindSource is Nothing" $ do

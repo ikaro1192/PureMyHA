@@ -163,6 +163,13 @@ http_get_body() {
   $COMPOSE exec -T puremyhad curl -s "http://127.0.0.1:8080${path}"
 }
 
+http_get_header() {
+  local path="$1" header="$2"
+  $COMPOSE exec -T puremyhad curl -sI "http://127.0.0.1:8080${path}" \
+    | tr -d '\r' \
+    | awk -v h="${header}:" 'index(tolower($0), tolower(h)) == 1 { sub(/^[^:]+: */, ""); print; exit }'
+}
+
 # Extract fields from CLI status response
 get_health() {
   cli_status | jq -r '.[0].health // empty' 2>/dev/null || echo ""
