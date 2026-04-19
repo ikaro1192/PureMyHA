@@ -155,7 +155,7 @@ Per-cluster TLS for MySQL connections. Supports `require_secure_transport=ON`.
 | Mode | Behaviour |
 |---|---|
 | `disabled` | Plain text (default) |
-| `skip-verify` | TLS, server certificate not verified |
+| `skip-verify` | TLS, server certificate not verified (development only; daemon logs a WARN at startup and on every SIGHUP reload) |
 | `verify-ca` | TLS, CA certificate verified |
 | `verify-full` | TLS, CA + hostname verified |
 

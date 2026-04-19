@@ -46,7 +46,7 @@ wait_for_health "Healthy" 60
 
 echo ""
 echo "========================================="
-echo "  TLS E2E environment ready. Running test 15."
+echo "  TLS E2E environment ready. Running tests 15 and 29."
 echo "========================================="
 echo ""
 
@@ -55,6 +55,7 @@ FAIL_COUNT=0
 
 reset_cluster
 bash tests/15-tls.sh
+bash tests/29-tls-skip-verify-warn.sh
 
 echo ""
 echo "========================================="

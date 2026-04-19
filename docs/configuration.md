@@ -121,6 +121,8 @@ tls:
 
 When `mode` is not `disabled`, PureMyHA sends a MySQL SSL_REQUEST packet before the authentication handshake, compatible with `require_secure_transport=ON`.
 
+`skip-verify` disables server certificate validation and leaves the connection vulnerable to MITM. It is intended for development only. When any cluster is configured with `skip-verify`, the daemon emits a WARN log line at startup and again on each `SIGHUP` reload so the insecure setting cannot slip into production unnoticed.
+
 ## Auto-Fence Split-Brain
 
 When `failover.auto_fence: true` is set, PureMyHA automatically sets `super_read_only=ON` on all non-survivor source nodes when `SplitBrainSuspected` is detected. The survivor is the node with the highest executed GTID transaction count.
