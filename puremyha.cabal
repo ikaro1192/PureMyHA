@@ -83,7 +83,7 @@ library
     tls                     >= 2.0,
     crypton-x509            >= 1.7,
     crypton-x509-store      >= 1.6,
-    crypton-x509-validation >= 1.6,
+    crypton-x509-validation >= 1.9.1,
     data-default-class      >= 0.1
 
 executable puremyhad
